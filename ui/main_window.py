@@ -18,15 +18,17 @@ from ui.pages import (
     OrderAnalysisPage,
     OrderDetailPage,
     OverviewPage,
-    RecordOrderPage,
     SpecialOrderPage,
     TodayDrawPage,
     ToolsPage,
 )
+from ui.windows import RecordOrderWindow
 
 
 class MainWindow(QMainWindow):
     """顶部横向导航，中部 QStackedWidget 切换页面。"""
+
+    _RECORD_ORDER_LABEL = "我要录单"
 
     _NAV_SPECS: list[tuple[str, type[QWidget]]] = [
         ("数据总览", OverviewPage),
@@ -37,7 +39,6 @@ class MainWindow(QMainWindow):
         ("开奖历史", DrawHistoryPage),
         ("辅助工具", ToolsPage),
         ("操作日志", OperationLogPage),
-        ("我要录单", RecordOrderPage),
         ("号码大全", NumberCatalogPage),
     ]
 
@@ -61,6 +62,7 @@ class MainWindow(QMainWindow):
         self._stack = QStackedWidget()
         self._nav_group = QButtonGroup(self)
         self._nav_group.setExclusive(True)
+        self._record_order_window: RecordOrderWindow | None = None
 
         for idx, (text, page_cls) in enumerate(self._NAV_SPECS):
             btn = QPushButton(text)
@@ -69,6 +71,11 @@ class MainWindow(QMainWindow):
             self._nav_group.addButton(btn, idx)
             nav_layout.addWidget(btn)
             self._stack.addWidget(page_cls())
+
+        record_btn = QPushButton(self._RECORD_ORDER_LABEL)
+        record_btn.setObjectName("navActionButton")
+        record_btn.clicked.connect(self._open_record_order_window)
+        nav_layout.addWidget(record_btn)
 
         nav_layout.addStretch(1)
 
@@ -83,6 +90,18 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(0)
 
         self._apply_stylesheet()
+
+    def _open_record_order_window(self) -> None:
+        """打开录单弹窗（已打开则置前）。"""
+        if self._record_order_window is None:
+            self._record_order_window = RecordOrderWindow(self)
+            self._record_order_window.destroyed.connect(self._on_record_order_window_destroyed)
+        self._record_order_window.show()
+        self._record_order_window.raise_()
+        self._record_order_window.activateWindow()
+
+    def _on_record_order_window_destroyed(self) -> None:
+        self._record_order_window = None
 
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(
@@ -105,6 +124,18 @@ class MainWindow(QMainWindow):
             QPushButton#navButton:checked {
                 background-color: #3498db;
                 color: #ffffff;
+            }
+            QPushButton#navActionButton {
+                color: #f1c40f;
+                background-color: transparent;
+                border: 1px solid #f39c12;
+                border-radius: 4px;
+                padding: 8px 14px;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            QPushButton#navActionButton:hover {
+                background-color: #34495e;
             }
             QLabel#pageTitle {
                 font-size: 22px;
