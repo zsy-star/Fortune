@@ -3,6 +3,7 @@
 from ui.pages.overview_page import OverviewPage
 from ui.pages.order_analysis_page import OrderAnalysisPage
 from ui.pages.special_order_page import SpecialOrderPage
+from ui.pages.lianxiao_order_page import LianxiaoOrderPage
 from ui.pages.today_draw_page import TodayDrawPage
 from ui.pages.order_detail_page import OrderDetailPage
 from ui.pages.draw_history_page import DrawHistoryPage
@@ -15,6 +16,7 @@ __all__ = [
     "OverviewPage",
     "OrderAnalysisPage",
     "SpecialOrderPage",
+    "LianxiaoOrderPage",
     "TodayDrawPage",
     "OrderDetailPage",
     "DrawHistoryPage",
