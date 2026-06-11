@@ -1,7 +1,8 @@
 """我要录单弹窗（布局参照业务录单界面，功能后续实现）。"""
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QGroupBox,
@@ -11,10 +12,13 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QTableWidget,
+    QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
+
+from services.order_parser import format_result, parse_lines
 
 _TABLE_COLUMNS = [
     "区域",
@@ -76,7 +80,134 @@ class RecordOrderWindow(QMainWindow):
         root.addWidget(self._build_text_section(), stretch=4)
         root.addWidget(self._build_footer())
 
+        # ── 剪贴板自动粘贴（定时轮询 + 窗口激活兜底）──
+        self._last_clipboard_text = ""
+        self._clipboard = QApplication.clipboard()
+
+        # 定时器每 500ms 检查一次剪贴板
+        self._clip_timer = QTimer(self)
+        self._clip_timer.setInterval(500)
+        self._clip_timer.timeout.connect(self._poll_clipboard)
+        self._clip_timer.start()
+
+        # ── 输入解析（300ms 防抖后自动解析）──
+        self._parsed_results: list = []
+        self._parse_timer = QTimer(self)
+        self._parse_timer.setSingleShot(True)
+        self._parse_timer.setInterval(300)
+        self._parse_timer.timeout.connect(self._do_parse)
+
         self._apply_stylesheet()
+
+    # ─────────────────── 剪贴板监控 ───────────────────
+
+    def _poll_clipboard(self) -> None:
+        """定时检查系统剪贴板，有新文本则填入输入框。"""
+        if not getattr(self, "_chk_auto_fetch", None):
+            return
+        if not self._chk_auto_fetch.isChecked():
+            return
+
+        # 直接读取系统剪贴板纯文本
+        clip = self._clipboard
+        text = clip.text().strip() if clip.mimeData().hasText() else ""
+        if not text or text == self._last_clipboard_text:
+            return
+
+        self._last_clipboard_text = text
+
+        existing = self._input_text.toPlainText().strip()
+        if existing:
+            self._input_text.setPlainText(existing + "\n" + text)
+        else:
+            self._input_text.setPlainText(text)
+
+    def changeEvent(self, event) -> None:
+        """窗口获得焦点时立刻检查剪贴板（无需等定时器）。"""
+        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            self._poll_clipboard()
+        super().changeEvent(event)
+
+    # ─────────────────── 订单解析 ───────────────────
+
+    def _on_input_changed(self) -> None:
+        """输入框文本变化时重启防抖定时器。"""
+        self._parse_timer.start()  # setSingleShot=True, 每次调用重置倒计时
+
+    def _do_parse(self) -> None:
+        """解析输入框中的全部文本，将结果显示到输出框。"""
+        raw = self._input_text.toPlainText()
+        if not raw.strip():
+            self._output_text.clear()
+            self._parsed_results = []
+            return
+
+        results = parse_lines(raw)
+        self._parsed_results = [r for r in results if r.success]
+
+        # 注入默认地域：输入未指定时取当前勾选的地区
+        default_region = "澳门" if self._radio_macau.isChecked() else "香港"
+        for r in results:
+            if r.success and not r.region:
+                r.region = default_region
+
+        # 显示结果（每条订单之间空行分隔）
+        blocks: list[str] = []
+        for r in results:
+            blocks.append(format_result(r))
+        self._output_text.setPlainText("\n\n".join(blocks))
+
+    def _on_clear_output(self) -> None:
+        """清空输入和输出。"""
+        self._input_text.clear()
+        self._output_text.clear()
+        self._parsed_results = []
+
+    def _on_add_result(self) -> None:
+        """将成功解析的订单添加到上方表格。"""
+        if not self._parsed_results:
+            return
+
+        region = "澳门" if self._radio_macau.isChecked() else "香港"
+        reporter = self._cmb_channel.currentText()
+        calc_method = self._cmb_calc.currentText()
+
+        for r in self._parsed_results:
+            for num in r.numbers:
+                row = self._order_table.rowCount()
+                self._order_table.insertRow(row)
+                items = [
+                    QTableWidgetItem(region),  # 区域
+                    QTableWidgetItem("特码"),  # 投注类型
+                    QTableWidgetItem(str(num)),  # 订单信息
+                    QTableWidgetItem(""),  # 复选类型
+                    QTableWidgetItem(calc_method),  # 计算方式
+                    QTableWidgetItem(f"{r.amount:g}"),  # 金额
+                    QTableWidgetItem(f"{r.amount:g}"),  # 订单总额
+                    QTableWidgetItem("标准"),  # 是否自定义
+                    QTableWidgetItem(reporter),  # 申报人
+                    QTableWidgetItem(""),  # 备注
+                ]
+                for col, item in enumerate(items):
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    self._order_table.setItem(row, col, item)
+
+        # 更新总额
+        self._update_order_totals()
+
+    def _update_order_totals(self) -> None:
+        """更新订单表中的总额标签。"""
+        total = 0.0
+        for row in range(self._order_table.rowCount()):
+            item = self._order_table.item(row, 5)  # "金额" 列
+            if item:
+                try:
+                    total += float(item.text())
+                except ValueError:
+                    pass
+        self._lbl_total.setText(f"当前总额: {total:g}")
+
+    # ─────────────────── UI 构建 ───────────────────
 
     def _build_table_section(self) -> QWidget:
         section = QWidget()
@@ -155,6 +286,9 @@ class RecordOrderWindow(QMainWindow):
             cb = QCheckBox(label)
             if label in ("识别地区", "自动获取"):
                 cb.setChecked(True)
+            if label == "自动获取":
+                cb.setObjectName("autoFetchCheck")
+                self._chk_auto_fetch = cb
             checks.addWidget(cb)
         checks.addStretch(1)
         outer.addLayout(checks)
@@ -163,12 +297,11 @@ class RecordOrderWindow(QMainWindow):
         text_row.setSpacing(6)
 
         self._input_text = QTextEdit()
-        self._input_text.setPlaceholderText("在此输入原始订单文本…")
-        self._input_text.setPlainText("猪羊马三连 500")
+        self._input_text.setPlaceholderText("在此输入原始订单文本…\n格式: <类别>各数<金额>  如: 兔各数20")
+        self._input_text.textChanged.connect(self._on_input_changed)
 
         self._output_text = QTextEdit()
-        self._output_text.setPlaceholderText("识别结果将显示在此处…")
-        self._output_text.setPlainText("澳门:3连猪羊马 各 500")
+        self._output_text.setPlaceholderText("展开结果将显示在此处…")
         self._output_text.setReadOnly(True)
 
         side_btns = QVBoxLayout()
@@ -179,6 +312,8 @@ class RecordOrderWindow(QMainWindow):
         btn_add.setObjectName("sideActionButton")
         btn_clear.setMinimumWidth(88)
         btn_add.setMinimumWidth(88)
+        btn_clear.clicked.connect(self._on_clear_output)
+        btn_add.clicked.connect(self._on_add_result)
         side_btns.addWidget(btn_clear)
         side_btns.addWidget(btn_add)
         side_btns.addStretch(1)
