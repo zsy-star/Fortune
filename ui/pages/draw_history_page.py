@@ -1,281 +1,410 @@
-"""开奖历史页面。"""
+"""开奖历史页面：读取本地开奖库，支持筛选、分页和后台同步。"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from datetime import date
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QDate, Qt, Slot
 from PySide6.QtWidgets import (
-    QButtonGroup,
     QComboBox,
+    QDateEdit,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
+    QLineEdit,
     QPushButton,
-    QRadioButton,
-    QScrollArea,
+    QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-_ZODIAC = ("鼠", "牛", "虎", "兔", "龙", "蛇", "马", "羊", "猴", "鸡", "狗", "猪")
+from models import LotteryDraw
+from services.draw_service import DrawService
+from services.draw_sync_service import DrawSyncResult
+from ui.workers import DrawSyncTask
 
-_WAVE_COLORS = {
-    "red": "#e74c3c",
-    "blue": "#3498db",
-    "green": "#27ae60",
-}
-
-_RED_NUMS = {1, 2, 7, 8, 12, 13, 18, 19, 23, 24, 29, 30, 34, 35, 40, 45, 46}
-_BLUE_NUMS = {3, 4, 9, 10, 14, 15, 20, 25, 26, 31, 36, 37, 41, 42, 47, 48}
-
-
-@dataclass(frozen=True)
-class HistoryDrawRow:
-    period: str
-    draw_date: str
-    normals: tuple[int, int, int, int, int, int]
-    special: int
-
-
-def _wave_color(num: int) -> str:
-    if num in _RED_NUMS:
-        return "red"
-    if num in _BLUE_NUMS:
-        return "blue"
-    return "green"
-
-
-def _zodiac(num: int) -> str:
-    return _ZODIAC[(num - 1) % 12]
-
-
-_SAMPLE_HISTORY: tuple[HistoryDrawRow, ...] = (
-    HistoryDrawRow("016", "2026-02-07", (5, 18, 29, 33, 42, 48), 9),
-    HistoryDrawRow("015", "2026-01-31", (2, 11, 17, 26, 38, 44), 31),
-    HistoryDrawRow("014", "2026-01-24", (7, 14, 21, 28, 35, 46), 3),
-    HistoryDrawRow("013", "2026-01-17", (4, 12, 19, 27, 39, 45), 22),
-    HistoryDrawRow("012", "2026-01-10", (1, 8, 16, 24, 32, 40), 47),
-    HistoryDrawRow("011", "2026-01-03", (6, 13, 20, 30, 37, 43), 15),
-)
+REGION_LOTTERY_TYPE = {"澳门": 2, "香港": 1}
+PAGE_SIZE = 20
 
 
 class DrawHistoryPage(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, draw_service: DrawService | None = None):
         super().__init__(parent)
+        self._draw_service = draw_service or DrawService()
+        self._sync_task: DrawSyncTask | None = None
+        self._page = 1
+        self._total = 0
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 10, 12, 10)
         root.setSpacing(8)
 
         root.addLayout(self._build_filter_bar())
-        root.addWidget(self._build_table_header())
-        root.addWidget(self._build_history_list(), stretch=1)
-        root.addLayout(self._build_bottom_panels(), stretch=1)
+        root.addLayout(self._build_action_bar())
+        root.addWidget(self._build_table(), stretch=1)
+        root.addLayout(self._build_pager())
+        root.addWidget(self._build_status_panel())
 
         self._apply_stylesheet()
+        self.reload_data()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self.reload_data()
 
     def _build_filter_bar(self) -> QHBoxLayout:
         row = QHBoxLayout()
-        row.setSpacing(16)
-
-        self._cmb_source = QComboBox()
-        self._cmb_source.addItems(
-            [
-                "2026_hk_LotteryResult",
-                "2026_macau_LotteryResult",
-                "2025_hk_LotteryResult",
-            ]
-        )
-        self._cmb_source.setMinimumWidth(200)
-        row.addWidget(self._cmb_source)
-
-        row.addWidget(QLabel("数据范围:"))
-        self._range_group = QButtonGroup(self)
-        for idx, text in enumerate(("不限", "近30期", "近90期")):
-            rb = QRadioButton(text)
-            if idx == 0:
-                rb.setChecked(True)
-            self._range_group.addButton(rb, idx)
-            row.addWidget(rb)
-
-        row.addSpacing(12)
-        row.addWidget(QLabel("类型选择:"))
-        self._type_group = QButtonGroup(self)
-        for idx, text in enumerate(("不限", "特码", "平码", "特码波色")):
-            rb = QRadioButton(text)
-            if idx == 0:
-                rb.setChecked(True)
-            self._type_group.addButton(rb, idx)
-            row.addWidget(rb)
-
-        row.addStretch(1)
-
-        btn_fetch = QPushButton("获取最新数据")
-        btn_fetch.setObjectName("fetchButton")
-        row.addWidget(btn_fetch)
-
-        return row
-
-    def _build_table_header(self) -> QFrame:
-        header = QFrame()
-        header.setObjectName("tableHeader")
-        grid = QGridLayout(header)
-        grid.setContentsMargins(6, 6, 6, 6)
-        grid.setHorizontalSpacing(4)
-
-        titles = ["期数", "平码1", "平码2", "平码3", "平码4", "平码5", "平码6", "特码"]
-        widths = [120, 64, 64, 64, 64, 64, 64, 64]
-        for col, (title, width) in enumerate(zip(titles, widths)):
-            lbl = QLabel(title)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setFixedWidth(width)
-            lbl.setObjectName("headerCell")
-            grid.addWidget(lbl, 0, col)
-
-        return header
-
-    def _build_history_list(self) -> QScrollArea:
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.StyledPanel)
-
-        container = QWidget()
-        self._list_layout = QVBoxLayout(container)
-        self._list_layout.setContentsMargins(4, 4, 4, 4)
-        self._list_layout.setSpacing(6)
-
-        for draw in _SAMPLE_HISTORY:
-            self._list_layout.addWidget(self._build_period_block(draw))
-
-        self._list_layout.addStretch(1)
-        scroll.setWidget(container)
-        return scroll
-
-    def _build_period_block(self, draw: HistoryDrawRow) -> QWidget:
-        block = QFrame()
-        block.setObjectName("periodBlock")
-        layout = QVBoxLayout(block)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        title = QLabel(f"▼  {draw.period}期(开奖时间:{draw.draw_date})")
-        title.setObjectName("periodTitle")
-        layout.addWidget(title)
-
-        grid_wrap = QWidget()
-        grid = QGridLayout(grid_wrap)
-        grid.setContentsMargins(120, 4, 8, 6)
-        grid.setHorizontalSpacing(4)
-        grid.setVerticalSpacing(4)
-
-        row_labels = ("号码", "生肖")
-        numbers = list(draw.normals) + [draw.special]
-
-        for row_idx, row_label in enumerate(row_labels):
-            lbl = QLabel(row_label)
-            lbl.setObjectName("rowTag")
-            lbl.setFixedWidth(40)
-            grid.addWidget(lbl, row_idx, 0, alignment=Qt.AlignmentFlag.AlignRight)
-
-            for col_idx, num in enumerate(numbers):
-                if row_idx == 0:
-                    cell = self._make_number_cell(num)
-                else:
-                    cell = self._make_zodiac_cell(_zodiac(num))
-                grid.addWidget(cell, row_idx, col_idx + 1)
-
-        layout.addWidget(grid_wrap)
-        return block
-
-    def _make_number_cell(self, num: int) -> QLabel:
-        color_key = _wave_color(num)
-        bg = _WAVE_COLORS[color_key]
-        lbl = QLabel(f"{num:02d}")
-        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl.setFixedSize(60, 32)
-        lbl.setStyleSheet(
-            f"background-color: {bg}; color: #ffffff; font-weight: 700; "
-            "font-size: 14px; border-radius: 2px;"
-        )
-        return lbl
-
-    def _make_zodiac_cell(self, zodiac: str) -> QLabel:
-        lbl = QLabel(zodiac)
-        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl.setFixedSize(60, 28)
-        lbl.setObjectName("zodiacCell")
-        return lbl
-
-    def _build_bottom_panels(self) -> QHBoxLayout:
-        row = QHBoxLayout()
         row.setSpacing(8)
 
-        self._panel_left = QFrame()
-        self._panel_left.setObjectName("detailPanel")
-        self._panel_left.setMinimumHeight(120)
+        row.addWidget(QLabel("地区:"))
+        self._cmb_region = QComboBox()
+        self._cmb_region.addItems(["全部", "澳门", "香港"])
+        row.addWidget(self._cmb_region)
 
-        self._panel_right = QFrame()
-        self._panel_right.setObjectName("detailPanel")
-        self._panel_right.setMinimumHeight(120)
+        row.addWidget(QLabel("期号:"))
+        self._issue_edit = QLineEdit()
+        self._issue_edit.setPlaceholderText("输入期号关键字")
+        self._issue_edit.setMinimumWidth(120)
+        row.addWidget(self._issue_edit)
 
-        row.addWidget(self._panel_left, stretch=1)
-        row.addWidget(self._panel_right, stretch=1)
+        row.addWidget(QLabel("开始日期:"))
+        self._start_date = QDateEdit()
+        self._start_date.setCalendarPopup(True)
+        self._start_date.setDisplayFormat("yyyy-MM-dd")
+        self._start_date.setSpecialValueText("不限")
+        self._start_date.setMinimumDate(QDate(2000, 1, 1))
+        self._start_date.setDate(self._start_date.minimumDate())
+        row.addWidget(self._start_date)
+
+        row.addWidget(QLabel("结束日期:"))
+        self._end_date = QDateEdit()
+        self._end_date.setCalendarPopup(True)
+        self._end_date.setDisplayFormat("yyyy-MM-dd")
+        self._end_date.setSpecialValueText("不限")
+        self._end_date.setMinimumDate(QDate(2000, 1, 1))
+        self._end_date.setDate(self._end_date.minimumDate())
+        row.addWidget(self._end_date)
+
+        btn_query = QPushButton("查询")
+        btn_reset = QPushButton("重置")
+        btn_query.clicked.connect(self._on_query)
+        btn_reset.clicked.connect(self._on_reset)
+        row.addWidget(btn_query)
+        row.addWidget(btn_reset)
+        row.addStretch(1)
         return row
+
+    def _build_action_bar(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self._btn_sync_latest = QPushButton("获取最新数据")
+        self._btn_sync_history = QPushButton("同步历史数据")
+        self._btn_sync_latest.setObjectName("fetchButton")
+        self._btn_sync_history.setObjectName("fetchButton")
+        self._btn_sync_latest.clicked.connect(self._sync_latest)
+        self._btn_sync_history.clicked.connect(self._open_history_sync_dialog)
+        row.addWidget(self._btn_sync_latest)
+        row.addWidget(self._btn_sync_history)
+        return row
+
+    def _build_table(self) -> QTableWidget:
+        self._table = QTableWidget(0, 8)
+        self._table.setHorizontalHeaderLabels(
+            ["地区", "期号", "开奖日期", "普通号码", "特码", "来源", "状态", "更新时间"]
+        )
+        self._table.verticalHeader().setVisible(False)
+        self._table.setAlternatingRowColors(True)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
+        return self._table
+
+    def _build_pager(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        self._btn_prev = QPushButton("上一页")
+        self._btn_next = QPushButton("下一页")
+        self._lbl_page = QLabel()
+        self._btn_prev.clicked.connect(self._prev_page)
+        self._btn_next.clicked.connect(self._next_page)
+        row.addWidget(self._btn_prev)
+        row.addWidget(self._btn_next)
+        row.addWidget(self._lbl_page)
+        row.addStretch(1)
+        return row
+
+    def _build_status_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setObjectName("detailPanel")
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(10, 8, 10, 8)
+        self._status_label = QLabel("本页面打开时只读取本地数据库，不自动联网。")
+        layout.addWidget(self._status_label)
+        return panel
+
+    def reload_data(self) -> None:
+        region, issue, start_date, end_date = self._filters()
+        self._total = self._draw_service.count_draws(
+            region=region,
+            issue_number=issue,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        offset = (self._page - 1) * PAGE_SIZE
+        rows = self._draw_service.list_draws(
+            region=region,
+            issue_number=issue,
+            start_date=start_date,
+            end_date=end_date,
+            limit=PAGE_SIZE,
+            offset=offset,
+        )
+        self._fill_table(rows)
+        self._update_pager()
+
+    def _filters(self) -> tuple[str | None, str | None, date | None, date | None]:
+        region_text = self._cmb_region.currentText()
+        region = None if region_text == "全部" else region_text
+        issue = self._issue_edit.text().strip() or None
+        start_date = self._qdate_or_none(self._start_date.date())
+        end_date = self._qdate_or_none(self._end_date.date())
+        return region, issue, start_date, end_date
+
+    def _qdate_or_none(self, value: QDate) -> date | None:
+        if value == self._start_date.minimumDate():
+            return None
+        return date(value.year(), value.month(), value.day())
+
+    def _fill_table(self, rows: list[LotteryDraw]) -> None:
+        self._table.setRowCount(len(rows))
+        for row_idx, draw in enumerate(rows):
+            values = [
+                draw.region,
+                draw.issue_number,
+                draw.draw_date.isoformat(),
+                "  ".join(draw.regular_numbers),
+                draw.special_number,
+                draw.source or "-",
+                draw.status,
+                draw.updated_at.strftime("%Y-%m-%d %H:%M:%S") if draw.updated_at else "-",
+            ]
+            for col_idx, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if col_idx == 4:
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
+                    item.setBackground(Qt.GlobalColor.yellow)
+                self._table.setItem(row_idx, col_idx, item)
+        if not rows:
+            self._status_label.setText("暂无开奖数据")
+        else:
+            self._status_label.setText(f"已加载 {len(rows)} 条记录")
+
+    def _update_pager(self) -> None:
+        total_pages = max(1, (self._total + PAGE_SIZE - 1) // PAGE_SIZE)
+        if self._page > total_pages:
+            self._page = total_pages
+        self._lbl_page.setText(f"第 {self._page} / {total_pages} 页    总记录数：{self._total}")
+        self._btn_prev.setEnabled(self._page > 1)
+        self._btn_next.setEnabled(self._page < total_pages)
+
+    def _on_query(self) -> None:
+        self._page = 1
+        self.reload_data()
+
+    def _on_reset(self) -> None:
+        self._cmb_region.setCurrentIndex(0)
+        self._issue_edit.clear()
+        self._start_date.setDate(self._start_date.minimumDate())
+        self._end_date.setDate(self._end_date.minimumDate())
+        self._page = 1
+        self.reload_data()
+
+    def _prev_page(self) -> None:
+        if self._page > 1:
+            self._page -= 1
+            self.reload_data()
+
+    def _next_page(self) -> None:
+        total_pages = max(1, (self._total + PAGE_SIZE - 1) // PAGE_SIZE)
+        if self._page < total_pages:
+            self._page += 1
+            self.reload_data()
+
+    def _sync_latest(self) -> None:
+        region = self._cmb_region.currentText()
+        if region == "全部":
+            region = "澳门"
+        self._start_sync(mode="latest", region=region, year=date.today().year)
+
+    def _open_history_sync_dialog(self) -> None:
+        dialog = _HistorySyncDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        region, year, pages, page_size = dialog.values()
+        self._start_sync(mode="history", region=region, year=year, pages=pages, page_size=page_size)
+
+    def _start_sync(
+        self,
+        *,
+        mode: str,
+        region: str,
+        year: int,
+        pages: int = 1,
+        page_size: int = PAGE_SIZE,
+    ) -> bool:
+        if self._sync_task and self._sync_task.is_active():
+            self._status_label.setText("已有同步任务正在执行，请稍候。")
+            return False
+
+        self._set_sync_enabled(False)
+        self._status_label.setText("正在同步开奖数据...")
+        self._sync_task = DrawSyncTask(
+            mode=mode,
+            lottery_type=REGION_LOTTERY_TYPE[region],
+            year=year,
+            pages=pages,
+            page_size=page_size,
+            parent=self,
+        )
+        self._sync_task.progress.connect(self._on_sync_progress)
+        self._sync_task.succeeded.connect(self._on_sync_success)
+        self._sync_task.failed.connect(self._on_sync_failed)
+        self._sync_task.finished.connect(lambda: self._set_sync_enabled(True))
+        self._sync_task.start()
+        return True
+
+    @Slot(str)
+    def _on_sync_progress(self, message: str) -> None:
+        self._status_label.setText(message)
+
+    def _on_sync_success(self, result: DrawSyncResult) -> None:
+        self.reload_data()
+        if result.skipped and not result.created and not result.updated and not result.failed:
+            self._status_label.setText("没有新数据，当前已经是最新一期。")
+            return
+        self._status_label.setText(
+            f"同步完成：新增{result.created}条，更新{result.updated}条，"
+            f"跳过{result.skipped}条，失败{result.failed}条。"
+        )
+
+    def _on_sync_failed(self, message: str) -> None:
+        self._status_label.setText(f"同步失败：{self._friendly_error(message)}")
+
+    def _set_sync_enabled(self, enabled: bool) -> None:
+        self._btn_sync_latest.setEnabled(enabled)
+        self._btn_sync_history.setEnabled(enabled)
+
+    def _friendly_error(self, message: str) -> str:
+        lower = message.lower()
+        if "timed out" in lower or "timeout" in lower:
+            return "网络超时，请稍后重试。"
+        if "forbidden" in lower or "403" in lower:
+            return "数据源拒绝访问。"
+        if "rate limited" in lower or "429" in lower:
+            return "请求过于频繁，请稍后再试。"
+        if "server error" in lower or "500" in lower:
+            return "数据源服务器异常。"
+        if "response" in lower or "json" in lower:
+            return "网站响应格式发生变化。"
+        return message
 
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(
             """
-            QFrame#tableHeader {
-                background-color: #d6eaf8;
-                border: 1px solid #aed6f1;
-            }
-            QLabel#headerCell {
-                font-weight: 600;
-                font-size: 13px;
-                color: #2c3e50;
-            }
-            QFrame#periodBlock {
-                border: 1px solid #d5d8dc;
-                background: #ffffff;
-            }
-            QLabel#periodTitle {
-                background-color: #ecf0f1;
-                padding: 6px 10px;
-                font-size: 13px;
-                color: #2c3e50;
-                border-bottom: 1px solid #d5d8dc;
-            }
-            QLabel#rowTag {
-                font-size: 12px;
-                color: #7f8c8d;
-            }
-            QLabel#zodiacCell {
-                background-color: #ffffff;
+            QTableWidget {
                 border: 1px solid #bdc3c7;
-                font-size: 14px;
+                font-size: 12px;
+                gridline-color: #d5d8dc;
+            }
+            QHeaderView::section {
+                background-color: #d6eaf8;
+                padding: 6px 4px;
+                border: 1px solid #aed6f1;
+                font-weight: 600;
+            }
+            QComboBox, QLineEdit, QDateEdit, QSpinBox {
+                padding: 4px 8px;
+                border: 1px solid #bdc3c7;
+                font-size: 12px;
+            }
+            QPushButton#fetchButton, QPushButton {
+                padding: 6px 12px;
+                border: 1px solid #bdc3c7;
+                background: #ffffff;
+                font-size: 13px;
+            }
+            QPushButton:hover {
+                background: #ebf5fb;
+            }
+            QPushButton:disabled {
+                color: #95a5a6;
             }
             QFrame#detailPanel {
                 background-color: #ffffff;
                 border: 1px solid #bdc3c7;
-                min-height: 100px;
+                min-height: 40px;
             }
-            QPushButton#fetchButton {
-                padding: 6px 14px;
-                border: 1px solid #bdc3c7;
-                background: #ffffff;
+            QLabel {
                 font-size: 13px;
-            }
-            QPushButton#fetchButton:hover {
-                background: #ebf5fb;
-            }
-            QComboBox, QRadioButton {
-                font-size: 13px;
-            }
-            QScrollArea {
-                border: 1px solid #bdc3c7;
-                background: #ffffff;
+                color: #2c3e50;
             }
             """
+        )
+
+
+class _HistorySyncDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("同步历史数据")
+        layout = QVBoxLayout(self)
+
+        self._region = QComboBox()
+        self._region.addItems(["澳门", "香港"])
+        self._year = QSpinBox()
+        self._year.setRange(2020, date.today().year)
+        self._year.setValue(date.today().year)
+        self._pages = QSpinBox()
+        self._pages.setRange(1, 10)
+        self._pages.setValue(1)
+        self._page_size = QSpinBox()
+        self._page_size.setRange(1, 50)
+        self._page_size.setValue(20)
+
+        for label, widget in (
+            ("地区", self._region),
+            ("年份", self._year),
+            ("同步页数", self._pages),
+            ("每页数量", self._page_size),
+        ):
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label))
+            row.addWidget(widget, stretch=1)
+            layout.addLayout(row)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def values(self) -> tuple[str, int, int, int]:
+        return (
+            self._region.currentText(),
+            self._year.value(),
+            self._pages.value(),
+            self._page_size.value(),
         )

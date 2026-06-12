@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import date
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from models import LotteryDraw
@@ -26,18 +28,73 @@ class DrawRepository:
         )
         return self.session.scalars(stmt).first()
 
-    def list(self, *, region: str | None = None, limit: int = 100, offset: int = 0) -> list[LotteryDraw]:
-        stmt = select(LotteryDraw)
+    def _apply_filters(
+        self,
+        stmt,
+        *,
+        region: str | None = None,
+        issue_number: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ):
         if region:
             stmt = stmt.where(LotteryDraw.region == region)
-        stmt = stmt.order_by(LotteryDraw.draw_date.desc(), LotteryDraw.id.desc()).limit(limit).offset(offset)
+        if issue_number:
+            stmt = stmt.where(LotteryDraw.issue_number.contains(issue_number))
+        if start_date:
+            stmt = stmt.where(LotteryDraw.draw_date >= start_date)
+        if end_date:
+            stmt = stmt.where(LotteryDraw.draw_date <= end_date)
+        return stmt
+
+    def list(
+        self,
+        *,
+        region: str | None = None,
+        issue_number: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[LotteryDraw]:
+        stmt = select(LotteryDraw)
+        stmt = self._apply_filters(
+            stmt,
+            region=region,
+            issue_number=issue_number,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        stmt = stmt.order_by(
+            LotteryDraw.draw_date.desc(),
+            LotteryDraw.issue_number.desc(),
+            LotteryDraw.id.desc(),
+        ).limit(limit).offset(offset)
         return list(self.session.scalars(stmt))
+
+    def count(
+        self,
+        *,
+        region: str | None = None,
+        issue_number: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> int:
+        stmt = select(func.count(LotteryDraw.id))
+        stmt = self._apply_filters(
+            stmt,
+            region=region,
+            issue_number=issue_number,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return int(self.session.scalar(stmt) or 0)
 
     def get_latest(self, region: str) -> LotteryDraw | None:
         stmt = (
             select(LotteryDraw)
             .where(LotteryDraw.region == region)
-            .order_by(LotteryDraw.draw_date.desc(), LotteryDraw.id.desc())
+            .order_by(LotteryDraw.draw_date.desc(), LotteryDraw.issue_number.desc(), LotteryDraw.id.desc())
             .limit(1)
         )
         return self.session.scalars(stmt).first()

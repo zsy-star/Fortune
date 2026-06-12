@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import date
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -138,13 +139,41 @@ class DrawService:
         self,
         *,
         region: str | None = None,
+        issue_number: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[LotteryDraw]:
         if region is not None:
             region = normalize_region(region)
         with self._session_factory() as session:
-            return DrawRepository(session).list(region=region, limit=limit, offset=offset)
+            return DrawRepository(session).list(
+                region=region,
+                issue_number=issue_number,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit,
+                offset=offset,
+            )
+
+    def count_draws(
+        self,
+        *,
+        region: str | None = None,
+        issue_number: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> int:
+        if region is not None:
+            region = normalize_region(region)
+        with self._session_factory() as session:
+            return DrawRepository(session).count(
+                region=region,
+                issue_number=issue_number,
+                start_date=start_date,
+                end_date=end_date,
+            )
 
     def get_latest_draw(self, region: str) -> LotteryDraw | None:
         region = normalize_region(region)
