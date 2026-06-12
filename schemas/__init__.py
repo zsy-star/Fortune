@@ -10,8 +10,10 @@ from schemas.order_schema import (
     OrderResult,
     OrderSummary,
 )
+from schemas.settlement_schema import ItemSettlementResult, OrderSettlementPreview, UnsupportedBetResult
 
 __all__ = [
+    "ItemSettlementResult",
     "LotteryDrawCreate",
     "OperationLogResult",
     "OrderCreate",
@@ -19,5 +21,7 @@ __all__ = [
     "OrderItemCreate",
     "OrderItemResult",
     "OrderResult",
+    "OrderSettlementPreview",
     "OrderSummary",
+    "UnsupportedBetResult",
 ]
