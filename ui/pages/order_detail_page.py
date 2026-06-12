@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QTableWidget,
@@ -23,8 +24,11 @@ from PySide6.QtWidgets import (
 )
 
 from schemas.order_schema import OrderDetailResult, OrderSummary
+from services.draw_service import DrawService
 from services.log_service import LogService
 from services.order_service import OrderService
+from services.settlement_service import SettlementService
+from ui.dialogs.settlement_preview_dialog import SettlementPreviewDialog
 
 PAGE_SIZE = 20
 
@@ -43,10 +47,15 @@ class OrderDetailPage(QWidget):
         parent=None,
         order_service: OrderService | None = None,
         log_service: LogService | None = None,
+        draw_service: DrawService | None = None,
+        settlement_service: SettlementService | None = None,
     ):
         super().__init__(parent)
         self._order_service = order_service or OrderService()
-        self._log_service = log_service or LogService()
+        session_factory = self._order_service._session_factory
+        self._log_service = log_service or LogService(session_factory)
+        self._draw_service = draw_service or DrawService(session_factory)
+        self._settlement_service = settlement_service or SettlementService(session_factory)
         self._page = 1
         self._total = 0
         self._selected_order_id: int | None = None
@@ -177,12 +186,23 @@ class OrderDetailPage(QWidget):
         self._item_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._item_table.horizontalHeader().setStretchLastSection(True)
 
-        self._prize_hint = QLabel("兑奖功能待开发，本阶段不计算中奖结果。")
+        preview_row = QHBoxLayout()
+        self._btn_preview = QPushButton("结算预览")
+        self._btn_preview.setEnabled(False)
+        self._btn_preview.clicked.connect(self._on_settlement_preview)
+        preview_row.addWidget(self._btn_preview)
+        preview_row.addStretch(1)
+
+        self._prize_hint = QLabel(
+            "结算预览：只读查看当前订单在指定期开奖结果下的命中情况。"
+            "正式兑奖：暂未开发。"
+        )
         self._prize_hint.setObjectName("prizeHint")
 
         layout.addWidget(self._detail_info)
         layout.addWidget(self._raw_text)
         layout.addWidget(self._item_table, stretch=1)
+        layout.addLayout(preview_row)
         layout.addWidget(self._prize_hint)
         return panel
 
@@ -349,6 +369,7 @@ class OrderDetailPage(QWidget):
                 self._status_label.setText("订单已显示，但查看日志写入失败。")
 
     def _render_detail(self, detail: OrderDetailResult) -> None:
+        self._btn_preview.setEnabled(True)
         self._detail_info.setText(
             "订单号：{no}    客户：{customer}    渠道：{channel}    地区：{region}    "
             "来源：{source}    创建：{created}    更新：{updated}    状态：{status}    总金额：{total}".format(
@@ -379,9 +400,27 @@ class OrderDetailPage(QWidget):
                 self._item_table.setItem(row_idx, col_idx, cell)
 
     def _clear_detail(self) -> None:
+        self._selected_order_id = None
         self._detail_info.setText("请选择订单")
         self._raw_text.clear()
         self._item_table.setRowCount(0)
+        self._btn_preview.setEnabled(False)
+
+    def _on_settlement_preview(self) -> None:
+        if self._selected_order_id is None:
+            self._status_label.setText("请先选择订单")
+            return
+        dialog = SettlementPreviewDialog(
+            self._selected_order_id,
+            parent=self,
+            order_service=self._order_service,
+            draw_service=self._draw_service,
+            settlement_service=self._settlement_service,
+        )
+        if not dialog.is_valid():
+            QMessageBox.warning(self, "结算预览", "订单不存在或已被删除。")
+            return
+        dialog.exec()
 
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(
