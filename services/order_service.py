@@ -17,7 +17,13 @@ from domain.exceptions import DomainError
 from domain.number_rules import normalize_number
 from models import Order, OrderItem
 from repositories.order_repository import OrderRepository
-from schemas.order_schema import OrderCreate, OrderResult
+from schemas.order_schema import (
+    OrderCreate,
+    OrderDetailResult,
+    OrderItemResult,
+    OrderResult,
+    OrderSummary,
+)
 from services.log_service import LogService
 
 _SELECTION_SPLIT = re.compile(r"[,，、\s]+")
@@ -97,26 +103,121 @@ class OrderService:
                 session.rollback()
                 raise
 
-    def get_order(self, order_id: int) -> Order | None:
+    def get_order(self, order_id: int) -> OrderDetailResult | None:
         with self._session_factory() as session:
-            return OrderRepository(session).get(order_id)
+            order = OrderRepository(session).get(order_id)
+            return self._to_detail(order) if order else None
 
-    def get_order_by_no(self, order_no: str) -> Order | None:
+    def get_order_by_no(self, order_no: str) -> OrderDetailResult | None:
         with self._session_factory() as session:
-            return OrderRepository(session).get_by_no(order_no)
+            order = OrderRepository(session).get_by_no(order_no)
+            return self._to_detail(order) if order else None
 
-    def list_orders(self, *, region: str | None = None, limit: int = 100, offset: int = 0) -> list[Order]:
+    def list_orders(
+        self,
+        *,
+        region: str | None = None,
+        order_no: str | None = None,
+        customer_name: str | None = None,
+        channel: str | None = None,
+        status: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[OrderSummary]:
+        limit, offset = self._validate_limit_offset(limit, offset)
         if region is not None:
             region = normalize_region(region)
         with self._session_factory() as session:
-            return OrderRepository(session).list(region=region, limit=limit, offset=offset)
+            orders = OrderRepository(session).list(
+                region=region,
+                order_no=order_no,
+                customer_name=customer_name,
+                channel=channel,
+                status=status,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit,
+                offset=offset,
+            )
+            return [self._to_summary(order) for order in orders]
 
-    def count_orders(self, *, region: str | None = None) -> int:
+    def count_orders(
+        self,
+        *,
+        region: str | None = None,
+        order_no: str | None = None,
+        customer_name: str | None = None,
+        channel: str | None = None,
+        status: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> int:
         if region is not None:
             region = normalize_region(region)
         with self._session_factory() as session:
-            return OrderRepository(session).count(region=region)
+            return OrderRepository(session).count(
+                region=region,
+                order_no=order_no,
+                customer_name=customer_name,
+                channel=channel,
+                status=status,
+                start_date=start_date,
+                end_date=end_date,
+            )
 
     def _generate_order_no(self) -> str:
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         return f"ORD{timestamp}{uuid4().hex[:8].upper()}"
+
+    def _validate_limit_offset(self, limit: int, offset: int) -> tuple[int, int]:
+        if limit < 1:
+            limit = 1
+        if limit > 200:
+            limit = 200
+        if offset < 0:
+            offset = 0
+        return limit, offset
+
+    def _to_summary(self, order: Order) -> OrderSummary:
+        return OrderSummary(
+            id=order.id,
+            order_no=order.order_no,
+            customer_name=order.customer_name,
+            channel=order.channel,
+            region=order.region,
+            source=order.source,
+            raw_text=order.raw_text,
+            total_amount=order.total_amount,
+            status=order.status,
+            created_at=order.created_at,
+            updated_at=order.updated_at,
+            item_count=len(order.items),
+        )
+
+    def _to_detail(self, order: Order) -> OrderDetailResult:
+        return OrderDetailResult(
+            id=order.id,
+            order_no=order.order_no,
+            customer_name=order.customer_name,
+            channel=order.channel,
+            region=order.region,
+            source=order.source,
+            raw_text=order.raw_text,
+            total_amount=order.total_amount,
+            status=order.status,
+            created_at=order.created_at,
+            updated_at=order.updated_at,
+            items=[
+                OrderItemResult(
+                    id=item.id,
+                    bet_type=item.bet_type,
+                    selection=item.selection,
+                    amount=item.amount,
+                    odds=item.odds,
+                    note=item.note,
+                )
+                for item in order.items
+            ],
+        )

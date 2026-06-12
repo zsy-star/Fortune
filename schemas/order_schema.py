@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 from domain.bet_types import normalize_bet_type, normalize_region
@@ -84,3 +85,45 @@ class OrderResult:
     total_amount: Decimal
     status: str
     item_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class OrderItemResult:
+    id: int
+    bet_type: str
+    selection: str
+    amount: Decimal
+    odds: Decimal | None
+    note: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class OrderSummary:
+    id: int
+    order_no: str
+    customer_name: str | None
+    channel: str | None
+    region: str
+    source: str | None
+    raw_text: str
+    total_amount: Decimal
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    item_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class OrderDetailResult:
+    id: int
+    order_no: str
+    customer_name: str | None
+    channel: str | None
+    region: str
+    source: str | None
+    raw_text: str
+    total_amount: Decimal
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    items: list[OrderItemResult]

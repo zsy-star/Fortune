@@ -1,43 +1,40 @@
-"""操作日志页面。"""
+"""操作日志页面：从 OperationLog 表读取真实日志。"""
 
-from datetime import datetime, timedelta
+from __future__ import annotations
 
-from PySide6.QtCore import QDate, QDateTime, QTime, Qt
-from PySide6.QtGui import QFont
+from datetime import datetime, time, timedelta
+
+from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
-    QDateTimeEdit,
+    QDateEdit,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QPlainTextEdit,
+    QLineEdit,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
+    QHeaderView,
 )
 
-_SAMPLE_LOG_LINES = [
-    "2026-04-13 16:49:52 - 通过自动识别添加订单:['澳门', '特码', '1', '各', '10']-->成功",
-    "2026-04-13 16:49:59 - received 1 pieces of data from the enter window",
-    "2026-04-13 16:50:18 - 清空了所有订单",
-    "2026-04-13 16:50:25 - 通过自动识别添加订单:['香港', '平特一肖', '龙', '各', '100']-->成功",
-    "2026-04-13 16:50:31 - received 2 pieces of data from the enter window",
-    "2026-04-13 16:50:45 - 用户切换区域: 澳门 -> 香港",
-    "2026-04-13 16:51:02 - 导出订单报表: 成功",
-]
+from schemas.log_schema import OperationLogResult
+from services.log_service import LogService
 
-_SAMPLE_TOTAL_COUNT = 17203
-
-_DEFAULT_QDATETIME = QDateTime(QDate(2026, 4, 13), QTime(16, 49, 0))
+PAGE_SIZE = 20
 
 
-def _to_qdatetime(dt: datetime) -> QDateTime:
-    return QDateTime(QDate(dt.year, dt.month, dt.day), QTime(dt.hour, dt.minute, dt.second))
+def _dash(value: object | None) -> str:
+    return str(value) if value not in (None, "") else "—"
 
 
 class OperationLogPage(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, log_service: LogService | None = None):
         super().__init__(parent)
-        self._all_logs = list(_SAMPLE_LOG_LINES)
+        self._log_service = log_service or LogService()
+        self._page = 1
+        self._total = 0
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
@@ -47,105 +44,74 @@ class OperationLogPage(QWidget):
         root.addLayout(self._build_action_row())
         root.addLayout(self._build_summary_row())
         root.addWidget(self._build_separator())
-        root.addWidget(self._build_log_area(), stretch=1)
+        root.addWidget(self._build_table(), stretch=1)
+        root.addLayout(self._build_pager())
 
         self._apply_stylesheet()
-        self._refresh_log_display()
+        self.reload_data()
 
-    def _apply_stylesheet(self) -> None:
-        self.setStyleSheet(
-            """
-            QPushButton#logActionLink {
-                color: #1a5276;
-                border: none;
-                padding: 2px 4px;
-                font-size: 13px;
-                text-align: left;
-            }
-            QPushButton#logActionLink:hover {
-                color: #2874a6;
-                text-decoration: underline;
-            }
-            QFrame#logSeparator {
-                background-color: #3498db;
-                border: none;
-                max-height: 2px;
-            }
-            QPlainTextEdit#logView {
-                background-color: #ffffff;
-                border: 1px solid #bdc3c7;
-                padding: 8px;
-                color: #2c3e50;
-            }
-            QLabel {
-                font-size: 13px;
-                color: #2c3e50;
-            }
-            QDateTimeEdit {
-                padding: 4px 6px;
-                border: 1px solid #bdc3c7;
-                border-radius: 2px;
-                background: #ffffff;
-                font-size: 13px;
-            }
-            """
-        )
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self.reload_data()
 
     def _build_filter_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
-        row.setSpacing(12)
+        row.setSpacing(8)
 
-        row.addWidget(QLabel("开始时间:"))
-        self._dt_start = QDateTimeEdit()
-        self._dt_start.setDisplayFormat("yyyy/M/d HH:mm")
-        self._dt_start.setCalendarPopup(True)
-        self._dt_start.setDateTime(_DEFAULT_QDATETIME)
-        self._dt_start.setMinimumWidth(180)
-        row.addWidget(self._dt_start)
+        self._module = QLineEdit()
+        self._module.setPlaceholderText("模块")
+        self._action = QLineEdit()
+        self._action.setPlaceholderText("操作")
+        self._operator = QLineEdit()
+        self._operator.setPlaceholderText("操作人")
+        self._related_type = QLineEdit()
+        self._related_type.setPlaceholderText("关联类型")
+        self._keyword = QLineEdit()
+        self._keyword.setPlaceholderText("描述关键词")
+        self._start_date = self._make_date_edit()
+        self._end_date = self._make_date_edit()
 
-        row.addWidget(QLabel("结束时间:"))
-        self._dt_end = QDateTimeEdit()
-        self._dt_end.setDisplayFormat("yyyy/M/d HH:mm")
-        self._dt_end.setCalendarPopup(True)
-        self._dt_end.setDateTime(_DEFAULT_QDATETIME)
-        self._dt_end.setMinimumWidth(180)
-        row.addWidget(self._dt_end)
-
-        row.addStretch(1)
+        for label, widget in (
+            ("模块", self._module),
+            ("操作", self._action),
+            ("操作人", self._operator),
+            ("关联", self._related_type),
+            ("关键词", self._keyword),
+            ("开始", self._start_date),
+            ("结束", self._end_date),
+        ):
+            row.addWidget(QLabel(label))
+            row.addWidget(widget)
         return row
 
     def _build_action_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
-        row.setSpacing(16)
-
+        row.setSpacing(12)
         specs = [
-            ("今天", self._on_today),
-            ("昨天", self._on_yesterday),
-            ("最近三天", self._on_last_three_days),
-            ("设置的时间段", self._on_apply_time_range),
-            ("清空日志", self._on_clear_logs),
-            ("重置日志", self._on_reset_logs),
+            ("今天", self._on_today, True),
+            ("昨天", self._on_yesterday, True),
+            ("最近三天", self._on_last_three_days, True),
+            ("查询", self._on_query, True),
+            ("重置", self._on_reset, True),
+            ("刷新", self.reload_data, True),
+            ("清空日志", self._on_clear_disabled, False),
         ]
-        for text, handler in specs:
+        for text, handler, enabled in specs:
             btn = QPushButton(text)
-            btn.setFlat(True)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setObjectName("logActionLink")
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setEnabled(enabled)
             btn.clicked.connect(handler)
+            if not enabled:
+                btn.setToolTip("本阶段暂未开放")
             row.addWidget(btn)
-
         row.addStretch(1)
         return row
 
     def _build_summary_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
-
         self._lbl_total = QLabel()
         self._lbl_displayed = QLabel()
-        self._lbl_displayed.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
-
         row.addWidget(self._lbl_total)
         row.addStretch(1)
         row.addWidget(self._lbl_displayed)
@@ -159,32 +125,148 @@ class OperationLogPage(QWidget):
         line.setFixedHeight(2)
         return line
 
-    def _build_log_area(self) -> QPlainTextEdit:
-        self._log_view = QPlainTextEdit()
-        self._log_view.setReadOnly(True)
-        self._log_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self._log_view.setObjectName("logView")
+    def _build_table(self) -> QTableWidget:
+        self._table = QTableWidget(0, 7)
+        self._table.setHorizontalHeaderLabels(["时间", "模块", "操作", "描述", "操作人", "关联类型", "关联ID"])
+        self._table.verticalHeader().setVisible(False)
+        self._table.setAlternatingRowColors(True)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
+        return self._table
 
-        font = QFont("Consolas", 10)
-        if not font.exactMatch():
-            font = QFont("Microsoft YaHei", 10)
-        self._log_view.setFont(font)
-        return self._log_view
+    def _build_pager(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        self._btn_prev = QPushButton("上一页")
+        self._btn_next = QPushButton("下一页")
+        self._lbl_page = QLabel()
+        self._btn_prev.clicked.connect(self._prev_page)
+        self._btn_next.clicked.connect(self._next_page)
+        row.addWidget(self._btn_prev)
+        row.addWidget(self._btn_next)
+        row.addWidget(self._lbl_page)
+        row.addStretch(1)
+        return row
+
+    def _make_date_edit(self) -> QDateEdit:
+        edit = QDateEdit()
+        edit.setCalendarPopup(True)
+        edit.setDisplayFormat("yyyy-MM-dd")
+        edit.setSpecialValueText("不限")
+        edit.setMinimumDate(QDate(2000, 1, 1))
+        edit.setDate(edit.minimumDate())
+        return edit
+
+    def reload_data(self) -> None:
+        if not self._validate_dates():
+            return
+        module, action, operator, related_type, keyword, start_dt, end_dt = self._filters()
+        self._total = self._log_service.count_logs(
+            module=module,
+            action=action,
+            operator=operator,
+            related_type=related_type,
+            keyword=keyword,
+            start_date=start_dt,
+            end_date=end_dt,
+        )
+        max_page = max(1, (self._total + PAGE_SIZE - 1) // PAGE_SIZE)
+        if self._page > max_page:
+            self._page = max_page
+        logs = self._log_service.list_logs(
+            module=module,
+            action=action,
+            operator=operator,
+            related_type=related_type,
+            keyword=keyword,
+            start_date=start_dt,
+            end_date=end_dt,
+            limit=PAGE_SIZE,
+            offset=(self._page - 1) * PAGE_SIZE,
+        )
+        self._fill_table(logs)
+        self._update_summary(len(logs))
+        self._update_pager()
+
+    def _filters(self):
+        return (
+            self._module.text().strip() or None,
+            self._action.text().strip() or None,
+            self._operator.text().strip() or None,
+            self._related_type.text().strip() or None,
+            self._keyword.text().strip() or None,
+            self._start_datetime(),
+            self._end_datetime(),
+        )
+
+    def _date_or_none(self, edit: QDateEdit):
+        value = edit.date()
+        if value == edit.minimumDate():
+            return None
+        return value
+
+    def _start_datetime(self) -> datetime | None:
+        value = self._date_or_none(self._start_date)
+        return datetime.combine(value.toPython(), time.min) if value else None
+
+    def _end_datetime(self) -> datetime | None:
+        value = self._date_or_none(self._end_date)
+        return datetime.combine(value.toPython(), time.max) if value else None
+
+    def _validate_dates(self) -> bool:
+        start = self._date_or_none(self._start_date)
+        end = self._date_or_none(self._end_date)
+        if start and end and start > end:
+            self._lbl_total.setText("开始日期不能晚于结束日期")
+            return False
+        return True
+
+    def _fill_table(self, logs: list[OperationLogResult]) -> None:
+        self._table.setRowCount(len(logs))
+        for row_idx, log in enumerate(logs):
+            description = log.description
+            shown_description = description if len(description) <= 80 else description[:77] + "..."
+            values = [
+                log.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                log.module,
+                log.action,
+                shown_description,
+                _dash(log.operator),
+                _dash(log.related_type),
+                _dash(log.related_id),
+            ]
+            for col_idx, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter if col_idx != 3 else Qt.AlignmentFlag.AlignLeft)
+                if col_idx == 3:
+                    item.setToolTip(description)
+                self._table.setItem(row_idx, col_idx, item)
 
     def _update_summary(self, displayed_count: int) -> None:
-        self._lbl_total.setText(f"共有{_SAMPLE_TOTAL_COUNT}条操作记录")
+        if self._total == 0:
+            self._lbl_total.setText("暂无操作日志")
+        else:
+            self._lbl_total.setText(f"共有{self._total}条操作记录")
         self._lbl_displayed.setText(f"已显示{displayed_count}条记录")
 
-    def _refresh_log_display(self) -> None:
-        text = "\n".join(self._all_logs)
-        self._log_view.setPlainText(text)
-        self._update_summary(len(self._all_logs))
+    def _update_pager(self) -> None:
+        max_page = max(1, (self._total + PAGE_SIZE - 1) // PAGE_SIZE)
+        self._lbl_page.setText(f"第 {self._page} / {max_page} 页    总记录数：{self._total}")
+        self._btn_prev.setEnabled(self._page > 1)
+        self._btn_next.setEnabled(self._page < max_page)
 
     def _set_day_range(self, day: datetime) -> None:
-        start = day.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = day.replace(hour=23, minute=59, second=59, microsecond=0)
-        self._dt_start.setDateTime(_to_qdatetime(start))
-        self._dt_end.setDateTime(_to_qdatetime(end))
+        self._start_date.setDate(QDate(day.year, day.month, day.day))
+        self._end_date.setDate(QDate(day.year, day.month, day.day))
+        self._page = 1
+        self.reload_data()
 
     def _on_today(self) -> None:
         self._set_day_range(datetime.now())
@@ -193,23 +275,82 @@ class OperationLogPage(QWidget):
         self._set_day_range(datetime.now() - timedelta(days=1))
 
     def _on_last_three_days(self) -> None:
-        end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=0)
-        start = (end - timedelta(days=2)).replace(
-            hour=0, minute=0, second=0, microsecond=0
+        end = datetime.now()
+        start = end - timedelta(days=2)
+        self._start_date.setDate(QDate(start.year, start.month, start.day))
+        self._end_date.setDate(QDate(end.year, end.month, end.day))
+        self._page = 1
+        self.reload_data()
+
+    def _on_query(self) -> None:
+        self._page = 1
+        self.reload_data()
+
+    def _on_reset(self) -> None:
+        for edit in (self._module, self._action, self._operator, self._related_type, self._keyword):
+            edit.clear()
+        self._start_date.setDate(self._start_date.minimumDate())
+        self._end_date.setDate(self._end_date.minimumDate())
+        self._page = 1
+        self.reload_data()
+
+    def _prev_page(self) -> None:
+        if self._page > 1:
+            self._page -= 1
+            self.reload_data()
+
+    def _next_page(self) -> None:
+        max_page = max(1, (self._total + PAGE_SIZE - 1) // PAGE_SIZE)
+        if self._page < max_page:
+            self._page += 1
+            self.reload_data()
+
+    def _on_clear_disabled(self) -> None:
+        self._lbl_total.setText("清空日志暂未开放")
+
+    def _apply_stylesheet(self) -> None:
+        self.setStyleSheet(
+            """
+            QPushButton#logActionLink, QPushButton {
+                color: #1a5276;
+                border: 1px solid #bdc3c7;
+                padding: 5px 10px;
+                font-size: 13px;
+                background: #ffffff;
+            }
+            QPushButton:hover {
+                background: #ebf5fb;
+            }
+            QPushButton:disabled {
+                color: #95a5a6;
+            }
+            QFrame#logSeparator {
+                background-color: #3498db;
+                border: none;
+                max-height: 2px;
+            }
+            QTableWidget {
+                background-color: #ffffff;
+                border: 1px solid #bdc3c7;
+                gridline-color: #d5d8dc;
+                font-size: 12px;
+            }
+            QHeaderView::section {
+                background-color: #ecf0f1;
+                padding: 6px 4px;
+                border: 1px solid #bdc3c7;
+                font-weight: 600;
+            }
+            QLabel {
+                font-size: 13px;
+                color: #2c3e50;
+            }
+            QLineEdit, QDateEdit {
+                padding: 4px 6px;
+                border: 1px solid #bdc3c7;
+                border-radius: 2px;
+                background: #ffffff;
+                font-size: 13px;
+            }
+            """
         )
-        self._dt_start.setDateTime(_to_qdatetime(start))
-        self._dt_end.setDateTime(_to_qdatetime(end))
-
-    def _on_apply_time_range(self) -> None:
-        # 后续按开始/结束时间过滤数据库日志；当前展示全部示例数据
-        self._refresh_log_display()
-
-    def _on_clear_logs(self) -> None:
-        self._all_logs.clear()
-        self._refresh_log_display()
-
-    def _on_reset_logs(self) -> None:
-        self._all_logs = list(_SAMPLE_LOG_LINES)
-        self._dt_start.setDateTime(_DEFAULT_QDATETIME)
-        self._dt_end.setDateTime(_DEFAULT_QDATETIME)
-        self._refresh_log_display()
