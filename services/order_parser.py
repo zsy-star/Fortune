@@ -263,6 +263,10 @@ def _parse_number_list(text: str) -> tuple[int, ...] | None:
     Returns:
         去重排序后的号码元组；无法解析则返回 None。
     """
+    # 拒绝负数号（如 "1,-2,3"）——分隔符替换前先检测
+    if re.search(r'(?:^|[,，\-—、\s])-\d', text):
+        return None
+
     cleaned = _NUMBER_SPLIT_PATTERN.sub(" ", text).strip()
     if not cleaned:
         return None

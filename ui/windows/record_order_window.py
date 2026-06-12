@@ -27,7 +27,7 @@ _TABLE_COLUMNS = [
     "复选类型",
     "计算方式",
     "金额",
-    "订单总额",
+    "每号金额",
     "是否自定义",
     "申报人",
     "备注",
@@ -92,6 +92,7 @@ class RecordOrderWindow(QMainWindow):
 
         # ── 输入解析（300ms 防抖后自动解析）──
         self._parsed_results: list = []
+        self._table_user_adjusted = False
         self._parse_timer = QTimer(self)
         self._parse_timer.setSingleShot(True)
         self._parse_timer.setInterval(300)
@@ -110,7 +111,10 @@ class RecordOrderWindow(QMainWindow):
 
         # 直接读取系统剪贴板纯文本
         clip = self._clipboard
-        text = clip.text().strip() if clip.mimeData().hasText() else ""
+        mime_data = clip.mimeData()
+        if mime_data is None:
+            return
+        text = clip.text().strip() if mime_data.hasText() else ""
         if not text or text == self._last_clipboard_text:
             return
 
@@ -158,10 +162,15 @@ class RecordOrderWindow(QMainWindow):
         self._output_text.setPlainText("\n\n".join(blocks))
 
     def _on_clear_output(self) -> None:
-        """清空输入和输出。"""
+        """清空输入、输出、表格及解析状态。"""
         self._input_text.clear()
         self._output_text.clear()
         self._parsed_results = []
+        # 清空表格内容（保留地区/渠道/计算方式）
+        self._order_table.setRowCount(0)
+        self._lbl_total.setText("当前总额: 0")
+        self._lbl_selected_total.setText("当前选择总额: 0")
+        self._table_user_adjusted = False
 
     def _on_add_result(self) -> None:
         """将成功解析的订单添加到上方表格。"""
@@ -206,6 +215,19 @@ class RecordOrderWindow(QMainWindow):
                 except ValueError:
                     pass
         self._lbl_total.setText(f"当前总额: {total:g}")
+
+    def _on_delete_selected(self) -> None:
+        """删除表格中选中的行，并重新计算总额。"""
+        rows = {idx.row() for idx in self._order_table.selectedIndexes()}
+        if not rows:
+            return  # 无选中行，静默返回
+
+        # 从高到低删除，避免索引偏移
+        for row in sorted(rows, reverse=True):
+            self._order_table.removeRow(row)
+
+        self._table_user_adjusted = True
+        self._update_order_totals()
 
     # ─────────────────── UI 构建 ───────────────────
 
@@ -276,7 +298,8 @@ class RecordOrderWindow(QMainWindow):
         for text in _TOOLBAR_BUTTONS:
             btn = QPushButton(text)
             btn.setObjectName("toolButton")
-            btn.setEnabled(True)
+            btn.setEnabled(False)
+            btn.setToolTip("暂未开放")
             toolbar.addWidget(btn)
 
         outer.addLayout(toolbar)
@@ -308,14 +331,19 @@ class RecordOrderWindow(QMainWindow):
         side_btns.setSpacing(6)
         btn_clear = QPushButton("清空结果")
         btn_add = QPushButton("添加结果")
+        btn_del = QPushButton("删除选中行")
         btn_clear.setObjectName("sideActionButton")
         btn_add.setObjectName("sideActionButton")
+        btn_del.setObjectName("sideActionButton")
         btn_clear.setMinimumWidth(88)
         btn_add.setMinimumWidth(88)
+        btn_del.setMinimumWidth(88)
         btn_clear.clicked.connect(self._on_clear_output)
         btn_add.clicked.connect(self._on_add_result)
+        btn_del.clicked.connect(self._on_delete_selected)
         side_btns.addWidget(btn_clear)
         side_btns.addWidget(btn_add)
+        side_btns.addWidget(btn_del)
         side_btns.addStretch(1)
 
         text_row.addWidget(self._input_text, stretch=1)
