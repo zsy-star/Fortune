@@ -13,3 +13,8 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 DATABASE_PATH = DATA_DIR / "fortune.db"
 DATABASE_URL = f"sqlite:///{DATABASE_PATH.as_posix()}"
+
+DRAW_SOURCE_BASE_URL = "https://49wz777.com/"
+DRAW_REQUEST_TIMEOUT = 15
+DRAW_REQUEST_INTERVAL = 2
+DRAW_MAX_RETRIES = 3

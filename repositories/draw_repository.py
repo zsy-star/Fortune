@@ -16,6 +16,9 @@ class DrawRepository:
         self.session.add(draw)
         return draw
 
+    def flush(self) -> None:
+        self.session.flush()
+
     def get(self, region: str, issue_number: str) -> LotteryDraw | None:
         stmt = select(LotteryDraw).where(
             LotteryDraw.region == region,

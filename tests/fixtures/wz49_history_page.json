@@ -1,0 +1,55 @@
+{
+  "code": 10000,
+  "data": {
+    "key": "2026-06-11 21:43:00",
+    "pager": {
+      "pageNum": 1,
+      "pageSize": 2,
+      "start": 1,
+      "totalCount": -1,
+      "totalPageCount": 1
+    },
+    "recordList": [
+      {
+        "id": 20261622,
+        "lotteryTime": "2026年06月11日",
+        "lotteryType": 2,
+        "numberList": [
+          {"color": 1, "number": "23", "shengXiao": "猴", "wuXing": "木"},
+          {"color": 3, "number": "41", "shengXiao": "猴", "wuXing": "金"},
+          {"color": 1, "number": "24", "shengXiao": "羊", "wuXing": "木"},
+          {"color": 2, "number": "26", "shengXiao": "蛇", "wuXing": "金"},
+          {"color": 1, "number": "33", "shengXiao": "狗", "wuXing": "金"},
+          {"color": 1, "number": "07", "shengXiao": "鼠", "wuXing": "木"},
+          {"color": 3, "number": "32", "shengXiao": "猪", "wuXing": "火"}
+        ],
+        "period": 2026162,
+        "periodStr": "162",
+        "year": 2026
+      },
+      {
+        "id": 20261612,
+        "lotteryTime": "2026年06月10日",
+        "lotteryType": 2,
+        "numberList": [
+          {"color": 2, "number": "36", "shengXiao": "羊", "wuXing": "土"},
+          {"color": 1, "number": "40", "shengXiao": "兔", "wuXing": "火"},
+          {"color": 2, "number": "42", "shengXiao": "牛", "wuXing": "金"},
+          {"color": 1, "number": "19", "shengXiao": "鼠", "wuXing": "土"},
+          {"color": 1, "number": "34", "shengXiao": "鸡", "wuXing": "金"},
+          {"color": 1, "number": "46", "shengXiao": "鸡", "wuXing": "木"},
+          {"color": 1, "number": "08", "shengXiao": "猪", "wuXing": "木"}
+        ],
+        "period": 2026161,
+        "periodStr": "161",
+        "year": 2026
+      }
+    ],
+    "refresh": false
+  },
+  "msg": "操作成功",
+  "serverTime": 1781268775275,
+  "subCode": 10000,
+  "subMsg": "操作成功",
+  "success": true
+}

@@ -60,6 +60,75 @@ class DrawService:
                 session.rollback()
                 raise
 
+    def save_draw(self, draw_create: LotteryDrawCreate) -> tuple[LotteryDraw, str]:
+        """Insert, skip, or update one draw.
+
+        Returns:
+            ``(draw, action)`` where action is ``created``, ``skipped``, or ``updated``.
+        """
+        with self._session_factory() as session:
+            repo = DrawRepository(session)
+            try:
+                existing = repo.get(draw_create.region, draw_create.issue_number)
+                if existing is None:
+                    draw = LotteryDraw(
+                        region=draw_create.region,
+                        issue_number=draw_create.issue_number,
+                        draw_date=draw_create.draw_date,
+                        regular_numbers=list(draw_create.regular_numbers),
+                        special_number=draw_create.special_number,
+                        source=draw_create.source,
+                        status=draw_create.status,
+                    )
+                    repo.add(draw)
+                    session.flush()
+                    self._log_service.create_log(
+                        module="draw",
+                        action="sync_create",
+                        description=f"Synced new draw {draw.region} {draw.issue_number}",
+                        related_type="lottery_draw",
+                        related_id=draw.id,
+                        session=session,
+                    )
+                    session.commit()
+                    session.refresh(draw)
+                    return draw, "created"
+
+                changed = (
+                    existing.draw_date != draw_create.draw_date
+                    or list(existing.regular_numbers) != list(draw_create.regular_numbers)
+                    or existing.special_number != draw_create.special_number
+                    or existing.source != draw_create.source
+                    or existing.status != draw_create.status
+                )
+                if not changed:
+                    session.commit()
+                    return existing, "skipped"
+
+                existing.draw_date = draw_create.draw_date
+                existing.regular_numbers = list(draw_create.regular_numbers)
+                existing.special_number = draw_create.special_number
+                existing.source = draw_create.source
+                existing.status = draw_create.status
+                session.flush()
+                self._log_service.create_log(
+                    module="draw",
+                    action="sync_update",
+                    description=f"Updated draw {existing.region} {existing.issue_number}",
+                    related_type="lottery_draw",
+                    related_id=existing.id,
+                    session=session,
+                )
+                session.commit()
+                session.refresh(existing)
+                return existing, "updated"
+            except IntegrityError as exc:
+                session.rollback()
+                raise DuplicateDrawError("Draw violates unique constraints") from exc
+            except Exception:
+                session.rollback()
+                raise
+
     def get_draw(self, region: str, issue_number: str) -> LotteryDraw | None:
         region = normalize_region(region)
         with self._session_factory() as session:
