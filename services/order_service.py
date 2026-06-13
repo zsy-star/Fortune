@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from datetime import datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from uuid import uuid4
 
@@ -19,6 +19,7 @@ from models import Order, OrderItem
 from repositories.order_repository import OrderRepository
 from schemas.order_schema import (
     OrderCreate,
+    OrderDashboardSummary,
     OrderDetailResult,
     OrderItemResult,
     OrderResult,
@@ -165,6 +166,40 @@ class OrderService:
                 status=status,
                 start_date=start_date,
                 end_date=end_date,
+            )
+
+    def get_dashboard_summary(
+        self,
+        *,
+        region: str | None = None,
+        today: date | None = None,
+        recent_limit: int = 5,
+    ) -> OrderDashboardSummary:
+        target_day = today or datetime.now().date()
+        day_start = datetime.combine(target_day, time.min)
+        day_end = datetime.combine(target_day, time.max)
+        recent_limit, _ = self._validate_limit_offset(recent_limit, 0)
+        detail_region = normalize_region(region) if region is not None else None
+
+        with self._session_factory() as session:
+            repo = OrderRepository(session)
+            region_counts = repo.count_by_region()
+            status_counts = repo.count_by_status()
+            recent_orders = tuple(
+                self._to_summary(order)
+                for order in repo.list(region=detail_region, limit=recent_limit)
+            )
+            return OrderDashboardSummary(
+                total_order_count=repo.count(),
+                today_order_count=repo.count(start_date=day_start, end_date=day_end),
+                total_amount=repo.sum_amount(),
+                today_amount=repo.sum_amount(start_date=day_start, end_date=day_end),
+                macau_order_count=region_counts.get("澳门", 0),
+                hong_kong_order_count=region_counts.get("香港", 0),
+                pending_order_count=status_counts.get("active", 0) + status_counts.get("pending", 0),
+                settled_order_count=status_counts.get("settled", 0),
+                recent_orders=recent_orders,
+                amount_by_bet_type=tuple(repo.amount_by_bet_type(region=detail_region)),
             )
 
     def _generate_order_no(self) -> str:

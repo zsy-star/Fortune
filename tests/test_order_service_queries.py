@@ -3,11 +3,20 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from decimal import Decimal
 
+from models import Order
 from schemas.order_schema import OrderCreate, OrderItemCreate
 from services.order_service import OrderService
 
 
-def create_order(service: OrderService, *, region: str, customer: str, channel: str, amount: str = "10"):
+def create_order(
+    service: OrderService,
+    *,
+    region: str,
+    customer: str,
+    channel: str,
+    amount: str = "10",
+    items: list[OrderItemCreate] | None = None,
+):
     return service.create_order(
         OrderCreate(
             customer_name=customer,
@@ -15,7 +24,7 @@ def create_order(service: OrderService, *, region: str, customer: str, channel: 
             region=region,
             raw_text=f"{customer}{amount}",
             source="test",
-            items=[OrderItemCreate(bet_type="特码", selection="1", amount=amount)],
+            items=items or [OrderItemCreate(bet_type="特码", selection="1", amount=amount)],
         )
     )
 
@@ -47,3 +56,48 @@ def test_order_service_query_filters_and_detached_dto(session_factory) -> None:
     by_no = service.get_order_by_no(first.order_no)
     assert by_no is not None
     assert by_no.items[0].bet_type == "特码"
+
+
+def test_order_service_dashboard_summary_counts_amounts_and_recent_orders(session_factory) -> None:
+    service = OrderService(session_factory)
+    macau = create_order(
+        service,
+        region="澳门",
+        customer="澳门客",
+        channel="微信",
+        amount="30",
+        items=[
+            OrderItemCreate(bet_type="特码", selection="1", amount="10"),
+            OrderItemCreate(bet_type="特码", selection="2", amount="10"),
+            OrderItemCreate(bet_type="特码", selection="3", amount="10"),
+        ],
+    )
+    hk = create_order(service, region="香港", customer="香港客", channel="现金", amount="20")
+    old = create_order(service, region="澳门", customer="旧订单", channel="微信", amount="5")
+
+    with session_factory() as session:
+        old_order = session.get(Order, old.id)
+        hk_order = session.get(Order, hk.id)
+        assert old_order is not None
+        assert hk_order is not None
+        old_order.created_at = datetime.now() - timedelta(days=1)
+        old_order.updated_at = old_order.created_at
+        hk_order.status = "settled"
+        session.commit()
+
+    summary = service.get_dashboard_summary(recent_limit=10)
+    assert summary.total_order_count == 3
+    assert summary.today_order_count == 2
+    assert summary.total_amount == Decimal("55.00")
+    assert summary.today_amount == Decimal("50.00")
+    assert summary.macau_order_count == 2
+    assert summary.hong_kong_order_count == 1
+    assert summary.pending_order_count == 2
+    assert summary.settled_order_count == 1
+    assert summary.amount_by_bet_type == (("特码", Decimal("55.00")),)
+    assert [order.id for order in summary.recent_orders][:2] == [hk.id, macau.id]
+
+    hk_summary = service.get_dashboard_summary(region="香港", recent_limit=10)
+    assert hk_summary.total_order_count == 3
+    assert hk_summary.amount_by_bet_type == (("特码", Decimal("20.00")),)
+    assert [order.id for order in hk_summary.recent_orders] == [hk.id]
