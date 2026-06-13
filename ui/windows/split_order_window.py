@@ -31,6 +31,11 @@ class SplitOrderWindow(QMainWindow):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
+        self._scope_hint = QLabel("拆单助手当前测试版暂未开放，仅为后续功能预留。")
+        self._scope_hint.setObjectName("scopeHint")
+        self._scope_hint.setWordWrap(True)
+        root.addWidget(self._scope_hint)
+
         self._input_text = QPlainTextEdit()
         self._input_text.setPlaceholderText("输入区域，当前版本仅支持特码")
         self._input_text.setMinimumHeight(100)
@@ -55,10 +60,11 @@ class SplitOrderWindow(QMainWindow):
         result_layout.addWidget(self._result_text)
         root.addWidget(result_box, stretch=1)
 
-        btn_save = QPushButton("保存拆分结果到文件")
-        btn_save.setObjectName("saveButton")
-        btn_save.clicked.connect(self._on_save_results)
-        root.addWidget(btn_save)
+        self._btn_save = QPushButton("保存拆分结果到文件")
+        self._btn_save.setObjectName("saveButton")
+        self._btn_save.setEnabled(False)
+        self._btn_save.setToolTip("当前测试版暂未开放")
+        root.addWidget(self._btn_save)
 
         self._apply_stylesheet()
 
@@ -93,28 +99,25 @@ class SplitOrderWindow(QMainWindow):
         row = QHBoxLayout()
         row.setSpacing(8)
 
-        btn_split = QPushButton("开始拆分")
-        btn_style = QPushButton("调整拆分结果样式")
+        self._btn_split = QPushButton("开始拆分")
+        self._btn_style = QPushButton("调整拆分结果样式")
         btn_clear = QPushButton("清空输入")
 
-        btn_split.clicked.connect(self._on_start_split)
         btn_clear.clicked.connect(self._on_clear_input)
 
-        for btn in (btn_split, btn_style, btn_clear):
+        for btn in (self._btn_split, self._btn_style):
+            btn.setEnabled(False)
+            btn.setToolTip("当前测试版暂未开放")
+
+        for btn in (self._btn_split, self._btn_style, btn_clear):
             btn.setObjectName("actionButton")
             row.addWidget(btn, stretch=1)
 
         return row
 
     def _on_start_split(self) -> None:
-        # 占位：后续接入拆单逻辑
-        raw = self._input_text.toPlainText().strip()
-        if not raw:
-            self._recognize_text.setPlainText("")
-            self._result_text.setPlainText("")
-            return
-        self._recognize_text.setPlainText(raw)
-        self._result_text.setPlainText("（拆分功能开发中，敬请期待）")
+        self._recognize_text.setPlainText("")
+        self._result_text.setPlainText("拆单助手当前测试版暂未开放，仅为后续功能预留。")
 
     def _on_clear_input(self) -> None:
         self._input_text.clear()
@@ -169,6 +172,13 @@ class SplitOrderWindow(QMainWindow):
             }
             QPushButton#saveButton:hover {
                 background: #dfe6e9;
+            }
+            QLabel#scopeHint {
+                color: #7f8c8d;
+                font-size: 13px;
+                padding: 8px;
+                border: 1px solid #d5d8dc;
+                background: #f8f9fa;
             }
             QRadioButton, QLabel {
                 font-size: 13px;

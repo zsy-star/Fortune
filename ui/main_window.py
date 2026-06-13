@@ -258,7 +258,7 @@ class MainWindow(QMainWindow):
 
             [
 
-                ("特码调单", _SPECIAL_ORDER_STACK),
+                ("连码调单", _SPECIAL_ORDER_STACK),
 
                 ("连肖调单", _LIANXIAO_ORDER_STACK),
 

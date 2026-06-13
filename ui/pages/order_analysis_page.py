@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-import matplotlib
+from ui.matplotlib_setup import ensure_matplotlib_configured
 
-matplotlib.use("QtAgg")
+ensure_matplotlib_configured()
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -28,102 +28,6 @@ from PySide6.QtWidgets import (
 
 from schemas.order_schema import OrderAnalysisGroup, OrderAnalysisSummary
 from services.order_service import OrderService
-
-_ZODIAC = ("鼠", "牛", "虎", "兔", "龙", "蛇", "马", "羊", "猴", "鸡", "狗", "猪")
-_NUMBER_COLORS = ("#c0392b", "#27ae60", "#2980b9", "#2c3e50")
-
-
-@dataclass(frozen=True)
-class NumberRow:
-    label: str
-    bet_count: int
-    profit_loss: float
-    number_color: str
-
-
-def _zodiac_label(num: int) -> str:
-    zodiac = _ZODIAC[(num - 1) % 12]
-    return f"{zodiac}{num:02d}"
-
-
-def _build_macau_rows() -> list[NumberRow]:
-    """示例号码表（后续接订单统计服务）。"""
-    specs: list[tuple[int, int, float]] = [
-        (1, 200, -9112),
-        (2, 0, 0),
-        (3, 50, -320),
-        (4, 80, 288),
-        (5, 120, -1500),
-        (6, 0, 0),
-        (7, 30, -88),
-        (8, 100, -2100),
-        (9, 0, 0),
-        (10, 60, 120),
-        (11, 0, 0),
-        (12, 100, -4500),
-        (13, 40, -560),
-        (14, 0, 0),
-        (15, 90, 45),
-        (16, 0, 0),
-        (17, 25, -120),
-        (18, 0, 0),
-        (19, 70, -890),
-        (20, 0, 0),
-        (21, 110, -2300),
-        (22, 0, 0),
-        (23, 15, 30),
-        (24, 0, 0),
-        (25, 85, -670),
-        (26, 0, 0),
-        (27, 45, -200),
-        (28, 0, 0),
-        (29, 55, 95),
-        (30, 0, 0),
-        (31, 130, -1800),
-        (32, 0, 0),
-        (33, 20, -45),
-        (34, 0, 0),
-        (35, 75, -520),
-        (36, 0, 0),
-        (37, 95, -1100),
-        (38, 0, 0),
-        (39, 10, 15),
-        (40, 0, 0),
-        (41, 65, -380),
-        (42, 0, 0),
-        (43, 140, -3200),
-        (44, 0, 0),
-        (45, 35, -90),
-        (46, 0, 0),
-        (47, 50, 60),
-        (48, 0, 0),
-        (49, 180, -5600),
-    ]
-    rows: list[NumberRow] = []
-    for num, bet, pl in specs:
-        rows.append(
-            NumberRow(
-                label=_zodiac_label(num),
-                bet_count=bet,
-                profit_loss=pl,
-                number_color=_NUMBER_COLORS[num % len(_NUMBER_COLORS)],
-            )
-        )
-    return rows
-
-
-_REPORT_HTML = """
-<p><b>订单分析报告 (仅参考)：</b></p>
-<p>[提示：分析结果基于当前订单以及赔率、胜率、返水设置情况得出。]</p>
-<p>澳门特码<span style="color:#e74c3c;font-weight:600;">胜负差过大</span>，建议降低亏损较大的数字的押注数额。</p>
-<p>建议澳门特码调整上报数据：
-<span style="color:#e67e22;">01=190</span>, <span style="color:#e67e22;">12=90</span></p>
-<p>香港特码检查：未知(可能没有特码数据)。</p>
-<p>各类整订单占比检查：
-<span style="background-color:#27ae60;color:#ffffff;padding:2px 8px;border-radius:3px;">健康</span></p>
-<p style="color:#555;margin-top:10px;">
-订单分析报告请参照数据概览页中盈利分析情况来调整订单数据。</p>
-"""
 
 _REPORT_EMPTY_HTML = """
 <p><b>订单分析报告 (仅参考)：</b></p>

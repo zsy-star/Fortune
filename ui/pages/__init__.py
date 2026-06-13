@@ -1,4 +1,4 @@
-"""各功能页面占位实现。"""
+"""Fortune UI pages for the commercial test scope."""
 
 from ui.pages.overview_page import OverviewPage
 from ui.pages.order_analysis_page import OrderAnalysisPage

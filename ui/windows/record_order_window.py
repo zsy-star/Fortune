@@ -60,10 +60,11 @@ _CHECKBOX_LABELS = [
 ]
 
 _FOOTER_HINT = (
-    "自助识别支持类型: <特码><平特一肖><连肖><连尾><平特一尾><三中三><二中二>"
-    "<三中二><二中特><特串><平码(号码)><不中(5-24)><特码两面><特码波色>"
-    "<六肖中特><包半波>"
+    "当前测试版重点支持特码类录入和结算；"
+    "其他玩法可能可录入，但暂不保证结算。"
 )
+
+_UNAVAILABLE_CHECKBOXES = {"识别地区", "智能纠错", "特肖模式", "抄写法", "各->各肖"}
 
 
 class RecordOrderWindow(QMainWindow):
@@ -750,9 +751,8 @@ class RecordOrderWindow(QMainWindow):
         outer.setSpacing(6)
 
         toolbar = QHBoxLayout()
-        link = QLabel('<a href="#">不能识别点我</a>')
+        link = QLabel("识别异常请先检查格式；当前测试版不提供在线帮助入口。")
         link.setObjectName("helpLink")
-        link.setOpenExternalLinks(False)
         toolbar.addWidget(link)
         toolbar.addStretch(1)
 
@@ -801,8 +801,12 @@ class RecordOrderWindow(QMainWindow):
         checks = QHBoxLayout()
         for label in _CHECKBOX_LABELS:
             cb = QCheckBox(label)
-            if label in ("识别地区", "自动获取"):
+            if label == "自动获取":
                 cb.setChecked(True)
+            if label in _UNAVAILABLE_CHECKBOXES:
+                cb.setChecked(False)
+                cb.setEnabled(False)
+                cb.setToolTip("暂未开放")
             if label == "自动获取":
                 cb.setObjectName("autoFetchCheck")
                 self._chk_auto_fetch = cb

@@ -71,7 +71,14 @@ def _half_wave(name: str, nums: set[int]) -> str:
 
 
 def _build_catalog_text() -> str:
-    lines: list[str] = ["2026最新", ""]
+    lines: list[str] = [
+        "静态号码参考表",
+        "当前版本不会自动随年份更新",
+        "请以实际开奖年份配置为准",
+        "",
+        "2026最新",
+        "",
+    ]
 
     lines.append("十二生肖")
     for animal, nums in _ZODIAC_2026:
