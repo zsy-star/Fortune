@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 import matplotlib
 
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
     QHeaderView,
+    QPushButton,
     QRadioButton,
     QTableWidget,
     QTableWidgetItem,
@@ -23,6 +25,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from schemas.order_schema import OrderAnalysisGroup, OrderAnalysisSummary
+from services.order_service import OrderService
 
 _ZODIAC = ("鼠", "牛", "虎", "兔", "龙", "蛇", "马", "羊", "猴", "鸡", "狗", "猪")
 _NUMBER_COLORS = ("#c0392b", "#27ae60", "#2980b9", "#2c3e50")
@@ -126,6 +131,12 @@ _REPORT_EMPTY_HTML = """
 """
 
 
+@dataclass(frozen=True)
+class AnalysisSnapshot:
+    summary: OrderAnalysisSummary | None
+    error_message: str | None = None
+
+
 class _ChartCanvas(FigureCanvas):
     def __init__(self, width: float = 4.6, height: float = 2.4, parent=None):
         self.figure = Figure(figsize=(width, height), dpi=100)
@@ -135,13 +146,10 @@ class _ChartCanvas(FigureCanvas):
 
 
 class OrderAnalysisPage(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, order_service: OrderService | None = None):
         super().__init__(parent)
-        self._rows_by_filter = {
-            "all": _build_macau_rows(),
-            "macau": _build_macau_rows(),
-            "hk": [],
-        }
+        self._order_service = order_service or OrderService()
+        self._snapshots: dict[str, AnalysisSnapshot] = {}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 10, 12, 12)
@@ -151,7 +159,7 @@ class OrderAnalysisPage(QWidget):
         root.addLayout(self._build_body_row(), stretch=1)
 
         self._apply_stylesheet()
-        self._on_filter_changed(1)
+        self.reload_data()
 
     def _build_filter_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -163,9 +171,13 @@ class OrderAnalysisPage(QWidget):
             self._filter_group.addButton(rb, idx)
             row.addWidget(rb)
 
-        self._filter_group.button(1).setChecked(True)
+        self._filter_group.button(0).setChecked(True)
         self._filter_group.idClicked.connect(self._on_filter_changed)
 
+        self._btn_refresh = QPushButton("刷新")
+        self._btn_refresh.setObjectName("refreshButton")
+        self._btn_refresh.clicked.connect(self.reload_data)
+        row.addWidget(self._btn_refresh)
         row.addStretch(1)
         return row
 
@@ -175,7 +187,7 @@ class OrderAnalysisPage(QWidget):
 
         self._table = QTableWidget()
         self._table.setColumnCount(4)
-        self._table.setHorizontalHeaderLabels(["号码", "下注数", "盈亏", "ID"])
+        self._table.setHorizontalHeaderLabels(["维度", "分类", "订单数", "金额"])
         self._table.verticalHeader().setVisible(False)
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -184,10 +196,10 @@ class OrderAnalysisPage(QWidget):
         self._table.setMaximumWidth(360)
 
         header = self._table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
 
         right = QVBoxLayout()
         right.setSpacing(6)
@@ -213,81 +225,148 @@ class OrderAnalysisPage(QWidget):
 
     def _on_filter_changed(self, button_id: int) -> None:
         key = self._filter_key(button_id)
-        rows = self._rows_by_filter[key]
-        self._fill_table(rows)
-        self._refresh_zodiac_chart(
-            self._freq_canvas,
-            "连肖中生肖出现频率",
-            "出现次数",
-            [0] * 12,
-        )
-        self._refresh_zodiac_chart(
-            self._bet_canvas,
-            "平特一肖押注情况",
-            "金额",
-            [0] * 12,
-        )
-        self._report_view.setHtml(_REPORT_HTML if rows else _REPORT_EMPTY_HTML)
+        snapshot = self._snapshots.get(key)
+        summary = snapshot.summary if snapshot else None
+        if snapshot and snapshot.error_message:
+            self._fill_table([])
+            self._refresh_trend_chart([])
+            self._refresh_bet_type_chart([])
+            self._report_view.setPlainText(snapshot.error_message)
+            return
+        if summary is None:
+            self._fill_table([])
+            self._refresh_trend_chart([])
+            self._refresh_bet_type_chart([])
+            self._report_view.setHtml(_REPORT_EMPTY_HTML)
+            return
 
-    def _fill_table(self, rows: list[NumberRow]) -> None:
+        self._fill_table(self._build_table_rows(summary))
+        self._refresh_trend_chart(list(summary.recent_7_day_trend))
+        self._refresh_bet_type_chart(list(summary.by_bet_type))
+        self._refresh_report(summary)
+
+    def reload_data(self) -> None:
+        try:
+            self._snapshots = {
+                "all": AnalysisSnapshot(self._order_service.get_order_analysis_summary(region=None)),
+                "macau": AnalysisSnapshot(self._order_service.get_order_analysis_summary(region="澳门")),
+                "hk": AnalysisSnapshot(self._order_service.get_order_analysis_summary(region="香港")),
+            }
+        except Exception as exc:
+            error = AnalysisSnapshot(None, f"读取订单分析失败：{exc}")
+            self._snapshots = {"all": error, "macau": error, "hk": error}
+
+        checked_id = self._filter_group.checkedId()
+        self._on_filter_changed(checked_id if checked_id in (0, 1, 2) else 0)
+
+    def _build_table_rows(self, summary: OrderAnalysisSummary) -> list[tuple[str, str, int, Decimal]]:
+        rows: list[tuple[str, str, int, Decimal]] = [
+            ("总计", "全部订单", summary.total_order_count, summary.total_amount),
+            ("总计", "平均订单金额", summary.total_order_count, summary.average_order_amount),
+        ]
+
+        def add_groups(section: str, groups: tuple[OrderAnalysisGroup, ...]) -> None:
+            for group in groups:
+                rows.append((section, group.label, group.order_count, group.total_amount))
+
+        add_groups("地区", summary.by_region)
+        add_groups("状态", summary.by_status)
+        add_groups("日期", summary.by_date)
+        add_groups("投注类型", summary.by_bet_type)
+        return rows
+
+    def _fill_table(self, rows: list[tuple[str, str, int, Decimal]]) -> None:
         self._table.setRowCount(len(rows))
-        for idx, row in enumerate(rows):
-            num_item = QTableWidgetItem(row.label)
-            num_item.setForeground(QColor(row.number_color))
-            num_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        for idx, (section, label, count, amount) in enumerate(rows):
+            values = [section, label, str(count), f"{amount:.2f}"]
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if section == "总计":
+                    item.setForeground(QColor("#2980b9"))
+                self._table.setItem(idx, col, item)
 
-            bet_item = QTableWidgetItem(str(row.bet_count))
-            bet_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-
-            pl_item = QTableWidgetItem(str(row.profit_loss))
-            pl_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            if row.profit_loss < 0:
-                pl_item.setForeground(QColor("#c0392b"))
-            elif row.profit_loss > 0:
-                pl_item.setForeground(QColor("#3498db"))
-
-            id_item = QTableWidgetItem(str(idx + 1))
-            id_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-
-            self._table.setItem(idx, 0, num_item)
-            self._table.setItem(idx, 1, bet_item)
-            self._table.setItem(idx, 2, pl_item)
-            self._table.setItem(idx, 3, id_item)
-
-    def _refresh_zodiac_chart(
-        self,
-        canvas: _ChartCanvas,
-        title: str,
-        ylabel: str,
-        values: list[float],
-    ) -> None:
-        fig = canvas.figure
+    def _refresh_trend_chart(self, groups: list[OrderAnalysisGroup]) -> None:
+        fig = self._freq_canvas.figure
         fig.clear()
         ax = fig.add_subplot(111)
         ax.set_facecolor("#eef6fc")
 
-        x = list(range(len(_ZODIAC)))
-        ax.plot(x, values, color="#3498db", marker="o", linewidth=1.5, markersize=5)
-        ax.axhline(0, color="#95a5a6", linewidth=0.8)
-
-        for xi, val in zip(x, values):
-            ax.text(xi, val, f"{val:g}", ha="center", va="bottom", fontsize=8)
-
-        ax.set_xticks(x)
-        ax.set_xticklabels(list(_ZODIAC), fontsize=9)
-        ax.set_ylim(-0.04, 0.04)
-        ax.set_yticks([-0.04, -0.02, 0, 0.02, 0.04])
-        ax.set_title(title, fontsize=10, pad=8)
-        ax.set_ylabel(ylabel, fontsize=9)
+        labels = [group.label[5:] for group in groups]
+        values = [float(group.total_amount) for group in groups]
+        x = list(range(len(labels)))
+        if values and any(val > 0 for val in values):
+            ax.plot(x, values, color="#3498db", marker="o", linewidth=1.5, markersize=5)
+            ax.axhline(0, color="#95a5a6", linewidth=0.8)
+            for xi, val in zip(x, values):
+                ax.text(xi, val, f"{val:g}", ha="center", va="bottom", fontsize=8)
+            ax.set_xticks(x)
+            ax.set_xticklabels(labels, fontsize=8, rotation=25)
+            y_max = max(values) * 1.2 if max(values) > 0 else 1
+            ax.set_ylim(0, y_max)
+        else:
+            ax.set_xticks([])
+            ax.set_ylim(0, 1)
+            ax.text(0.5, 0.5, "暂无订单数据", ha="center", va="center", transform=ax.transAxes, color="#7f8c8d")
+        ax.set_title("最近7天订单趋势", fontsize=10, pad=8)
+        ax.set_ylabel("投注金额", fontsize=9)
         ax.grid(axis="y", linestyle="--", alpha=0.5)
         fig.tight_layout()
-        canvas.draw()
+        self._freq_canvas.draw()
+
+    def _refresh_bet_type_chart(self, groups: list[OrderAnalysisGroup]) -> None:
+        fig = self._bet_canvas.figure
+        fig.clear()
+        ax = fig.add_subplot(111)
+        ax.set_facecolor("#eef6fc")
+
+        labels = [group.label for group in groups]
+        values = [float(group.total_amount) for group in groups]
+        if labels and values:
+            x = list(range(len(labels)))
+            bars = ax.bar(x, values, color="#27ae60", width=0.55)
+            ax.set_xticks(x)
+            ax.set_xticklabels(labels, fontsize=8, rotation=20)
+            y_max = max(values) * 1.2 if max(values) > 0 else 1
+            ax.set_ylim(0, y_max)
+            for bar, val in zip(bars, values):
+                ax.text(bar.get_x() + bar.get_width() / 2, val, f"{val:g}", ha="center", va="bottom", fontsize=8)
+        else:
+            ax.set_ylim(0, 1)
+            ax.text(0.5, 0.5, "暂无订单数据", ha="center", va="center", transform=ax.transAxes, color="#7f8c8d")
+
+        ax.set_title("按投注类型统计金额", fontsize=10, pad=8)
+        ax.set_ylabel("投注金额", fontsize=9)
+        ax.grid(axis="y", linestyle="--", alpha=0.5)
+        fig.tight_layout()
+        self._bet_canvas.draw()
+
+    def _refresh_report(self, summary: OrderAnalysisSummary) -> None:
+        if summary.total_order_count == 0:
+            self._report_view.setHtml(_REPORT_EMPTY_HTML)
+            return
+        lines = [
+            "<p><b>订单分析报告：</b></p>",
+            f"<p>订单数：{summary.total_order_count}，投注金额：{summary.total_amount:.2f}，"
+            f"平均订单金额：{summary.average_order_amount:.2f}</p>",
+            "<p><b>最近订单：</b></p>",
+        ]
+        for order in summary.recent_orders:
+            lines.append(
+                f"<p>{order.created_at:%Y-%m-%d %H:%M} "
+                f"{order.order_no} {order.region} {order.total_amount:.2f} {order.status}</p>"
+            )
+        self._report_view.setHtml("\n".join(lines))
 
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(
             """
             QRadioButton {
                 font-size: 13px;
+            }
+            QPushButton#refreshButton {
+                padding: 4px 12px;
+                font-size: 12px;
             }
             QTableWidget {
                 background-color: #ffffff;

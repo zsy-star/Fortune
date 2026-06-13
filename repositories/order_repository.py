@@ -135,6 +135,87 @@ class OrderRepository:
         stmt = select(Order.status, func.count(Order.id)).group_by(Order.status)
         return {status: int(count) for status, count in self.session.execute(stmt)}
 
+    def stats_by_region(
+        self,
+        *,
+        region: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> list[tuple[str, int, Decimal]]:
+        stmt = (
+            select(Order.region, func.count(Order.id), func.coalesce(func.sum(Order.total_amount), 0))
+            .group_by(Order.region)
+            .order_by(Order.region.asc())
+        )
+        stmt = self._apply_filters(stmt, region=region, start_date=start_date, end_date=end_date)
+        return [
+            (label, int(count), Decimal(amount or 0))
+            for label, count, amount in self.session.execute(stmt)
+        ]
+
+    def stats_by_status(
+        self,
+        *,
+        region: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> list[tuple[str, int, Decimal]]:
+        stmt = (
+            select(Order.status, func.count(Order.id), func.coalesce(func.sum(Order.total_amount), 0))
+            .group_by(Order.status)
+            .order_by(Order.status.asc())
+        )
+        stmt = self._apply_filters(stmt, region=region, start_date=start_date, end_date=end_date)
+        return [
+            (label, int(count), Decimal(amount or 0))
+            for label, count, amount in self.session.execute(stmt)
+        ]
+
+    def stats_by_date(
+        self,
+        *,
+        region: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> list[tuple[str, int, Decimal]]:
+        day = func.date(Order.created_at)
+        stmt = (
+            select(day, func.count(Order.id), func.coalesce(func.sum(Order.total_amount), 0))
+            .group_by(day)
+            .order_by(day.asc())
+        )
+        stmt = self._apply_filters(stmt, region=region, start_date=start_date, end_date=end_date)
+        return [
+            (str(label), int(count), Decimal(amount or 0))
+            for label, count, amount in self.session.execute(stmt)
+        ]
+
+    def stats_by_bet_type(
+        self,
+        *,
+        region: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        limit: int = 20,
+    ) -> list[tuple[str, int, Decimal]]:
+        stmt = (
+            select(
+                OrderItem.bet_type,
+                func.count(func.distinct(Order.id)),
+                func.coalesce(func.sum(OrderItem.amount), 0),
+            )
+            .join(Order, Order.id == OrderItem.order_id)
+            .group_by(OrderItem.bet_type)
+            .order_by(func.sum(OrderItem.amount).desc(), OrderItem.bet_type.asc())
+        )
+        stmt = self._apply_filters(stmt, region=region, start_date=start_date, end_date=end_date)
+        if limit > 0:
+            stmt = stmt.limit(limit)
+        return [
+            (label, int(count), Decimal(amount or 0))
+            for label, count, amount in self.session.execute(stmt)
+        ]
+
     def amount_by_bet_type(
         self,
         *,

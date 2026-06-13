@@ -128,6 +128,26 @@ class OrderDashboardSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class OrderAnalysisGroup:
+    label: str
+    order_count: int
+    total_amount: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class OrderAnalysisSummary:
+    total_order_count: int
+    total_amount: Decimal
+    average_order_amount: Decimal
+    by_region: tuple[OrderAnalysisGroup, ...]
+    by_status: tuple[OrderAnalysisGroup, ...]
+    by_date: tuple[OrderAnalysisGroup, ...]
+    by_bet_type: tuple[OrderAnalysisGroup, ...]
+    recent_7_day_trend: tuple[OrderAnalysisGroup, ...]
+    recent_orders: tuple[OrderSummary, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class OrderDetailResult:
     id: int
     order_no: str

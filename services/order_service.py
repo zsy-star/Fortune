@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -18,6 +18,8 @@ from domain.number_rules import normalize_number
 from models import Order, OrderItem
 from repositories.order_repository import OrderRepository
 from schemas.order_schema import (
+    OrderAnalysisGroup,
+    OrderAnalysisSummary,
     OrderCreate,
     OrderDashboardSummary,
     OrderDetailResult,
@@ -201,6 +203,60 @@ class OrderService:
                 recent_orders=recent_orders,
                 amount_by_bet_type=tuple(repo.amount_by_bet_type(region=detail_region)),
             )
+
+    def get_order_analysis_summary(
+        self,
+        *,
+        region: str | None = None,
+        today: date | None = None,
+        recent_limit: int = 8,
+    ) -> OrderAnalysisSummary:
+        target_day = today or datetime.now().date()
+        trend_start_day = target_day - timedelta(days=6)
+        trend_start = datetime.combine(trend_start_day, time.min)
+        trend_end = datetime.combine(target_day, time.max)
+        recent_limit, _ = self._validate_limit_offset(recent_limit, 0)
+        detail_region = normalize_region(region) if region is not None else None
+
+        with self._session_factory() as session:
+            repo = OrderRepository(session)
+            total_order_count = repo.count(region=detail_region)
+            total_amount = repo.sum_amount(region=detail_region)
+            average_order_amount = (
+                (total_amount / Decimal(total_order_count)).quantize(Decimal("0.01"))
+                if total_order_count
+                else Decimal("0")
+            )
+            trend_by_label = {
+                label: OrderAnalysisGroup(label, count, amount)
+                for label, count, amount in repo.stats_by_date(
+                    region=detail_region,
+                    start_date=trend_start,
+                    end_date=trend_end,
+                )
+            }
+            trend = []
+            for offset in range(7):
+                label = (trend_start_day + timedelta(days=offset)).isoformat()
+                trend.append(trend_by_label.get(label, OrderAnalysisGroup(label, 0, Decimal("0"))))
+
+            return OrderAnalysisSummary(
+                total_order_count=total_order_count,
+                total_amount=total_amount,
+                average_order_amount=average_order_amount,
+                by_region=self._to_analysis_groups(repo.stats_by_region(region=detail_region)),
+                by_status=self._to_analysis_groups(repo.stats_by_status(region=detail_region)),
+                by_date=self._to_analysis_groups(repo.stats_by_date(region=detail_region)),
+                by_bet_type=self._to_analysis_groups(repo.stats_by_bet_type(region=detail_region)),
+                recent_7_day_trend=tuple(trend),
+                recent_orders=tuple(
+                    self._to_summary(order)
+                    for order in repo.list(region=detail_region, limit=recent_limit)
+                ),
+            )
+
+    def _to_analysis_groups(self, rows: list[tuple[str, int, Decimal]]) -> tuple[OrderAnalysisGroup, ...]:
+        return tuple(OrderAnalysisGroup(label, count, amount) for label, count, amount in rows)
 
     def _generate_order_no(self) -> str:
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
