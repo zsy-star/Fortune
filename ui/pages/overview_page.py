@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 import matplotlib
 
@@ -16,42 +17,46 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QRadioButton,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
-# 盈利率分析条目（示例均为「可观」）
-_PROFIT_ITEMS = [f"{n}不中的盈利率为: 可观" for n in range(16, 25)]
+from services.order_service import OrderService
 
 
 @dataclass(frozen=True)
 class OverviewSnapshot:
-    """某一筛选条件下的展示数据。"""
+    """某一筛选条件下的真实展示数据。"""
 
     bet_types: tuple[str, ...]
     amounts: tuple[float, ...]
-    total_all: float
-    total_macau: float
-    total_hk: float
+    total_order_count: int
+    today_order_count: int
+    total_amount: Decimal
+    today_amount: Decimal
+    macau_order_count: int
+    hong_kong_order_count: int
+    pending_order_count: int
+    settled_order_count: int
+    recent_orders: tuple[str, ...]
+    error_message: str | None = None
 
 
-# 示例数据（后续接订单服务）
-_DATA_ALL = OverviewSnapshot(
-    bet_types=("特码",),
-    amounts=(300.0,),
-    total_all=300.0,
-    total_macau=300.0,
-    total_hk=0.0,
-)
-_DATA_MACAU = _DATA_ALL
-_DATA_HK = OverviewSnapshot(
+_EMPTY_SNAPSHOT = OverviewSnapshot(
     bet_types=(),
     amounts=(),
-    total_all=0.0,
-    total_macau=0.0,
-    total_hk=0.0,
+    total_order_count=0,
+    today_order_count=0,
+    total_amount=Decimal("0"),
+    today_amount=Decimal("0"),
+    macau_order_count=0,
+    hong_kong_order_count=0,
+    pending_order_count=0,
+    settled_order_count=0,
+    recent_orders=(),
 )
 
 
@@ -64,13 +69,10 @@ class _ChartCanvas(FigureCanvas):
 
 
 class OverviewPage(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, order_service: OrderService | None = None):
         super().__init__(parent)
-        self._snapshots = {
-            "all": _DATA_ALL,
-            "macau": _DATA_MACAU,
-            "hk": _DATA_HK,
-        }
+        self._order_service = order_service or OrderService()
+        self._snapshots = {"all": _EMPTY_SNAPSHOT, "macau": _EMPTY_SNAPSHOT, "hk": _EMPTY_SNAPSHOT}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 12, 16, 16)
@@ -81,7 +83,7 @@ class OverviewPage(QWidget):
         root.addLayout(self._build_bottom_row(), stretch=2)
 
         self._apply_stylesheet()
-        self._on_filter_changed(1)
+        self.reload_data()
 
     def _build_filter_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -98,9 +100,13 @@ class OverviewPage(QWidget):
             self._filter_group.addButton(rb, idx)
             row.addWidget(rb)
 
-        self._filter_group.button(1).setChecked(True)
+        self._filter_group.button(0).setChecked(True)
         self._filter_group.idClicked.connect(self._on_filter_changed)
 
+        self._btn_refresh = QPushButton("刷新")
+        self._btn_refresh.setObjectName("refreshButton")
+        self._btn_refresh.clicked.connect(self.reload_data)
+        row.addWidget(self._btn_refresh)
         row.addStretch(1)
         return row
 
@@ -121,10 +127,24 @@ class OverviewPage(QWidget):
 
         stats = QVBoxLayout()
         stats.setSpacing(6)
-        self._lbl_total_all = QLabel()
-        self._lbl_total_macau = QLabel()
-        self._lbl_total_hk = QLabel()
-        for lbl in (self._lbl_total_all, self._lbl_total_macau, self._lbl_total_hk):
+        self._lbl_total_orders = QLabel()
+        self._lbl_today_orders = QLabel()
+        self._lbl_total_amount = QLabel()
+        self._lbl_today_amount = QLabel()
+        self._lbl_macau_orders = QLabel()
+        self._lbl_hk_orders = QLabel()
+        self._lbl_pending_orders = QLabel()
+        self._lbl_settled_orders = QLabel()
+        for lbl in (
+            self._lbl_total_orders,
+            self._lbl_today_orders,
+            self._lbl_total_amount,
+            self._lbl_today_amount,
+            self._lbl_macau_orders,
+            self._lbl_hk_orders,
+            self._lbl_pending_orders,
+            self._lbl_settled_orders,
+        ):
             lbl.setObjectName("statLabel")
             stats.addWidget(lbl)
         stats.addStretch(1)
@@ -133,13 +153,13 @@ class OverviewPage(QWidget):
         stats_wrap.setLayout(stats)
         stats_wrap.setMinimumWidth(200)
 
-        self._profit_view = QTextEdit()
-        self._profit_view.setReadOnly(True)
-        self._profit_view.setObjectName("profitAnalysis")
-        self._profit_view.setFrameShape(QFrame.Shape.Box)
+        self._recent_orders_view = QTextEdit()
+        self._recent_orders_view.setReadOnly(True)
+        self._recent_orders_view.setObjectName("recentOrders")
+        self._recent_orders_view.setFrameShape(QFrame.Shape.Box)
 
         row.addWidget(stats_wrap, stretch=0)
-        row.addWidget(self._profit_view, stretch=1)
+        row.addWidget(self._recent_orders_view, stretch=1)
         return row
 
     def _filter_key(self, button_id: int) -> str:
@@ -151,12 +171,66 @@ class OverviewPage(QWidget):
         self._refresh_summary(data)
         self._refresh_bar_chart(data)
         self._refresh_pie_chart(data)
-        self._refresh_profit_analysis()
+        self._refresh_recent_orders(data)
+
+    def reload_data(self) -> None:
+        try:
+            self._snapshots = {
+                "all": self._load_snapshot(region=None),
+                "macau": self._load_snapshot(region="澳门"),
+                "hk": self._load_snapshot(region="香港"),
+            }
+        except Exception as exc:
+            message = f"读取数据总览失败：{exc}"
+            error_snapshot = OverviewSnapshot(
+                bet_types=(),
+                amounts=(),
+                total_order_count=0,
+                today_order_count=0,
+                total_amount=Decimal("0"),
+                today_amount=Decimal("0"),
+                macau_order_count=0,
+                hong_kong_order_count=0,
+                pending_order_count=0,
+                settled_order_count=0,
+                recent_orders=(),
+                error_message=message,
+            )
+            self._snapshots = {"all": error_snapshot, "macau": error_snapshot, "hk": error_snapshot}
+
+        checked_id = self._filter_group.checkedId()
+        self._on_filter_changed(checked_id if checked_id in (0, 1, 2) else 0)
+
+    def _load_snapshot(self, *, region: str | None) -> OverviewSnapshot:
+        summary = self._order_service.get_dashboard_summary(region=region, recent_limit=8)
+        recent_lines = tuple(
+            f"{order.created_at:%Y-%m-%d %H:%M}  {order.order_no}  "
+            f"{order.region}  {order.total_amount:.2f}  {order.status}"
+            for order in summary.recent_orders
+        )
+        return OverviewSnapshot(
+            bet_types=tuple(item[0] for item in summary.amount_by_bet_type),
+            amounts=tuple(float(item[1]) for item in summary.amount_by_bet_type),
+            total_order_count=summary.total_order_count,
+            today_order_count=summary.today_order_count,
+            total_amount=summary.total_amount,
+            today_amount=summary.today_amount,
+            macau_order_count=summary.macau_order_count,
+            hong_kong_order_count=summary.hong_kong_order_count,
+            pending_order_count=summary.pending_order_count,
+            settled_order_count=summary.settled_order_count,
+            recent_orders=recent_lines,
+        )
 
     def _refresh_summary(self, data: OverviewSnapshot) -> None:
-        self._lbl_total_all.setText(f"全部总金额: {data.total_all:.1f}")
-        self._lbl_total_macau.setText(f"澳门单总额: {data.total_macau:.1f}")
-        self._lbl_total_hk.setText(f"香港单总额: {data.total_hk:.1f}")
+        self._lbl_total_orders.setText(f"订单总数: {data.total_order_count}")
+        self._lbl_today_orders.setText(f"今日订单数: {data.today_order_count}")
+        self._lbl_total_amount.setText(f"总投注金额: {data.total_amount:.2f}")
+        self._lbl_today_amount.setText(f"今日投注金额: {data.today_amount:.2f}")
+        self._lbl_macau_orders.setText(f"澳门订单数: {data.macau_order_count}")
+        self._lbl_hk_orders.setText(f"香港订单数: {data.hong_kong_order_count}")
+        self._lbl_pending_orders.setText(f"待处理订单数: {data.pending_order_count}")
+        self._lbl_settled_orders.setText(f"已结算订单数: {data.settled_order_count}")
 
     def _refresh_bar_chart(self, data: OverviewSnapshot) -> None:
         fig = self._bar_canvas.figure
@@ -248,25 +322,14 @@ class OverviewPage(QWidget):
         fig.tight_layout()
         self._pie_canvas.draw()
 
-    def _refresh_profit_analysis(self) -> None:
-        lines = [
-            "<p><b>当前赔率和反水设置的盈利情况分析 "
-            "(非单批次订单计算, 仅做参考):</b></p>",
-            '<p>'
-            '<span style="color:#e74c3c;">低于0%: 亏损</span>&nbsp;&nbsp;'
-            '<span style="color:#e67e22;">0~3%: 微利</span>&nbsp;&nbsp;'
-            '<span style="color:#27ae60;">3%~6%: 还不错</span>&nbsp;&nbsp;'
-            '<span style="color:#1e8449;">大于6%: 可观</span>'
-            "</p>",
-        ]
-        for item in _PROFIT_ITEMS:
-            lines.append(f'<p style="color:#1e8449;margin:2px 0;">{item}</p>')
-        lines.append(
-            '<p style="color:#7f8c8d;margin-top:8px;">'
-            "(后续添加更多类型的盈利计算, 敬请期待)"
-            "</p>"
-        )
-        self._profit_view.setHtml("\n".join(lines))
+    def _refresh_recent_orders(self, data: OverviewSnapshot) -> None:
+        if data.error_message:
+            self._recent_orders_view.setPlainText(data.error_message)
+            return
+        if not data.recent_orders:
+            self._recent_orders_view.setPlainText("最近订单：暂无订单数据")
+            return
+        self._recent_orders_view.setPlainText("最近订单：\n" + "\n".join(data.recent_orders))
 
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(
@@ -275,12 +338,16 @@ class OverviewPage(QWidget):
                 font-size: 13px;
                 spacing: 6px;
             }
+            QPushButton#refreshButton {
+                padding: 4px 12px;
+                font-size: 12px;
+            }
             QLabel#statLabel {
                 color: #5dade2;
                 font-size: 14px;
                 font-weight: 500;
             }
-            QTextEdit#profitAnalysis {
+            QTextEdit#recentOrders {
                 border: 2px solid #3498db;
                 background-color: #ffffff;
                 font-size: 13px;

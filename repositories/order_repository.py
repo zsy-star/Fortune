@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session, selectinload
@@ -107,6 +108,51 @@ class OrderRepository:
             end_date=end_date,
         )
         return int(self.session.scalar(stmt) or 0)
+
+    def sum_amount(
+        self,
+        *,
+        region: str | None = None,
+        status: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> Decimal:
+        stmt = select(func.coalesce(func.sum(Order.total_amount), 0))
+        stmt = self._apply_filters(
+            stmt,
+            region=region,
+            status=status,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return Decimal(self.session.scalar(stmt) or 0)
+
+    def count_by_region(self) -> dict[str, int]:
+        stmt = select(Order.region, func.count(Order.id)).group_by(Order.region)
+        return {region: int(count) for region, count in self.session.execute(stmt)}
+
+    def count_by_status(self) -> dict[str, int]:
+        stmt = select(Order.status, func.count(Order.id)).group_by(Order.status)
+        return {status: int(count) for status, count in self.session.execute(stmt)}
+
+    def amount_by_bet_type(
+        self,
+        *,
+        region: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        limit: int = 20,
+    ) -> list[tuple[str, Decimal]]:
+        stmt = (
+            select(OrderItem.bet_type, func.coalesce(func.sum(OrderItem.amount), 0))
+            .join(Order, Order.id == OrderItem.order_id)
+            .group_by(OrderItem.bet_type)
+            .order_by(func.sum(OrderItem.amount).desc(), OrderItem.bet_type.asc())
+        )
+        stmt = self._apply_filters(stmt, region=region, start_date=start_date, end_date=end_date)
+        if limit > 0:
+            stmt = stmt.limit(limit)
+        return [(bet_type, Decimal(amount or 0)) for bet_type, amount in self.session.execute(stmt)]
 
     def add_item(self, item: OrderItem) -> OrderItem:
         self.session.add(item)

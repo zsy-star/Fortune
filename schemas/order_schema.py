@@ -114,6 +114,20 @@ class OrderSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class OrderDashboardSummary:
+    total_order_count: int
+    today_order_count: int
+    total_amount: Decimal
+    today_amount: Decimal
+    macau_order_count: int
+    hong_kong_order_count: int
+    pending_order_count: int
+    settled_order_count: int
+    recent_orders: tuple[OrderSummary, ...]
+    amount_by_bet_type: tuple[tuple[str, Decimal], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class OrderDetailResult:
     id: int
     order_no: str
