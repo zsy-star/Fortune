@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QRadioButton,
     QScrollArea,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from services.order_intake_service import OrderIntakeService
 from services.order_parser import format_result, parse_lines
 
 _TABLE_COLUMNS = [
@@ -67,8 +69,9 @@ _FOOTER_HINT = (
 class RecordOrderWindow(QMainWindow):
     """录单独立窗口。"""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, order_intake_service: OrderIntakeService | None = None):
         super().__init__(parent)
+        self._order_intake_service = order_intake_service or OrderIntakeService()
         self.setWindowTitle("我要录单")
         self.resize(1280, 840)
         self.setMinimumSize(1024, 680)
@@ -92,6 +95,8 @@ class RecordOrderWindow(QMainWindow):
 
         # ── 输入解析（300ms 防抖后自动解析）──
         self._parsed_results: list = []
+        self._last_parse_results: list = []
+        self._last_parse_raw = ""
         self._table_user_adjusted = False
         self._replace_presets: list[tuple[str, str]] = []  # (查找, 替换)
         self._parse_timer = QTimer(self)
@@ -154,10 +159,13 @@ class RecordOrderWindow(QMainWindow):
         if not raw.strip():
             self._output_text.clear()
             self._parsed_results = []
+            self._last_parse_results = []
+            self._last_parse_raw = ""
             return
 
         # 自动应用替换预设
         raw = self._apply_replace_presets(raw)
+        self._last_parse_raw = raw
 
         results = parse_lines(raw)
         # 回填每行的原始输入文本
@@ -166,6 +174,7 @@ class RecordOrderWindow(QMainWindow):
             r.original_text = line
 
         self._parsed_results = [r for r in results if r.success]
+        self._last_parse_results = results
 
         # 注入默认地域：输入未指定时取当前勾选的地区
         default_region = "澳门" if self._radio_macau.isChecked() else "香港"
@@ -190,6 +199,8 @@ class RecordOrderWindow(QMainWindow):
         self._input_text.clear()
         self._output_text.clear()
         self._parsed_results = []
+        self._last_parse_results = []
+        self._last_parse_raw = ""
         # 清空表格内容（保留地区/渠道/计算方式）
         self._order_table.setRowCount(0)
         self._lbl_total.setText("当前总额: 0")
@@ -228,6 +239,85 @@ class RecordOrderWindow(QMainWindow):
 
         # 更新总额
         self._update_order_totals()
+
+    def _current_region(self) -> str:
+        return "澳门" if self._radio_macau.isChecked() else "香港"
+
+    def _current_raw_text_for_save(self) -> str:
+        return self._apply_replace_presets(self._input_text.toPlainText())
+
+    def _show_warning(self, message: str) -> None:
+        QMessageBox.warning(self, "保存订单", message)
+
+    def _show_info(self, message: str) -> None:
+        QMessageBox.information(self, "保存订单", message)
+
+    def _confirm_warning(self, message: str) -> bool:
+        result = QMessageBox.question(
+            self,
+            "保存订单",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return result == QMessageBox.StandardButton.Yes
+
+    def _on_save_order(self) -> None:
+        """通过 OrderIntakeService 保存当前解析成功的原始订单文本。"""
+        raw = self._current_raw_text_for_save()
+        if not raw.strip():
+            self._show_warning("请输入订单内容")
+            return
+
+        if self._table_user_adjusted:
+            self._show_warning("当前表格已人工调整，暂不支持直接保存。请重新解析后再保存。")
+            return
+
+        if raw != self._last_parse_raw or not self._last_parse_results:
+            self._show_warning("请先解析订单内容")
+            return
+
+        failed_results = [r for r in self._last_parse_results if not r.success]
+        if failed_results:
+            errors = [r.error or "解析失败" for r in failed_results]
+            self._show_warning("\n".join(errors))
+            return
+
+        if not self._parsed_results:
+            self._show_warning("请先解析订单内容")
+            return
+
+        try:
+            preview = self._order_intake_service.preview_raw_text(
+                raw,
+                channel=self._cmb_channel.currentText(),
+                region=self._current_region(),
+                source="record_window",
+            )
+            if not preview.can_save:
+                reason = "\n".join(preview.errors) if preview.errors else "预览结果不可保存"
+                self._show_warning(reason)
+                return
+
+            if preview.warnings:
+                warning_text = "保存前请确认以下提示：\n" + "\n".join(preview.warnings)
+                if not self._confirm_warning(warning_text):
+                    return
+
+            save_result = self._order_intake_service.save_preview(preview)
+            if not save_result.success:
+                self._show_warning(save_result.error or "订单保存失败")
+                return
+        except Exception as exc:
+            self._show_warning(f"订单保存失败：{exc}")
+            return
+
+        order = save_result.order
+        message = "订单保存成功"
+        if order is not None:
+            message = f"订单保存成功：{order.order_no} (ID: {order.id})"
+        self._show_info(message)
+        self._on_clear_output()
 
     def _update_order_totals(self) -> None:
         """更新订单表中的总额标签。"""
@@ -747,18 +837,23 @@ class RecordOrderWindow(QMainWindow):
         btn_clear = QPushButton("清空结果")
         btn_add = QPushButton("添加结果")
         btn_del = QPushButton("删除选中行")
+        btn_save = QPushButton("保存订单")
         btn_clear.setObjectName("sideActionButton")
         btn_add.setObjectName("sideActionButton")
         btn_del.setObjectName("sideActionButton")
+        btn_save.setObjectName("sideActionButton")
         btn_clear.setMinimumWidth(88)
         btn_add.setMinimumWidth(88)
         btn_del.setMinimumWidth(88)
+        btn_save.setMinimumWidth(88)
         btn_clear.clicked.connect(self._on_clear_output)
         btn_add.clicked.connect(self._on_add_result)
         btn_del.clicked.connect(self._on_delete_selected)
+        btn_save.clicked.connect(self._on_save_order)
         side_btns.addWidget(btn_clear)
         side_btns.addWidget(btn_add)
         side_btns.addWidget(btn_del)
+        side_btns.addWidget(btn_save)
         side_btns.addStretch(1)
 
         text_row.addWidget(self._input_text, stretch=1)
