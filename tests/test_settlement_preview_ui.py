@@ -229,6 +229,191 @@ def test_preview_does_not_modify_order_or_logs(session_factory) -> None:
     assert draw_service.count_draws() == before_draws
 
 
+def test_commit_without_draw_warns_and_does_not_call_service(session_factory) -> None:
+    app()
+    order_service = OrderService(session_factory)
+    order = create_order(order_service, items=[OrderItemCreate(bet_type="特码", selection="01", amount="10.00")])
+    dialog = open_preview_dialog(session_factory, order.id)
+
+    with (
+        patch.object(dialog._settlement_service, "commit_order_settlement") as commit,
+        patch("ui.dialogs.settlement_preview_dialog.QMessageBox.warning") as warning,
+    ):
+        dialog._on_commit_settlement()
+
+    commit.assert_not_called()
+    warning.assert_called_once()
+    assert "请先选择开奖并完成结算预览" in warning.call_args.args[2]
+
+
+def test_commit_without_preview_warns_and_does_not_call_service(session_factory) -> None:
+    app()
+    order_service = OrderService(session_factory)
+    draw_service = DrawService(session_factory)
+    order = create_order(order_service, items=[OrderItemCreate(bet_type="特码", selection="01", amount="10.00")])
+    create_draw(draw_service)
+    dialog = open_preview_dialog(session_factory, order.id)
+
+    with (
+        patch.object(dialog._settlement_service, "commit_order_settlement") as commit,
+        patch("ui.dialogs.settlement_preview_dialog.QMessageBox.warning") as warning,
+    ):
+        dialog._on_commit_settlement()
+
+    commit.assert_not_called()
+    warning.assert_called_once()
+    assert "请先开始预览" in warning.call_args.args[2]
+
+
+def test_commit_with_unsupported_preview_is_blocked(session_factory) -> None:
+    app()
+    order_service = OrderService(session_factory)
+    draw_service = DrawService(session_factory)
+    log_service = LogService(session_factory)
+    order = create_order(order_service)
+    create_draw(draw_service)
+    dialog = open_preview_dialog(session_factory, order.id)
+    dialog._on_start_preview()
+
+    with (
+        patch.object(dialog._settlement_service, "commit_order_settlement") as commit,
+        patch("ui.dialogs.settlement_preview_dialog.QMessageBox.warning") as warning,
+    ):
+        dialog._on_commit_settlement()
+
+    commit.assert_not_called()
+    warning.assert_called_once()
+    assert "存在暂不支持玩法" in warning.call_args.args[2]
+    assert order_service.get_order(order.id).status == "active"
+    assert log_service.count_logs(module="settlement", action="commit") == 0
+
+
+def test_commit_cancel_confirmation_does_not_call_service(session_factory) -> None:
+    app()
+    order_service = OrderService(session_factory)
+    draw_service = DrawService(session_factory)
+    order = create_order(order_service, items=[OrderItemCreate(bet_type="特码", selection="01", amount="10.00")])
+    create_draw(draw_service)
+    dialog = open_preview_dialog(session_factory, order.id)
+    dialog._on_start_preview()
+
+    with (
+        patch(
+            "ui.dialogs.settlement_preview_dialog.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.No,
+        ) as question,
+        patch.object(dialog._settlement_service, "commit_order_settlement") as commit,
+    ):
+        dialog._on_commit_settlement()
+
+    question.assert_called_once()
+    commit.assert_not_called()
+    assert dialog._lbl_status.text() == "active"
+    assert order_service.get_order(order.id).status == "active"
+
+
+def test_commit_confirm_calls_service_and_persists_status_and_log(session_factory) -> None:
+    app()
+    order_service = OrderService(session_factory)
+    draw_service = DrawService(session_factory)
+    log_service = LogService(session_factory)
+    order = create_order(
+        order_service,
+        items=[
+            OrderItemCreate(bet_type="特码", selection="01", amount="10.00"),
+            OrderItemCreate(bet_type="特码", selection="02", amount="20.00"),
+        ],
+    )
+    draw = create_draw(draw_service, special="01")
+    dialog = open_preview_dialog(session_factory, order.id)
+    dialog._on_start_preview()
+
+    assert dialog._btn_commit.isEnabled()
+    with (
+        patch(
+            "ui.dialogs.settlement_preview_dialog.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ) as question,
+        patch("ui.dialogs.settlement_preview_dialog.QMessageBox.information") as info,
+        patch.object(
+            dialog._settlement_service,
+            "commit_order_settlement",
+            wraps=dialog._settlement_service.commit_order_settlement,
+        ) as commit,
+    ):
+        dialog._on_commit_settlement()
+
+    question.assert_called_once()
+    assert "订单号 / 订单ID" in question.call_args.args[2]
+    assert "中奖数量：1" in question.call_args.args[2]
+    commit.assert_called_once_with(order.id, draw.id)
+    info.assert_called_once()
+    assert "结算成功" in info.call_args.args[2]
+    assert "操作日志ID" in info.call_args.args[2]
+    assert dialog.settlement_committed()
+    assert dialog._lbl_status.text() == "settled"
+    assert not dialog._btn_commit.isEnabled()
+    assert order_service.get_order(order.id).status == "settled"
+    assert log_service.count_logs(module="settlement", action="commit") == 1
+
+
+def test_commit_settled_order_repeat_click_shows_friendly_warning(session_factory) -> None:
+    app()
+    order_service = OrderService(session_factory)
+    draw_service = DrawService(session_factory)
+    log_service = LogService(session_factory)
+    order = create_order(order_service, items=[OrderItemCreate(bet_type="特码", selection="01", amount="10.00")])
+    create_draw(draw_service)
+    dialog = open_preview_dialog(session_factory, order.id)
+    dialog._on_start_preview()
+
+    with (
+        patch(
+            "ui.dialogs.settlement_preview_dialog.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ),
+        patch("ui.dialogs.settlement_preview_dialog.QMessageBox.information"),
+    ):
+        dialog._on_commit_settlement()
+
+    with (
+        patch.object(dialog._settlement_service, "commit_order_settlement") as commit,
+        patch("ui.dialogs.settlement_preview_dialog.QMessageBox.warning") as warning,
+    ):
+        dialog._on_commit_settlement()
+
+    commit.assert_not_called()
+    warning.assert_called_once()
+    assert "该订单已结算，不能重复结算" in warning.call_args.args[2]
+    assert log_service.count_logs(module="settlement", action="commit") == 1
+
+
+def test_commit_failure_shows_error_without_crashing(session_factory) -> None:
+    app()
+    order_service = OrderService(session_factory)
+    draw_service = DrawService(session_factory)
+    order = create_order(order_service, items=[OrderItemCreate(bet_type="特码", selection="01", amount="10.00")])
+    create_draw(draw_service)
+    dialog = open_preview_dialog(session_factory, order.id)
+    dialog._on_start_preview()
+
+    with (
+        patch(
+            "ui.dialogs.settlement_preview_dialog.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ),
+        patch.object(dialog._settlement_service, "commit_order_settlement", side_effect=RuntimeError("boom")),
+        patch("ui.dialogs.settlement_preview_dialog.QMessageBox.warning") as warning,
+    ):
+        dialog._on_commit_settlement()
+
+    warning.assert_called_once()
+    assert "结算失败" in warning.call_args.args[2]
+    assert "boom" in warning.call_args.args[2]
+    assert order_service.get_order(order.id).status == "active"
+    assert not dialog.settlement_committed()
+
+
 def test_order_detail_preview_button_states(session_factory) -> None:
     app()
     order_service = OrderService(session_factory)
@@ -248,6 +433,7 @@ def test_order_detail_preview_button_states(session_factory) -> None:
     assert page._btn_preview.isEnabled()
 
     with patch("ui.pages.order_detail_page.SettlementPreviewDialog") as dialog_cls:
+        dialog_cls.return_value.settlement_committed.return_value = False
         page._on_settlement_preview()
         dialog_cls.assert_called_once_with(
             order.id,
