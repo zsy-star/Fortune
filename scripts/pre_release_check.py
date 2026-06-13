@@ -16,6 +16,12 @@ REQUIRED_DOCS = (
     "docs/commercial_acceptance_checklist.md",
     "docs/pre_packaging_checklist.md",
     "docs/manual_test_script.md",
+    "docs/pyinstaller_test_build.md",
+    "docs/test_release_structure.md",
+)
+
+PACKAGING_FILES = (
+    "packaging/fortune_test.spec",
 )
 
 REQUIRED_ROOT_FILES = (
@@ -119,6 +125,16 @@ def run_pre_release_check(project_root: Path) -> dict[str, Any]:
         else:
             checks[key] = "missing"
             failures.append(f"缺少必需文档：{relative}")
+
+    for relative in PACKAGING_FILES:
+        path = root / relative
+        key = relative.replace("/", "_").replace(".", "_")
+        if path.is_file():
+            checks[key] = "ok"
+            info.append(f"{relative} 存在")
+        else:
+            checks[key] = "missing"
+            failures.append(f"缺少打包配置文件：{relative}")
 
     data_dir = root / "data"
     backups_dir = data_dir / "backups"

@@ -2,6 +2,10 @@
 
 import sys
 
+from scripts.runtime_init import bootstrap_application
+
+bootstrap_application()
+
 from PySide6.QtWidgets import QApplication
 
 from core.config import APP_NAME

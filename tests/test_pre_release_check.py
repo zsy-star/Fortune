@@ -19,8 +19,13 @@ def _write_minimal_project(root: Path) -> None:
         "commercial_acceptance_checklist.md",
         "pre_packaging_checklist.md",
         "manual_test_script.md",
+        "pyinstaller_test_build.md",
+        "test_release_structure.md",
     ):
         (docs / name).write_text(f"# {name}\n", encoding="utf-8")
+    packaging = root / "packaging"
+    packaging.mkdir()
+    (packaging / "fortune_test.spec").write_text("# spec\n", encoding="utf-8")
     data = root / "data"
     data.mkdir()
     (data / "backups").mkdir()
@@ -28,21 +33,25 @@ def _write_minimal_project(root: Path) -> None:
 
 
 def _mock_imports_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_find_spec = importlib.util.find_spec
+
     def _find_spec(name: str, package: str | None = None):
         if name in {"PySide6", "sqlalchemy", "openpyxl"}:
             return object()
-        return importlib.util.find_spec(name, package)
+        return real_find_spec(name, package)
 
     monkeypatch.setattr(importlib.util, "find_spec", _find_spec)
 
 
 def _mock_imports_missing(monkeypatch: pytest.MonkeyPatch, missing: str) -> None:
+    real_find_spec = importlib.util.find_spec
+
     def _find_spec(name: str, package: str | None = None):
         if name == missing:
             return None
         if name in {"PySide6", "sqlalchemy", "openpyxl"}:
             return object()
-        return importlib.util.find_spec(name, package)
+        return real_find_spec(name, package)
 
     monkeypatch.setattr(importlib.util, "find_spec", _find_spec)
 

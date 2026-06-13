@@ -56,11 +56,15 @@ data/fortune.db
 - [商用测试前验收清单](docs/commercial_acceptance_checklist.md)
 - [打包前自检清单](docs/pre_packaging_checklist.md)
 - [人工验收脚本](docs/manual_test_script.md)
-- 只读自检：`python scripts/pre_release_check.py --project-root .`
+- [PyInstaller 打包测试版说明](docs/pyinstaller_test_build.md)
+- [测试版发布目录结构说明](docs/test_release_structure.md)
+- 打包前只读自检：`python scripts/pre_release_check.py --project-root .`
+- 测试版构建 dry-run：`python scripts/build_test_release.py --project-root . --dry-run`
+- 测试版发布目录检查：`python scripts/check_test_release.py --release-dir dist/Fortune-Test`
 
 ## 后续规划
 
-- PyInstaller 打包测试版准备
+- 首次 PyInstaller 本机打包试运行
 - 按实际业务优先级补充赔率 / 盈亏、导入、调单等能力
 
 ## 迁移与测试
