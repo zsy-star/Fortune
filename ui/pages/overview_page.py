@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-import matplotlib
+from ui.matplotlib_setup import ensure_matplotlib_configured
 
-matplotlib.use("QtAgg")
+ensure_matplotlib_configured()
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure

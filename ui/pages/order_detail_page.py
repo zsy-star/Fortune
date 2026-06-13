@@ -107,12 +107,9 @@ class OrderDetailPage(QWidget):
     def _build_toolbar(self) -> QHBoxLayout:
         row = QHBoxLayout()
         row.setSpacing(6)
-        for text in ("清空订单", "删除过滤订单", "导出订单", "导入订单", "过滤兑奖", "综合兑奖", "重置开奖"):
-            btn = QPushButton(text)
-            btn.setObjectName("toolBtn")
-            btn.setEnabled(False)
-            btn.setToolTip("本阶段暂未开放")
-            row.addWidget(btn)
+        hint = QLabel("更多批量处理和兑奖功能暂未开放；当前测试版请使用查询、Excel 导出、结算预览、作废。")
+        hint.setObjectName("scopeHint")
+        row.addWidget(hint)
         row.addStretch(1)
         return row
 
@@ -610,6 +607,11 @@ class OrderDetailPage(QWidget):
             QLabel#prizeHint {
                 color: #7f8c8d;
                 font-size: 12px;
+            }
+            QLabel#scopeHint {
+                color: #7f8c8d;
+                font-size: 12px;
+                padding: 2px 0;
             }
             """
         )

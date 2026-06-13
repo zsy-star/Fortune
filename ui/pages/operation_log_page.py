@@ -121,7 +121,6 @@ class OperationLogPage(QWidget):
             ("重置", self._on_reset, True),
             ("刷新", self.reload_data, True),
             ("导出 Excel", self._on_export_excel, True),
-            ("清空日志", self._on_clear_disabled, False),
         ]
         for text, handler, enabled in specs:
             btn = QPushButton(text)
