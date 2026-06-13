@@ -5,12 +5,16 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -27,7 +31,7 @@ _TABLE_COLUMNS = [
     "复选类型",
     "计算方式",
     "金额",
-    "订单总额",
+    "每号金额",
     "是否自定义",
     "申报人",
     "备注",
@@ -66,8 +70,8 @@ class RecordOrderWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("我要录单")
-        self.resize(1180, 720)
-        self.setMinimumSize(960, 600)
+        self.resize(1280, 840)
+        self.setMinimumSize(1024, 680)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -75,23 +79,21 @@ class RecordOrderWindow(QMainWindow):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(6)
 
-        root.addWidget(self._build_table_section(), stretch=5)
+        root.addWidget(self._build_table_section(), stretch=7)
         root.addWidget(self._build_control_bar())
-        root.addWidget(self._build_text_section(), stretch=4)
+        root.addWidget(self._build_text_section(), stretch=3)
         root.addWidget(self._build_footer())
 
-        # ── 剪贴板自动粘贴（定时轮询 + 窗口激活兜底）──
+        # ── 剪贴板自动粘贴（信号驱动 + 窗口激活兜底）──
         self._last_clipboard_text = ""
         self._clipboard = QApplication.clipboard()
-
-        # 定时器每 500ms 检查一次剪贴板
-        self._clip_timer = QTimer(self)
-        self._clip_timer.setInterval(500)
-        self._clip_timer.timeout.connect(self._poll_clipboard)
-        self._clip_timer.start()
+        self._clip_mode_append = True  # True=追加, False=替换
+        self._clipboard.dataChanged.connect(self._poll_clipboard)
 
         # ── 输入解析（300ms 防抖后自动解析）──
         self._parsed_results: list = []
+        self._table_user_adjusted = False
+        self._replace_presets: list[tuple[str, str]] = []  # (查找, 替换)
         self._parse_timer = QTimer(self)
         self._parse_timer.setSingleShot(True)
         self._parse_timer.setInterval(300)
@@ -102,7 +104,7 @@ class RecordOrderWindow(QMainWindow):
     # ─────────────────── 剪贴板监控 ───────────────────
 
     def _poll_clipboard(self) -> None:
-        """定时检查系统剪贴板，有新文本则填入输入框。"""
+        """剪贴板变化时自动填入输入框（信号驱动）。"""
         if not getattr(self, "_chk_auto_fetch", None):
             return
         if not self._chk_auto_fetch.isChecked():
@@ -110,17 +112,29 @@ class RecordOrderWindow(QMainWindow):
 
         # 直接读取系统剪贴板纯文本
         clip = self._clipboard
-        text = clip.text().strip() if clip.mimeData().hasText() else ""
+        mime_data = clip.mimeData()
+        if mime_data is None:
+            return
+        text = clip.text().strip() if mime_data.hasText() else ""
         if not text or text == self._last_clipboard_text:
             return
 
         self._last_clipboard_text = text
 
-        existing = self._input_text.toPlainText().strip()
-        if existing:
-            self._input_text.setPlainText(existing + "\n" + text)
+        existing = self._input_text.toPlainText()
+        # 去重：内容已存在则跳过
+        if text in existing:
+            return
+
+        if self._clip_mode_append and existing.strip():
+            self._input_text.setPlainText(existing.rstrip() + "\n" + text)
         else:
             self._input_text.setPlainText(text)
+
+    def _on_toggle_clip_mode(self) -> None:
+        """切换剪贴板模式：追加 ↔ 替换。"""
+        self._clip_mode_append = not self._clip_mode_append
+        self._btn_clip_mode.setText("[追加]" if self._clip_mode_append else "[替换]")
 
     def changeEvent(self, event) -> None:
         """窗口获得焦点时立刻检查剪贴板（无需等定时器）。"""
@@ -142,7 +156,15 @@ class RecordOrderWindow(QMainWindow):
             self._parsed_results = []
             return
 
+        # 自动应用替换预设
+        raw = self._apply_replace_presets(raw)
+
         results = parse_lines(raw)
+        # 回填每行的原始输入文本
+        raw_lines = [l.strip() for l in raw.splitlines() if l.strip()]
+        for r, line in zip(results, raw_lines):
+            r.original_text = line
+
         self._parsed_results = [r for r in results if r.success]
 
         # 注入默认地域：输入未指定时取当前勾选的地区
@@ -151,20 +173,31 @@ class RecordOrderWindow(QMainWindow):
             if r.success and not r.region:
                 r.region = default_region
 
-        # 显示结果（每条订单之间空行分隔）
+        # 显示结果（错误行红色，其余保持纯文本格式）
         blocks: list[str] = []
         for r in results:
-            blocks.append(format_result(r))
-        self._output_text.setPlainText("\n\n".join(blocks))
+            text = format_result(r)
+            # 转义 HTML 特殊字符
+            text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            if not r.success:
+                text = f"<span style='color:red;'>{text}</span>"
+            blocks.append(text)
+        html = "<pre style='margin:0;'>" + "\n\n".join(blocks) + "</pre>"
+        self._output_text.setHtml(html)
 
     def _on_clear_output(self) -> None:
-        """清空输入和输出。"""
+        """清空输入、输出、表格及解析状态。"""
         self._input_text.clear()
         self._output_text.clear()
         self._parsed_results = []
+        # 清空表格内容（保留地区/渠道/计算方式）
+        self._order_table.setRowCount(0)
+        self._lbl_total.setText("当前总额: 0")
+        self._lbl_selected_total.setText("当前选择总额: 0")
+        self._table_user_adjusted = False
 
     def _on_add_result(self) -> None:
-        """将成功解析的订单添加到上方表格。"""
+        """将成功解析的订单添加到上方表格——每个解析结果一行。"""
         if not self._parsed_results:
             return
 
@@ -173,24 +206,25 @@ class RecordOrderWindow(QMainWindow):
         calc_method = self._cmb_calc.currentText()
 
         for r in self._parsed_results:
-            for num in r.numbers:
-                row = self._order_table.rowCount()
-                self._order_table.insertRow(row)
-                items = [
-                    QTableWidgetItem(region),  # 区域
-                    QTableWidgetItem("特码"),  # 投注类型
-                    QTableWidgetItem(str(num)),  # 订单信息
-                    QTableWidgetItem(""),  # 复选类型
-                    QTableWidgetItem(calc_method),  # 计算方式
-                    QTableWidgetItem(f"{r.amount:g}"),  # 金额
-                    QTableWidgetItem(f"{r.amount:g}"),  # 订单总额
-                    QTableWidgetItem("标准"),  # 是否自定义
-                    QTableWidgetItem(reporter),  # 申报人
-                    QTableWidgetItem(""),  # 备注
-                ]
-                for col, item in enumerate(items):
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    self._order_table.setItem(row, col, item)
+            row = self._order_table.rowCount()
+            self._order_table.insertRow(row)
+            # 号码用逗号拼接，如 01,02,03
+            nums_text = ",".join(f"{n:02d}" for n in r.numbers)
+            items = [
+                QTableWidgetItem(region),  # 区域
+                QTableWidgetItem("特码"),  # 投注类型
+                QTableWidgetItem(nums_text),  # 订单信息
+                QTableWidgetItem(""),  # 复选类型
+                QTableWidgetItem(calc_method),  # 计算方式
+                QTableWidgetItem(f"{r.total:g}"),  # 金额（总金额）
+                QTableWidgetItem(f"{r.amount:g}"),  # 每号金额
+                QTableWidgetItem("标准"),  # 是否自定义
+                QTableWidgetItem(reporter),  # 申报人
+                QTableWidgetItem(r.original_text),  # 备注
+            ]
+            for col, item in enumerate(items):
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self._order_table.setItem(row, col, item)
 
         # 更新总额
         self._update_order_totals()
@@ -207,6 +241,354 @@ class RecordOrderWindow(QMainWindow):
                     pass
         self._lbl_total.setText(f"当前总额: {total:g}")
 
+    def _on_delete_selected(self) -> None:
+        """删除表格中选中的行，并重新计算总额。"""
+        rows = {idx.row() for idx in self._order_table.selectedIndexes()}
+        if not rows:
+            return  # 无选中行，静默返回
+
+        # 从高到低删除，避免索引偏移
+        for row in sorted(rows, reverse=True):
+            self._order_table.removeRow(row)
+
+        self._table_user_adjusted = True
+        self._update_order_totals()
+
+    def _on_remove_separators(self) -> None:
+        """去分隔符：规范化输入文本中的数字分隔符。"""
+        import re
+
+        raw = self._input_text.toPlainText()
+        if not raw.strip():
+            return
+
+        lines: list[str] = []
+        for line in raw.splitlines():
+            # 中文逗号 / 顿号 / 斜杠 → 英文逗号
+            line = line.replace("，", ",").replace("、", ",").replace("/", ",")
+            # 去掉逗号两侧空格
+            line = re.sub(r"\s*,\s*", ",", line)
+            # 相邻汉字之间的空格移除（如「澳 门」→「澳门」）
+            line = re.sub(r"(?<=[一-鿿])\s+(?=[一-鿿])", "", line)
+            # 去掉「各/各数」前后的空格
+            line = re.sub(r"\s*(各(?:数)?)\s*", r"\1", line)
+            # 合并剩余连续空格
+            line = re.sub(r"\s+", " ", line)
+            lines.append(line.strip())
+
+        self._input_text.setPlainText("\n".join(lines))
+        # textChanged 信号会自动触发 _on_input_changed → 防抖解析
+
+    def _on_order_mark(self) -> None:
+        """订单标记：弹出对话框输入标记文字，为每条非空行添加前缀。"""
+        mark, ok = QInputDialog.getText(
+            self, "订单标记", "请输入标记文字（将添加到每条订单前面）："
+        )
+        if not ok or not mark.strip():
+            return  # 取消或空输入，不做任何改动
+
+        mark = mark.strip()
+        raw = self._input_text.toPlainText()
+        lines: list[str] = []
+        for line in raw.splitlines():
+            stripped = line.strip()
+            if stripped:
+                lines.append(f"{mark} {stripped}")
+            else:
+                lines.append(line)  # 保留空行
+        self._input_text.setPlainText("\n".join(lines))
+        # textChanged 信号会自动触发 _on_input_changed → 防抖解析
+
+    def _on_remove_spaces(self) -> None:
+        """去空格：移除输入文本中的所有空白字符。"""
+        import re
+
+        raw = self._input_text.toPlainText()
+        if not raw.strip():
+            return
+
+        lines: list[str] = []
+        for line in raw.splitlines():
+            stripped = line.strip()
+            if stripped:
+                # 移除行内所有空白
+                lines.append(re.sub(r"\s+", "", stripped))
+            else:
+                lines.append("")
+        self._input_text.setPlainText("\n".join(lines))
+        # textChanged 信号会自动触发 _on_input_changed → 防抖解析
+
+    def _on_mark_hk(self) -> None:
+        """标记香港：将每条订单的地域设为香港。"""
+        raw = self._input_text.toPlainText()
+        lines: list[str] = []
+        for line in raw.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                lines.append(line)
+                continue
+            if stripped.startswith("澳门"):
+                stripped = "香港" + stripped[2:]
+            elif not stripped.startswith("香港"):
+                stripped = "香港 " + stripped
+            lines.append(stripped)
+        self._input_text.setPlainText("\n".join(lines))
+        # 同时切换地区单选按钮
+        self._radio_hk.setChecked(True)
+        # textChanged 信号会自动触发 _on_input_changed → 防抖解析
+
+    def _on_remove_decimal(self) -> None:
+        """去小数点：将小数点替换为空格，用作号码分隔符。"""
+        raw = self._input_text.toPlainText()
+        if not raw.strip():
+            return
+
+        lines: list[str] = []
+        for line in raw.splitlines():
+            line = line.replace(".", " ")
+            lines.append(line)
+        self._input_text.setPlainText("\n".join(lines))
+        # textChanged 信号会自动触发 _on_input_changed → 防抖解析
+
+    def _on_semantic_convert(self) -> None:
+        """语义转换：全角→半角 + 中文数字→阿拉伯数字。"""
+        import re
+
+        raw = self._input_text.toPlainText()
+        if not raw.strip():
+            return
+
+        # ── 全角 → 半角 ──
+        def _full_to_half(text: str) -> str:
+            result: list[str] = []
+            for ch in text:
+                code = ord(ch)
+                if 0xFF01 <= code <= 0xFF5E:
+                    result.append(chr(code - 0xFEE0))
+                elif code == 0x3000:  # 全角空格
+                    result.append(" ")
+                else:
+                    result.append(ch)
+            return "".join(result)
+
+        # ── 中文数字 → 阿拉伯 ──
+        _CN_DIGIT = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3,
+                      "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+                      "十": 10, "百": 100, "千": 1000}
+        _CN_UNITS = {"十": 10, "百": 100, "千": 1000}
+
+        def _cn_to_int(s: str) -> int | None:
+            """中文数字→整数，如「二十」→20，「三十五」→35，「一百二十」→120。"""
+            if not s or all(ch not in _CN_DIGIT for ch in s):
+                return None
+            total = 0
+            section = 0  # 当前积累的小节值（万以下）
+            for ch in s:
+                if ch in _CN_UNITS:
+                    unit = _CN_UNITS[ch]
+                    if section == 0:
+                        section = 1
+                    total += section * unit
+                    section = 0
+                else:
+                    val = _CN_DIGIT.get(ch)
+                    if val is None:
+                        return None
+                    section = val
+            total += section
+            return total
+
+        lines: list[str] = []
+        for line in raw.splitlines():
+            # 1) 全角→半角
+            line = _full_to_half(line)
+            # 2) 中文数字金额替换：各/各数 后跟中文数字 → 阿拉伯数字
+            line = re.sub(
+                r"(各(?:数)?)\s*([零一二两三四五六七八九十百千]+)",
+                lambda m: f"{m.group(1)}{_cn_to_int(m.group(2))}",
+                line,
+            )
+            lines.append(line)
+        self._input_text.setPlainText("\n".join(lines))
+        # textChanged 信号会自动触发 _on_input_changed → 防抖解析
+
+    def _on_specified_replace(self) -> None:
+        """指定替换：弹出自定义对话框，将符号 A 替换为符号 B。"""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("指定替换")
+        dlg.setFixedSize(360, 160)
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(10)
+
+        # 第一行：查找内容
+        row1 = QHBoxLayout()
+        row1.addWidget(QLabel("查找："))
+        edt_find = QLineEdit()
+        edt_find.setPlaceholderText("输入要查找的符号")
+        row1.addWidget(edt_find)
+        layout.addLayout(row1)
+
+        # 第二行：替换为
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("替换："))
+        edt_replace = QLineEdit()
+        edt_replace.setPlaceholderText("输入要替换成的符号")
+        row2.addWidget(edt_replace)
+        layout.addLayout(row2)
+
+        # 按钮
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        btn_ok = QPushButton("确定")
+        btn_cancel = QPushButton("取消")
+        btn_ok.clicked.connect(dlg.accept)
+        btn_cancel.clicked.connect(dlg.reject)
+        btn_row.addWidget(btn_ok)
+        btn_row.addWidget(btn_cancel)
+        layout.addLayout(btn_row)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        find = edt_find.text()
+        replace = edt_replace.text()
+        if not find:
+            return  # 查找内容为空，不做操作
+
+        self._apply_text_replace(find, replace)
+
+    def _apply_text_replace(self, find: str, replace: str) -> None:
+        """在输入框中执行文本替换（抽离便于测试）。"""
+        raw = self._input_text.toPlainText()
+        self._input_text.setPlainText(raw.replace(find, replace))
+        # textChanged 信号会自动触发 _on_input_changed → 防抖解析
+
+    def _apply_replace_presets(self, text: str) -> str:
+        """对输入文本应用所有替换预设规则。"""
+        for find, replace in self._replace_presets:
+            if find:
+                text = text.replace(find, replace)
+        return text
+
+    def _on_replace_presets(self) -> None:
+        """替换预设：管理自动替换规则列表。"""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("替换预设")
+        dlg.setMinimumSize(520, 340)
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(10)
+        layout.setContentsMargins(12, 12, 12, 12)
+
+        # 提示
+        hint = QLabel("设置自动替换规则（解析输入时自动生效）：")
+        hint.setStyleSheet("color:#555; font-size:12px;")
+        layout.addWidget(hint)
+
+        # ── 滚动区域 ──
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet("QScrollArea { border: 1px solid #ccc; border-radius: 4px; }")
+
+        container = QWidget()
+        self._preset_list_layout = QVBoxLayout(container)
+        self._preset_list_layout.setSpacing(6)
+        self._preset_list_layout.setContentsMargins(8, 8, 8, 8)
+        self._preset_list_layout.addStretch(1)  # 底部弹簧，保持行紧凑
+        scroll_area.setWidget(container)
+
+        # 已保存的规则行
+        preset_rows: list[tuple[QLineEdit, QLineEdit]] = []
+
+        def _add_row(find_val: str = "", replace_val: str = "") -> None:
+            # 移除底部弹簧
+            if self._preset_list_layout.count():
+                last = self._preset_list_layout.itemAt(self._preset_list_layout.count() - 1)
+                if last.spacerItem():
+                    self._preset_list_layout.removeItem(last)
+
+            row_widget = QWidget()
+            row = QHBoxLayout(row_widget)
+            row.setContentsMargins(0, 2, 0, 2)
+            row.setSpacing(6)
+            lbl_find = QLabel("查找")
+            lbl_find.setStyleSheet("color:#666; font-size:12px;")
+            edt_find = QLineEdit(find_val)
+            edt_find.setPlaceholderText("输入要查找的符号")
+            edt_find.setMinimumWidth(130)
+            lbl_replace = QLabel("替换")
+            lbl_replace.setStyleSheet("color:#666; font-size:12px;")
+            edt_replace = QLineEdit(replace_val)
+            edt_replace.setPlaceholderText("输入要替换成的符号")
+            edt_replace.setMinimumWidth(130)
+            btn_del = QPushButton("×")
+            btn_del.setFixedSize(24, 24)
+            btn_del.setStyleSheet(
+                "QPushButton { border: none; color: #c0392b; font-size: 16px; font-weight: bold; }"
+                "QPushButton:hover { color: #e74c3c; }"
+            )
+            btn_del.setToolTip("删除此规则")
+            row.addWidget(lbl_find)
+            row.addWidget(edt_find, stretch=1)
+            row.addWidget(lbl_replace)
+            row.addWidget(edt_replace, stretch=1)
+            row.addWidget(btn_del)
+            self._preset_list_layout.addWidget(row_widget)
+            self._preset_list_layout.addStretch(1)  # 重新加底部弹簧
+            preset_rows.append((edt_find, edt_replace))
+            btn_del.clicked.connect(lambda: _remove_row(row_widget, edt_find, edt_replace))
+
+        def _remove_row(
+            row_widget: QWidget,
+            edt_find: QLineEdit,
+            edt_replace: QLineEdit,
+        ) -> None:
+            preset_rows.remove((edt_find, edt_replace))
+            self._preset_list_layout.removeWidget(row_widget)
+            row_widget.deleteLater()
+
+        for find, replace in self._replace_presets:
+            _add_row(find, replace)
+
+        layout.addWidget(scroll_area, stretch=1)
+
+        # 添加按钮
+        btn_add = QPushButton("+ 添加预设")
+        btn_add.setStyleSheet(
+            "QPushButton { border: 1px dashed #aaa; padding: 6px; color: #555; }"
+            "QPushButton:hover { border-color: #2980b9; color: #2980b9; }"
+        )
+        btn_add.clicked.connect(lambda: _add_row())
+        layout.addWidget(btn_add)
+
+        # 确定/取消
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        btn_ok = QPushButton("确定")
+        btn_cancel = QPushButton("取消")
+        btn_ok.setMinimumWidth(80)
+        btn_cancel.setMinimumWidth(80)
+        btn_ok.clicked.connect(dlg.accept)
+        btn_cancel.clicked.connect(dlg.reject)
+        btn_row.addWidget(btn_ok)
+        btn_row.addWidget(btn_cancel)
+        layout.addLayout(btn_row)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        # 保存预设
+        self._replace_presets.clear()
+        for edt_find, edt_replace in preset_rows:
+            find = edt_find.text().strip()
+            replace = edt_replace.text()
+            if find:
+                self._replace_presets.append((find, replace))
+
+        # 立即对当前输入框内容应用新预设
+        raw = self._input_text.toPlainText()
+        if raw.strip():
+            self._input_text.setPlainText(self._apply_replace_presets(raw))
+
     # ─────────────────── UI 构建 ───────────────────
 
     def _build_table_section(self) -> QWidget:
@@ -222,6 +604,17 @@ class RecordOrderWindow(QMainWindow):
         self._order_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._order_table.horizontalHeader().setStretchLastSection(True)
         self._order_table.verticalHeader().setVisible(False)
+        # 列宽：订单信息列给足空间展示逗号拼接的号码
+        header = self._order_table.horizontalHeader()
+        header.resizeSection(0, 60)   # 区域
+        header.resizeSection(1, 70)   # 投注类型
+        header.resizeSection(2, 200)  # 订单信息（号码列表，重点列）
+        header.resizeSection(3, 70)   # 复选类型
+        header.resizeSection(4, 70)   # 计算方式
+        header.resizeSection(5, 70)   # 金额
+        header.resizeSection(6, 70)   # 每号金额
+        header.resizeSection(7, 70)   # 是否自定义
+        header.resizeSection(8, 80)   # 申报人
         layout.addWidget(self._order_table, stretch=1)
 
         summary = QHBoxLayout()
@@ -276,7 +669,41 @@ class RecordOrderWindow(QMainWindow):
         for text in _TOOLBAR_BUTTONS:
             btn = QPushButton(text)
             btn.setObjectName("toolButton")
-            btn.setEnabled(True)
+            if text == "去分割符":
+                btn.setEnabled(True)
+                btn.setToolTip("规范化数字分隔符")
+                btn.clicked.connect(self._on_remove_separators)
+            elif text == "订单标记":
+                btn.setEnabled(True)
+                btn.setToolTip("在每条订单前添加标记")
+                btn.clicked.connect(self._on_order_mark)
+            elif text == "去空格":
+                btn.setEnabled(True)
+                btn.setToolTip("移除所有空格")
+                btn.clicked.connect(self._on_remove_spaces)
+            elif text == "标记香港":
+                btn.setEnabled(True)
+                btn.setToolTip("将所有订单标记为香港区域")
+                btn.clicked.connect(self._on_mark_hk)
+            elif text == "去小数点":
+                btn.setEnabled(True)
+                btn.setToolTip("小数点替换为空格（1.5→1 5）")
+                btn.clicked.connect(self._on_remove_decimal)
+            elif text == "语义转换":
+                btn.setEnabled(True)
+                btn.setToolTip("全角转半角 + 中文数字转阿拉伯")
+                btn.clicked.connect(self._on_semantic_convert)
+            elif text == "指定替换":
+                btn.setEnabled(True)
+                btn.setToolTip("将指定符号替换为目标符号")
+                btn.clicked.connect(self._on_specified_replace)
+            elif text == "替换预设":
+                btn.setEnabled(True)
+                btn.setToolTip("管理自动替换规则列表")
+                btn.clicked.connect(self._on_replace_presets)
+            else:
+                btn.setEnabled(False)
+                btn.setToolTip("暂未开放")
             toolbar.addWidget(btn)
 
         outer.addLayout(toolbar)
@@ -289,6 +716,17 @@ class RecordOrderWindow(QMainWindow):
             if label == "自动获取":
                 cb.setObjectName("autoFetchCheck")
                 self._chk_auto_fetch = cb
+                # 追加/替换模式切换按钮
+                self._btn_clip_mode = QPushButton("[追加]")
+                self._btn_clip_mode.setFixedWidth(50)
+                self._btn_clip_mode.setToolTip("点击切换：追加模式/替换模式")
+                self._btn_clip_mode.setStyleSheet(
+                    "QPushButton { border: 1px solid #aaa; border-radius: 2px; "
+                    "padding: 2px 4px; font-size: 11px; background: #f5f5f5; }"
+                    "QPushButton:hover { background: #e0e0e0; }"
+                )
+                self._btn_clip_mode.clicked.connect(self._on_toggle_clip_mode)
+                checks.addWidget(self._btn_clip_mode)
             checks.addWidget(cb)
         checks.addStretch(1)
         outer.addLayout(checks)
@@ -308,14 +746,19 @@ class RecordOrderWindow(QMainWindow):
         side_btns.setSpacing(6)
         btn_clear = QPushButton("清空结果")
         btn_add = QPushButton("添加结果")
+        btn_del = QPushButton("删除选中行")
         btn_clear.setObjectName("sideActionButton")
         btn_add.setObjectName("sideActionButton")
+        btn_del.setObjectName("sideActionButton")
         btn_clear.setMinimumWidth(88)
         btn_add.setMinimumWidth(88)
+        btn_del.setMinimumWidth(88)
         btn_clear.clicked.connect(self._on_clear_output)
         btn_add.clicked.connect(self._on_add_result)
+        btn_del.clicked.connect(self._on_delete_selected)
         side_btns.addWidget(btn_clear)
         side_btns.addWidget(btn_add)
+        side_btns.addWidget(btn_del)
         side_btns.addStretch(1)
 
         text_row.addWidget(self._input_text, stretch=1)
