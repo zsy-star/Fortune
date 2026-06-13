@@ -88,6 +88,18 @@ class OrderResult:
 
 
 @dataclass(frozen=True, slots=True)
+class OrderVoidResult:
+    order_id: int
+    order_no: str
+    status_before: str
+    status_after: str
+    reason: str
+    operator: str
+    operation_log_id: int
+    voided_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class OrderItemResult:
     id: int
     bet_type: str

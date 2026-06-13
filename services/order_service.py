@@ -26,10 +26,17 @@ from schemas.order_schema import (
     OrderItemResult,
     OrderResult,
     OrderSummary,
+    OrderVoidResult,
 )
 from services.log_service import LogService
 
 _SELECTION_SPLIT = re.compile(r"[,，、\s]+")
+ORDER_STATUS_ACTIVE = "active"
+ORDER_STATUS_PENDING = "pending"
+ORDER_STATUS_SETTLED = "settled"
+ORDER_STATUS_VOIDED = "voided"
+_VOIDABLE_STATUSES = {ORDER_STATUS_ACTIVE, ORDER_STATUS_PENDING}
+_EXCLUDED_FROM_EFFECTIVE_STATS = (ORDER_STATUS_VOIDED,)
 
 
 def _standardize_selection(bet_type: str, selection: str) -> str:
@@ -118,6 +125,64 @@ class OrderService:
         with self._session_factory() as session:
             order = OrderRepository(session).get_by_no(order_no)
             return self._to_detail(order) if order else None
+
+    def void_order(
+        self,
+        order_id: int,
+        reason: str,
+        operator: str = "system",
+    ) -> OrderVoidResult:
+        reason = str(reason).strip()
+        if not reason:
+            raise DomainError("Order void reason cannot be empty")
+        operator = str(operator).strip() or "system"
+
+        with self._session_factory() as session:
+            try:
+                repo = OrderRepository(session)
+                order = repo.get(order_id)
+                if order is None:
+                    raise DomainError(f"Order not found: {order_id}")
+                if order.status == ORDER_STATUS_SETTLED:
+                    raise DomainError(f"Settled order cannot be voided: {order.order_no}")
+                if order.status == ORDER_STATUS_VOIDED:
+                    raise DomainError(f"Order already voided: {order.order_no}")
+                if order.status not in _VOIDABLE_STATUSES:
+                    raise DomainError(f"Order status cannot be voided: {order.status}")
+
+                status_before = order.status
+                voided_at = datetime.now()
+                order.status = ORDER_STATUS_VOIDED
+                order.updated_at = voided_at
+                log = self._log_service.create_log(
+                    module="order",
+                    action="void",
+                    description=(
+                        f"Voided order {order.order_no}; order_id={order.id}; "
+                        f"reason={reason}; status_before={status_before}; "
+                        f"status_after={ORDER_STATUS_VOIDED}; operator={operator}; result=success"
+                    ),
+                    operator=operator,
+                    related_type="order",
+                    related_id=order.id,
+                    session=session,
+                )
+                session.flush()
+                result = OrderVoidResult(
+                    order_id=order.id,
+                    order_no=order.order_no,
+                    status_before=status_before,
+                    status_after=order.status,
+                    reason=reason,
+                    operator=operator,
+                    operation_log_id=log.id,
+                    voided_at=voided_at,
+                )
+                session.commit()
+                return result
+            except Exception:
+                session.rollback()
+                raise
 
     def list_orders(
         self,
@@ -230,23 +295,41 @@ class OrderService:
 
         with self._session_factory() as session:
             repo = OrderRepository(session)
-            region_counts = repo.count_by_region()
-            status_counts = repo.count_by_status()
+            region_counts = repo.count_by_region(exclude_statuses=_EXCLUDED_FROM_EFFECTIVE_STATS)
+            status_counts = repo.count_by_status(exclude_statuses=_EXCLUDED_FROM_EFFECTIVE_STATS)
             recent_orders = tuple(
                 self._to_summary(order)
-                for order in repo.list(region=detail_region, limit=recent_limit)
+                for order in repo.list(
+                    region=detail_region,
+                    limit=recent_limit,
+                    exclude_statuses=_EXCLUDED_FROM_EFFECTIVE_STATS,
+                )
             )
             return OrderDashboardSummary(
-                total_order_count=repo.count(),
-                today_order_count=repo.count(start_date=day_start, end_date=day_end),
-                total_amount=repo.sum_amount(),
-                today_amount=repo.sum_amount(start_date=day_start, end_date=day_end),
+                total_order_count=repo.count(exclude_statuses=_EXCLUDED_FROM_EFFECTIVE_STATS),
+                today_order_count=repo.count(
+                    start_date=day_start,
+                    end_date=day_end,
+                    exclude_statuses=_EXCLUDED_FROM_EFFECTIVE_STATS,
+                ),
+                total_amount=repo.sum_amount(exclude_statuses=_EXCLUDED_FROM_EFFECTIVE_STATS),
+                today_amount=repo.sum_amount(
+                    start_date=day_start,
+                    end_date=day_end,
+                    exclude_statuses=_EXCLUDED_FROM_EFFECTIVE_STATS,
+                ),
                 macau_order_count=region_counts.get("澳门", 0),
                 hong_kong_order_count=region_counts.get("香港", 0),
-                pending_order_count=status_counts.get("active", 0) + status_counts.get("pending", 0),
-                settled_order_count=status_counts.get("settled", 0),
+                pending_order_count=status_counts.get(ORDER_STATUS_ACTIVE, 0)
+                + status_counts.get(ORDER_STATUS_PENDING, 0),
+                settled_order_count=status_counts.get(ORDER_STATUS_SETTLED, 0),
                 recent_orders=recent_orders,
-                amount_by_bet_type=tuple(repo.amount_by_bet_type(region=detail_region)),
+                amount_by_bet_type=tuple(
+                    repo.amount_by_bet_type(
+                        region=detail_region,
+                        exclude_statuses=_EXCLUDED_FROM_EFFECTIVE_STATS,
+                    )
+                ),
             )
 
     def get_order_analysis_summary(
@@ -265,8 +348,14 @@ class OrderService:
 
         with self._session_factory() as session:
             repo = OrderRepository(session)
-            total_order_count = repo.count(region=detail_region)
-            total_amount = repo.sum_amount(region=detail_region)
+            total_order_count = repo.count(
+                region=detail_region,
+                exclude_statuses=_EXCLUDED_FROM_EFFECTIVE_STATS,
+            )
+            total_amount = repo.sum_amount(
+                region=detail_region,
+                exclude_statuses=_EXCLUDED_FROM_EFFECTIVE_STATS,
+            )
             average_order_amount = (
                 (total_amount / Decimal(total_order_count)).quantize(Decimal("0.01"))
                 if total_order_count
@@ -278,6 +367,7 @@ class OrderService:
                     region=detail_region,
                     start_date=trend_start,
                     end_date=trend_end,
+                    exclude_statuses=_EXCLUDED_FROM_EFFECTIVE_STATS,
                 )
             }
             trend = []
@@ -289,14 +379,38 @@ class OrderService:
                 total_order_count=total_order_count,
                 total_amount=total_amount,
                 average_order_amount=average_order_amount,
-                by_region=self._to_analysis_groups(repo.stats_by_region(region=detail_region)),
-                by_status=self._to_analysis_groups(repo.stats_by_status(region=detail_region)),
-                by_date=self._to_analysis_groups(repo.stats_by_date(region=detail_region)),
-                by_bet_type=self._to_analysis_groups(repo.stats_by_bet_type(region=detail_region)),
+                by_region=self._to_analysis_groups(
+                    repo.stats_by_region(
+                        region=detail_region,
+                        exclude_statuses=_EXCLUDED_FROM_EFFECTIVE_STATS,
+                    )
+                ),
+                by_status=self._to_analysis_groups(
+                    repo.stats_by_status(
+                        region=detail_region,
+                        exclude_statuses=_EXCLUDED_FROM_EFFECTIVE_STATS,
+                    )
+                ),
+                by_date=self._to_analysis_groups(
+                    repo.stats_by_date(
+                        region=detail_region,
+                        exclude_statuses=_EXCLUDED_FROM_EFFECTIVE_STATS,
+                    )
+                ),
+                by_bet_type=self._to_analysis_groups(
+                    repo.stats_by_bet_type(
+                        region=detail_region,
+                        exclude_statuses=_EXCLUDED_FROM_EFFECTIVE_STATS,
+                    )
+                ),
                 recent_7_day_trend=tuple(trend),
                 recent_orders=tuple(
                     self._to_summary(order)
-                    for order in repo.list(region=detail_region, limit=recent_limit)
+                    for order in repo.list(
+                        region=detail_region,
+                        limit=recent_limit,
+                        exclude_statuses=_EXCLUDED_FROM_EFFECTIVE_STATS,
+                    )
                 ),
             )
 

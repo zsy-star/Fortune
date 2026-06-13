@@ -39,6 +39,7 @@ class OrderRepository:
         customer_name: str | None = None,
         channel: str | None = None,
         status: str | None = None,
+        exclude_statuses: tuple[str, ...] | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
     ):
@@ -52,6 +53,8 @@ class OrderRepository:
             stmt = stmt.where(Order.channel.contains(channel))
         if status:
             stmt = stmt.where(Order.status == status)
+        if exclude_statuses:
+            stmt = stmt.where(Order.status.not_in(exclude_statuses))
         if start_date:
             stmt = stmt.where(Order.created_at >= start_date)
         if end_date:
@@ -66,6 +69,7 @@ class OrderRepository:
         customer_name: str | None = None,
         channel: str | None = None,
         status: str | None = None,
+        exclude_statuses: tuple[str, ...] | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
         limit: int = 100,
@@ -79,6 +83,7 @@ class OrderRepository:
             customer_name=customer_name,
             channel=channel,
             status=status,
+            exclude_statuses=exclude_statuses,
             start_date=start_date,
             end_date=end_date,
         )
@@ -156,6 +161,7 @@ class OrderRepository:
         customer_name: str | None = None,
         channel: str | None = None,
         status: str | None = None,
+        exclude_statuses: tuple[str, ...] | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
     ) -> int:
@@ -167,6 +173,7 @@ class OrderRepository:
             customer_name=customer_name,
             channel=channel,
             status=status,
+            exclude_statuses=exclude_statuses,
             start_date=start_date,
             end_date=end_date,
         )
@@ -177,6 +184,7 @@ class OrderRepository:
         *,
         region: str | None = None,
         status: str | None = None,
+        exclude_statuses: tuple[str, ...] | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
     ) -> Decimal:
@@ -185,23 +193,27 @@ class OrderRepository:
             stmt,
             region=region,
             status=status,
+            exclude_statuses=exclude_statuses,
             start_date=start_date,
             end_date=end_date,
         )
         return Decimal(self.session.scalar(stmt) or 0)
 
-    def count_by_region(self) -> dict[str, int]:
+    def count_by_region(self, *, exclude_statuses: tuple[str, ...] | None = None) -> dict[str, int]:
         stmt = select(Order.region, func.count(Order.id)).group_by(Order.region)
+        stmt = self._apply_filters(stmt, exclude_statuses=exclude_statuses)
         return {region: int(count) for region, count in self.session.execute(stmt)}
 
-    def count_by_status(self) -> dict[str, int]:
+    def count_by_status(self, *, exclude_statuses: tuple[str, ...] | None = None) -> dict[str, int]:
         stmt = select(Order.status, func.count(Order.id)).group_by(Order.status)
+        stmt = self._apply_filters(stmt, exclude_statuses=exclude_statuses)
         return {status: int(count) for status, count in self.session.execute(stmt)}
 
     def stats_by_region(
         self,
         *,
         region: str | None = None,
+        exclude_statuses: tuple[str, ...] | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
     ) -> list[tuple[str, int, Decimal]]:
@@ -210,7 +222,13 @@ class OrderRepository:
             .group_by(Order.region)
             .order_by(Order.region.asc())
         )
-        stmt = self._apply_filters(stmt, region=region, start_date=start_date, end_date=end_date)
+        stmt = self._apply_filters(
+            stmt,
+            region=region,
+            exclude_statuses=exclude_statuses,
+            start_date=start_date,
+            end_date=end_date,
+        )
         return [
             (label, int(count), Decimal(amount or 0))
             for label, count, amount in self.session.execute(stmt)
@@ -220,6 +238,7 @@ class OrderRepository:
         self,
         *,
         region: str | None = None,
+        exclude_statuses: tuple[str, ...] | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
     ) -> list[tuple[str, int, Decimal]]:
@@ -228,7 +247,13 @@ class OrderRepository:
             .group_by(Order.status)
             .order_by(Order.status.asc())
         )
-        stmt = self._apply_filters(stmt, region=region, start_date=start_date, end_date=end_date)
+        stmt = self._apply_filters(
+            stmt,
+            region=region,
+            exclude_statuses=exclude_statuses,
+            start_date=start_date,
+            end_date=end_date,
+        )
         return [
             (label, int(count), Decimal(amount or 0))
             for label, count, amount in self.session.execute(stmt)
@@ -238,6 +263,7 @@ class OrderRepository:
         self,
         *,
         region: str | None = None,
+        exclude_statuses: tuple[str, ...] | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
     ) -> list[tuple[str, int, Decimal]]:
@@ -247,7 +273,13 @@ class OrderRepository:
             .group_by(day)
             .order_by(day.asc())
         )
-        stmt = self._apply_filters(stmt, region=region, start_date=start_date, end_date=end_date)
+        stmt = self._apply_filters(
+            stmt,
+            region=region,
+            exclude_statuses=exclude_statuses,
+            start_date=start_date,
+            end_date=end_date,
+        )
         return [
             (str(label), int(count), Decimal(amount or 0))
             for label, count, amount in self.session.execute(stmt)
@@ -257,6 +289,7 @@ class OrderRepository:
         self,
         *,
         region: str | None = None,
+        exclude_statuses: tuple[str, ...] | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
         limit: int = 20,
@@ -271,7 +304,13 @@ class OrderRepository:
             .group_by(OrderItem.bet_type)
             .order_by(func.sum(OrderItem.amount).desc(), OrderItem.bet_type.asc())
         )
-        stmt = self._apply_filters(stmt, region=region, start_date=start_date, end_date=end_date)
+        stmt = self._apply_filters(
+            stmt,
+            region=region,
+            exclude_statuses=exclude_statuses,
+            start_date=start_date,
+            end_date=end_date,
+        )
         if limit > 0:
             stmt = stmt.limit(limit)
         return [
@@ -283,6 +322,7 @@ class OrderRepository:
         self,
         *,
         region: str | None = None,
+        exclude_statuses: tuple[str, ...] | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
         limit: int = 20,
@@ -293,7 +333,13 @@ class OrderRepository:
             .group_by(OrderItem.bet_type)
             .order_by(func.sum(OrderItem.amount).desc(), OrderItem.bet_type.asc())
         )
-        stmt = self._apply_filters(stmt, region=region, start_date=start_date, end_date=end_date)
+        stmt = self._apply_filters(
+            stmt,
+            region=region,
+            exclude_statuses=exclude_statuses,
+            start_date=start_date,
+            end_date=end_date,
+        )
         if limit > 0:
             stmt = stmt.limit(limit)
         return [(bet_type, Decimal(amount or 0)) for bet_type, amount in self.session.execute(stmt)]
