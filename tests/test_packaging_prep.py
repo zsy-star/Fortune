@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.build_test_release import run_build
+from scripts.build_test_release import run_build, sync_release_docs
 from scripts.check_test_release import run_check_test_release
 from scripts.runtime_init import RUNTIME_DIRECTORIES, ensure_runtime_directories
 
@@ -133,6 +133,30 @@ def test_check_test_release_module_importable() -> None:
     from scripts import check_test_release  # noqa: F401
 
     assert callable(check_test_release.run_check_test_release)
+
+
+def test_check_test_release_accepts_internal_docs(tmp_path: Path) -> None:
+    release = tmp_path / "Fortune-Test"
+    internal_docs = release / "_internal" / "docs"
+    internal_docs.mkdir(parents=True)
+    (internal_docs / "manual_test_script.md").write_text("# test\n", encoding="utf-8")
+    (release / "Fortune-Test.exe").write_bytes(b"MZ")
+
+    result = run_check_test_release(release)
+
+    assert result["ok"] is True
+    assert result["checks"]["docs"] == "ok"
+    assert any("_internal/docs/" in item for item in result["warnings"])
+
+
+def test_sync_release_docs_copies_to_release_root(tmp_path: Path) -> None:
+    release = tmp_path / "Fortune-Test"
+    internal_docs = release / "_internal" / "docs"
+    internal_docs.mkdir(parents=True)
+    (internal_docs / "readme.md").write_text("# doc\n", encoding="utf-8")
+
+    assert sync_release_docs(release) is True
+    assert (release / "docs" / "readme.md").read_text(encoding="utf-8") == "# doc\n"
 
 
 def test_check_test_release_detects_missing_exe(tmp_path: Path) -> None:

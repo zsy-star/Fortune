@@ -20,6 +20,16 @@ FORBIDDEN_DIR_PREFIXES = (
 )
 
 
+def _find_docs_dir(root: Path) -> tuple[Path | None, str]:
+    root_docs = root / "docs"
+    if root_docs.is_dir() and any(root_docs.glob("*.md")):
+        return root_docs, "docs/"
+    internal_docs = root / "_internal" / "docs"
+    if internal_docs.is_dir() and any(internal_docs.glob("*.md")):
+        return internal_docs, "_internal/docs/"
+    return None, ""
+
+
 def _find_forbidden_items(release_dir: Path) -> list[str]:
     found: list[str] = []
     for relative in FORBIDDEN_RELATIVE_PATHS:
@@ -82,10 +92,14 @@ def run_check_test_release(release_dir: Path, exe_name: str = DEFAULT_EXE_NAME) 
         checks["exe"] = "missing"
         failures.append(f"缺少可执行文件：{exe_name}")
 
-    docs_dir = root / "docs"
-    if docs_dir.is_dir() and any(docs_dir.glob("*.md")):
+    docs_dir, docs_label = _find_docs_dir(root)
+    if docs_dir is not None:
         checks["docs"] = "ok"
-        info.append("docs/ 目录存在且含文档")
+        info.append(f"文档目录：{docs_label}")
+        if docs_label == "_internal/docs/":
+            warnings.append(
+                "文档仅在 _internal/docs/；请运行 build_test_release --build 以同步到发布根 docs/"
+            )
     else:
         checks["docs"] = "missing"
         warnings.append("docs/ 目录缺失或无 .md 文件（测试人员可能缺少说明）")

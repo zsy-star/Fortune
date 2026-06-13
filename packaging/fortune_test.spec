@@ -60,6 +60,15 @@ a = Analysis(
     excludes=[
         "pytest",
         "pytest_*",
+        # Anaconda 常同时安装 PyQt5/PySide6，须排除非项目使用的 Qt 绑定
+        "PyQt5",
+        "PyQt6",
+        "PyQt5.QtCore",
+        "PyQt5.QtGui",
+        "PyQt5.QtWidgets",
+        "PyQt6.QtCore",
+        "PyQt6.QtGui",
+        "PyQt6.QtWidgets",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
