@@ -42,3 +42,21 @@ class OrderSettlementPreview:
     winning_items: int
     losing_items: int
     results: list[ItemSettlementResult]
+
+
+@dataclass(frozen=True, slots=True)
+class OrderSettlementCommitResult:
+    order_id: int
+    draw_id: int
+    region: str
+    issue_number: str
+    total_items: int
+    supported_items: int
+    unsupported_items: int
+    win_count: int
+    lose_count: int
+    order_status_before: str
+    order_status_after: str
+    results: list[ItemSettlementResult]
+    warnings: list[str]
+    operation_log_id: int
