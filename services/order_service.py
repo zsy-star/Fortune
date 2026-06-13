@@ -58,6 +58,7 @@ class OrderService:
         with self._session_factory() as session:
             try:
                 repo = OrderRepository(session)
+                now = datetime.now()
                 order = Order(
                     order_no=self._generate_order_no(),
                     customer_name=order_create.customer_name,
@@ -67,6 +68,8 @@ class OrderService:
                     raw_text=order_create.raw_text,
                     total_amount=total_amount,
                     status="active",
+                    created_at=now,
+                    updated_at=now,
                 )
                 repo.add(order)
                 session.flush()
