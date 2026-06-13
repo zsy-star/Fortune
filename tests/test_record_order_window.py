@@ -1,7 +1,7 @@
 """测试 RecordOrderWindow 录单窗口。
 
 使用 QT_QPA_PLATFORM=offscreen，不访问真实数据库、真实剪贴板、
-OrderService、OrderIntakeService、SQLAlchemy Session 或 49wz777.com。
+OrderService、SQLAlchemy Session 或 49wz777.com。
 
 覆盖：
 - 窗口创建/关闭
@@ -27,6 +27,7 @@ import pytest
 from PySide6.QtCore import Qt, QMimeData
 from PySide6.QtWidgets import (
     QApplication,
+    QMessageBox,
     QTableWidgetItem,
     QPushButton,
 )
@@ -59,6 +60,32 @@ def window(qapp):
     yield w
     w.close()
     w.deleteLater()
+
+
+@pytest.fixture
+def save_window(qapp, session_factory):
+    """创建接入临时数据库 OrderIntakeService 的窗口。"""
+    from services.order_intake_service import OrderIntakeService
+    from ui.windows.record_order_window import RecordOrderWindow
+
+    w = RecordOrderWindow(order_intake_service=OrderIntakeService(session_factory))
+    w._parse_timer.stop()
+    if hasattr(w, "_chk_auto_fetch"):
+        w._chk_auto_fetch.setChecked(False)
+    yield w
+    w.close()
+    w.deleteLater()
+
+
+def _order_counts(session_factory) -> tuple[int, int]:
+    from sqlalchemy import func, select
+
+    from models import Order, OrderItem
+
+    with session_factory() as session:
+        order_count = session.scalar(select(func.count(Order.id))) or 0
+        item_count = session.scalar(select(func.count(OrderItem.id))) or 0
+    return int(order_count), int(item_count)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -846,31 +873,139 @@ class TestReplacePresets:
 
 
 # ══════════════════════════════════════════════════════════════════════
-# 15. 不访问外部资源的约束性测试
+# 15. 保存订单
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestSaveOrder:
+    def test_empty_input_save_warns_and_does_not_write_db(self, save_window, session_factory):
+        """空输入点击保存时提示，不写入数据库。"""
+        save_window._input_text.clear()
+        with patch("ui.windows.record_order_window.QMessageBox.warning") as warning:
+            save_window._on_save_order()
+        warning.assert_called_once()
+        assert "请输入订单内容" in warning.call_args.args[2]
+        assert _order_counts(session_factory) == (0, 0)
+
+    def test_unparsed_input_save_warns_and_does_not_write_db(self, save_window, session_factory):
+        """输入后未解析时提示先解析，不写入数据库。"""
+        save_window._input_text.setPlainText("01/10")
+        with patch("ui.windows.record_order_window.QMessageBox.warning") as warning:
+            save_window._on_save_order()
+        warning.assert_called_once()
+        assert "请先解析订单内容" in warning.call_args.args[2]
+        assert _order_counts(session_factory) == (0, 0)
+
+    def test_parse_error_save_warns_and_does_not_write_db(self, save_window, session_factory):
+        """解析失败结果不能保存，并显示解析错误。"""
+        save_window._input_text.setPlainText("abc")
+        save_window._do_parse()
+        with patch("ui.windows.record_order_window.QMessageBox.warning") as warning:
+            save_window._on_save_order()
+        warning.assert_called_once()
+        assert "无法提取末尾金额" in warning.call_args.args[2]
+        assert _order_counts(session_factory) == (0, 0)
+
+    def test_save_01_10_success_writes_order_and_clears_parse_state(self, save_window, session_factory):
+        """01/10 解析成功后可保存到临时数据库。"""
+        from sqlalchemy import select
+
+        from models import Order, OrderItem
+
+        save_window._input_text.setPlainText("01/10")
+        save_window._do_parse()
+        with (
+            patch(
+                "ui.windows.record_order_window.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+            patch("ui.windows.record_order_window.QMessageBox.information") as info,
+        ):
+            save_window._on_save_order()
+
+        info.assert_called_once()
+        assert "订单保存成功" in info.call_args.args[2]
+        with session_factory() as session:
+            order = session.scalars(select(Order)).one()
+            items = session.scalars(select(OrderItem)).all()
+            assert order.raw_text == "01/10"
+            assert order.source == "record_window"
+            assert order.channel == save_window._cmb_channel.currentText()
+            assert order.total_amount == 10
+            assert len(items) == 1
+            assert items[0].selection == "01"
+            assert items[0].amount == 10
+        assert save_window._input_text.toPlainText() == ""
+        assert save_window._output_text.toPlainText() == ""
+        assert save_window._parsed_results == []
+        assert save_window._order_table.rowCount() == 0
+        assert save_window._lbl_total.text() == "当前总额: 0"
+
+    def test_save_multi_numbers_keeps_per_number_amount_semantics(self, save_window, session_factory):
+        """01,02,03各10 保存为 3 个明细，每个金额 10，总额 30。"""
+        from sqlalchemy import select
+
+        from models import Order, OrderItem
+
+        save_window._input_text.setPlainText("01,02,03各10")
+        save_window._do_parse()
+        with (
+            patch(
+                "ui.windows.record_order_window.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+            patch("ui.windows.record_order_window.QMessageBox.information"),
+        ):
+            save_window._on_save_order()
+
+        with session_factory() as session:
+            order = session.scalars(select(Order)).one()
+            items = session.scalars(select(OrderItem).order_by(OrderItem.selection)).all()
+            assert order.total_amount == 30
+            assert [item.selection for item in items] == ["01", "02", "03"]
+            assert [item.amount for item in items] == [10, 10, 10]
+
+    def test_table_user_adjusted_blocks_save(self, save_window, session_factory):
+        """表格被人工调整后，本阶段禁止直接保存。"""
+        save_window._input_text.setPlainText("01/10")
+        save_window._do_parse()
+        save_window._table_user_adjusted = True
+        with patch("ui.windows.record_order_window.QMessageBox.warning") as warning:
+            save_window._on_save_order()
+        warning.assert_called_once()
+        assert "当前表格已人工调整" in warning.call_args.args[2]
+        assert _order_counts(session_factory) == (0, 0)
+
+    def test_preview_can_save_false_blocks_save(self, save_window, session_factory):
+        """preview.can_save=False 时提示原因，不写入数据库。"""
+        save_window._input_text.setPlainText("全包各10")
+        save_window._do_parse()
+        with patch("ui.windows.record_order_window.QMessageBox.warning") as warning:
+            save_window._on_save_order()
+        warning.assert_called_once()
+        assert "全包" in warning.call_args.args[2]
+        assert _order_counts(session_factory) == (0, 0)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 16. 不访问外部资源的约束性测试
 # ══════════════════════════════════════════════════════════════════════
 
 
 class TestNoExternalDependencies:
-    """确保窗口测试不调用 OrderService / OrderIntakeService / SQLAlchemy / 真实 DB。"""
+    """确保窗口不直接调用 OrderService / SQLAlchemy / 真实 DB。"""
 
-    def test_window_imports_dont_pull_db(self):
-        """导入 record_order_window 不会拉入数据库相关模块。"""
-        import sys
-        # 记录已导入的数据库相关模块
-        db_modules_before = {
-            k for k in sys.modules
-            if "sqlalchemy" in k.lower()
-            or "order_service" in k.lower()
-            or "order_intake" in k.lower()
-        }
-        # 窗口已经在本模块中导入过 — 只需确认 RecordOrderWindow
-        # 自身没有 import 这些
+    def test_window_only_depends_on_order_intake_service_for_save(self):
+        """保存链路只允许窗口调用 OrderIntakeService，不直接碰数据库层。"""
         from ui.windows.record_order_window import RecordOrderWindow
         import inspect
+
         src = inspect.getsource(RecordOrderWindow)
         assert "OrderService" not in src
-        assert "OrderIntake" not in src
+        assert "OrderRepository" not in src
         assert "sqlalchemy" not in src.lower()
+        assert "Session" not in src
+        assert "sqlite" not in src.lower()
         assert "fortune.db" not in src.lower()
         assert "49wz777" not in src.lower()
 
@@ -950,7 +1085,7 @@ class TestButtonExistence:
         assert len(buttons) == 1
 
     def test_all_action_buttons_exist(self, window):
-        """三个侧边按钮均存在：清空结果、添加结果、删除选中行。"""
+        """四个侧边按钮均存在：清空结果、添加结果、删除选中行、保存订单。"""
         from PySide6.QtWidgets import QPushButton
 
         button_texts = {
@@ -961,3 +1096,4 @@ class TestButtonExistence:
         assert "清空结果" in button_texts
         assert "添加结果" in button_texts
         assert "删除选中行" in button_texts
+        assert "保存订单" in button_texts
