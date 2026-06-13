@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -31,6 +32,9 @@ from services.settlement_service import SettlementService
 from ui.dialogs.settlement_preview_dialog import SettlementPreviewDialog
 
 PAGE_SIZE = 20
+VOIDABLE_ORDER_STATUSES = {"active", "pending"}
+ORDER_STATUS_SETTLED = "settled"
+ORDER_STATUS_VOIDED = "voided"
 
 
 def _money(value: Decimal) -> str:
@@ -104,7 +108,7 @@ class OrderDetailPage(QWidget):
         self._edit_channel = QLineEdit()
         self._edit_channel.setPlaceholderText("渠道")
         self._cmb_status = QComboBox()
-        self._cmb_status.addItems(["全部", "active", "cancelled", "settled"])
+        self._cmb_status.addItems(["全部", "active", "pending", "settled", "voided", "cancelled"])
         self._start_date = self._make_date_edit()
         self._end_date = self._make_date_edit()
 
@@ -190,7 +194,11 @@ class OrderDetailPage(QWidget):
         self._btn_preview = QPushButton("结算预览")
         self._btn_preview.setEnabled(False)
         self._btn_preview.clicked.connect(self._on_settlement_preview)
+        self._btn_void = QPushButton("作废订单")
+        self._btn_void.setEnabled(False)
+        self._btn_void.clicked.connect(self._on_void_order)
         preview_row.addWidget(self._btn_preview)
+        preview_row.addWidget(self._btn_void)
         preview_row.addStretch(1)
 
         self._prize_hint = QLabel(
@@ -370,6 +378,7 @@ class OrderDetailPage(QWidget):
 
     def _render_detail(self, detail: OrderDetailResult) -> None:
         self._btn_preview.setEnabled(True)
+        self._btn_void.setEnabled(detail.status in VOIDABLE_ORDER_STATUSES)
         self._detail_info.setText(
             "订单号：{no}    客户：{customer}    渠道：{channel}    地区：{region}    "
             "来源：{source}    创建：{created}    更新：{updated}    状态：{status}    总金额：{total}".format(
@@ -405,6 +414,7 @@ class OrderDetailPage(QWidget):
         self._raw_text.clear()
         self._item_table.setRowCount(0)
         self._btn_preview.setEnabled(False)
+        self._btn_void.setEnabled(False)
 
     def _on_settlement_preview(self) -> None:
         if self._selected_order_id is None:
@@ -425,6 +435,83 @@ class OrderDetailPage(QWidget):
             self.reload_data()
             if self._selected_order_id is not None:
                 self._load_detail(self._selected_order_id)
+
+    def _on_void_order(self) -> None:
+        if self._selected_order_id is None:
+            self._status_label.setText("请先选择订单")
+            QMessageBox.warning(self, "作废订单", "请先选择订单")
+            return
+
+        detail = self._order_service.get_order(self._selected_order_id)
+        if detail is None:
+            self._status_label.setText("订单不存在或已被删除，列表已刷新。")
+            self.reload_data()
+            return
+        if detail.status == ORDER_STATUS_SETTLED:
+            QMessageBox.warning(self, "作废订单", "已结算订单不能作废")
+            self._btn_void.setEnabled(False)
+            return
+        if detail.status == ORDER_STATUS_VOIDED:
+            QMessageBox.warning(self, "作废订单", "该订单已作废，不能重复作废")
+            self._btn_void.setEnabled(False)
+            return
+        if detail.status not in VOIDABLE_ORDER_STATUSES:
+            QMessageBox.warning(self, "作废订单", f"当前状态不能作废：{detail.status}")
+            self._btn_void.setEnabled(False)
+            return
+
+        reason, ok = QInputDialog.getMultiLineText(
+            self,
+            "作废订单",
+            "请输入作废原因",
+        )
+        if not ok:
+            self._status_label.setText("已取消作废订单")
+            return
+        reason = reason.strip()
+        if not reason:
+            QMessageBox.warning(self, "作废订单", "请输入作废原因")
+            return
+
+        confirm_text = (
+            f"订单ID / 订单号：{detail.id} / {detail.order_no}\n"
+            f"当前状态：{detail.status}\n"
+            f"投注总额：{_money(detail.total_amount)}\n"
+            f"作废原因：{reason}\n\n"
+            "作废后订单不会被删除，但会从有效统计中排除。\n"
+            "该操作会写入操作日志。\n\n"
+            "确认作废该订单？"
+        )
+        choice = QMessageBox.question(
+            self,
+            "确认作废订单",
+            confirm_text,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if choice != QMessageBox.StandardButton.Yes:
+            self._status_label.setText("已取消作废订单")
+            return
+
+        try:
+            result = self._order_service.void_order(detail.id, reason, operator="system")
+        except Exception as exc:
+            QMessageBox.warning(self, "作废订单", f"订单作废失败：{exc}")
+            self._status_label.setText(f"订单作废失败：{exc}")
+            self._render_detail(detail)
+            return
+
+        message = (
+            "订单作废成功\n"
+            f"订单ID：{result.order_id}\n"
+            f"订单号：{result.order_no}\n"
+            f"作废原因：{result.reason}\n"
+            f"操作日志ID：{result.operation_log_id}"
+        )
+        QMessageBox.information(self, "作废订单", message)
+        self._status_label.setText(f"订单作废成功：{result.order_no}")
+        self.reload_data()
+        self._load_detail(result.order_id)
 
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(
