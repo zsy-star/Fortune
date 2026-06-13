@@ -195,7 +195,7 @@ class OrderDetailPage(QWidget):
 
         self._prize_hint = QLabel(
             "结算预览：只读查看当前订单在指定期开奖结果下的命中情况。"
-            "正式兑奖：暂未开发。"
+            "正式确认结算：在预览窗口二次确认后更新订单状态并写入操作日志。"
         )
         self._prize_hint.setObjectName("prizeHint")
 
@@ -421,6 +421,10 @@ class OrderDetailPage(QWidget):
             QMessageBox.warning(self, "结算预览", "订单不存在或已被删除。")
             return
         dialog.exec()
+        if dialog.settlement_committed():
+            self.reload_data()
+            if self._selected_order_id is not None:
+                self._load_detail(self._selected_order_id)
 
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(

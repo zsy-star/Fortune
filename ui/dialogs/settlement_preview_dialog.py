@@ -57,6 +57,8 @@ class SettlementPreviewDialog(QDialog):
       self._draws: list[LotteryDraw] = []
       self._preview_done = False
       self._invalid = False
+      self._current_preview: OrderSettlementPreview | None = None
+      self._settlement_committed = False
 
       self.setWindowTitle("结算预览")
       self.setMinimumSize(820, 640)
@@ -80,6 +82,9 @@ class SettlementPreviewDialog(QDialog):
 
   def is_valid(self) -> bool:
       return not self._invalid
+
+  def settlement_committed(self) -> bool:
+      return self._settlement_committed
 
   def _build_order_section(self) -> QFrame:
       frame = QFrame()
@@ -167,7 +172,12 @@ class SettlementPreviewDialog(QDialog):
       self._btn_preview = QPushButton("开始预览")
       self._btn_preview.setObjectName("primaryBtn")
       self._btn_preview.clicked.connect(self._on_start_preview)
+      self._btn_commit = QPushButton("正式确认结算")
+      self._btn_commit.setObjectName("dangerBtn")
+      self._btn_commit.setEnabled(False)
+      self._btn_commit.clicked.connect(self._on_commit_settlement)
       row.addWidget(self._btn_preview)
+      row.addWidget(self._btn_commit)
       row.addStretch(1)
       return row
 
@@ -246,6 +256,7 @@ class SettlementPreviewDialog(QDialog):
       self._lbl_no_draws.setVisible(not has_draws)
       self._cmb_draw.setEnabled(has_draws)
       self._btn_preview.setEnabled(has_draws)
+      self._btn_commit.setEnabled(False)
 
       if has_draws:
           self._cmb_draw.setCurrentIndex(0)
@@ -282,6 +293,7 @@ class SettlementPreviewDialog(QDialog):
   def _on_start_preview(self) -> None:
       index = self._cmb_draw.currentIndex()
       if index < 0 or index >= len(self._draws):
+          QMessageBox.warning(self, "结算确认", "请先选择开奖并完成结算预览")
           return
       draw_id = self._draws[index].id
       try:
@@ -290,7 +302,9 @@ class SettlementPreviewDialog(QDialog):
           QMessageBox.warning(self, "结算预览", str(exc))
           return
       self._preview_done = True
+      self._current_preview = preview
       self._show_preview(preview)
+      self._update_commit_button()
 
   def _show_preview(self, preview: OrderSettlementPreview) -> None:
       self._lbl_total_items.setText(str(preview.total_items))
@@ -329,6 +343,7 @@ class SettlementPreviewDialog(QDialog):
 
   def _clear_preview_results(self) -> None:
       self._preview_done = False
+      self._current_preview = None
       for label in (
           self._lbl_total_items,
           self._lbl_supported,
@@ -338,6 +353,91 @@ class SettlementPreviewDialog(QDialog):
       ):
           label.setText("—")
       self._result_table.setRowCount(0)
+      if hasattr(self, "_btn_commit"):
+          self._btn_commit.setEnabled(False)
+
+  def _update_commit_button(self) -> None:
+      can_commit = (
+          self._preview_done
+          and self._current_preview is not None
+          and self._current_preview.unsupported_items == 0
+          and getattr(self, "_order_detail", None) is not None
+          and self._order_detail.status != "settled"
+      )
+      self._btn_commit.setEnabled(can_commit)
+
+  def _selected_draw(self) -> LotteryDraw | None:
+      index = self._cmb_draw.currentIndex()
+      if index < 0 or index >= len(self._draws):
+          return None
+      return self._draws[index]
+
+  def _on_commit_settlement(self) -> None:
+      draw = self._selected_draw()
+      if draw is None:
+          QMessageBox.warning(self, "结算确认", "请先选择开奖并完成结算预览")
+          return
+      if not self._preview_done or self._current_preview is None:
+          QMessageBox.warning(self, "结算确认", "请先开始预览")
+          return
+      if getattr(self, "_order_detail", None) is not None and self._order_detail.status == "settled":
+          QMessageBox.warning(self, "结算确认", "该订单已结算，不能重复结算")
+          self._btn_commit.setEnabled(False)
+          return
+      if self._current_preview.unsupported_items:
+          QMessageBox.warning(self, "结算确认", "存在暂不支持玩法，暂不能正式结算")
+          self._btn_commit.setEnabled(False)
+          return
+
+      order_no = getattr(self._order_detail, "order_no", "")
+      message = (
+          f"订单号 / 订单ID：{order_no} / {self._order_id}\n"
+          f"开奖期号：{draw.issue_number}\n"
+          f"中奖数量：{self._current_preview.winning_items}\n"
+          f"未中奖数量：{self._current_preview.losing_items}\n"
+          f"总明细数：{self._current_preview.total_items}\n\n"
+          "确认后将更新订单状态并写入操作日志。"
+      )
+      choice = QMessageBox.question(
+          self,
+          "正式确认结算",
+          message,
+          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+          QMessageBox.StandardButton.No,
+      )
+      if choice != QMessageBox.StandardButton.Yes:
+          return
+
+      try:
+          result = self._settlement_service.commit_order_settlement(self._order_id, draw.id)
+      except SettlementDataError as exc:
+          text = str(exc)
+          if "已结算" in text or "宸茬粨绠" in text:
+              QMessageBox.warning(self, "结算确认", "该订单已结算，不能重复结算")
+          else:
+              QMessageBox.warning(self, "结算确认", text)
+          self._load_order()
+          self._update_commit_button()
+          return
+      except Exception as exc:
+          QMessageBox.warning(self, "结算确认", f"结算失败：{exc}")
+          return
+
+      self._settlement_committed = True
+      self._load_order()
+      self._btn_commit.setEnabled(False)
+      QMessageBox.information(
+          self,
+          "结算确认",
+          (
+              "结算成功\n"
+              f"订单ID：{result.order_id}\n"
+              f"开奖期号：{result.issue_number}\n"
+              f"中奖数量：{result.win_count}\n"
+              f"未中奖数量：{result.lose_count}\n"
+              f"操作日志ID：{result.operation_log_id}"
+          ),
+      )
 
   def _apply_stylesheet(self) -> None:
       self.setStyleSheet(
@@ -372,6 +472,19 @@ class SettlementPreviewDialog(QDialog):
               background: #5dade2;
           }
           QPushButton#primaryBtn:disabled {
+              background: #bdc3c7;
+              border-color: #95a5a6;
+              color: #ecf0f1;
+          }
+          QPushButton#dangerBtn {
+              background: #c0392b;
+              color: #ffffff;
+              border: 1px solid #922b21;
+          }
+          QPushButton#dangerBtn:hover {
+              background: #e74c3c;
+          }
+          QPushButton#dangerBtn:disabled {
               background: #bdc3c7;
               border-color: #95a5a6;
               color: #ecf0f1;
