@@ -10,10 +10,12 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDateEdit,
     QFrame,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -23,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from schemas.log_schema import OperationLogResult
 from schemas.order_schema import OrderSummary
+from services.excel_export_service import ExcelExportService
 from services.log_service import LogService
 from services.order_service import OrderService
 
@@ -37,16 +40,35 @@ def _dash(value: object | None) -> str:
     return str(value) if value not in (None, "") else "-"
 
 
+def _format_size(size_bytes: int) -> str:
+    if size_bytes >= 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.2f} MB"
+    if size_bytes >= 1024:
+        return f"{size_bytes / 1024:.2f} KB"
+    return f"{size_bytes} B"
+
+
+def _export_success_message(result) -> str:
+    return (
+        "导出成功\n"
+        f"文件路径：{result.export_path}\n"
+        f"行数：{result.row_count}\n"
+        f"文件大小：{_format_size(result.size_bytes)}"
+    )
+
+
 class SettlementLedgerPage(QWidget):
     def __init__(
         self,
         parent=None,
         order_service: OrderService | None = None,
         log_service: LogService | None = None,
+        excel_export_service: ExcelExportService | None = None,
     ):
         super().__init__(parent)
         self._order_service = order_service or OrderService()
         self._log_service = log_service or LogService()
+        self._excel_export_service = excel_export_service or ExcelExportService(self._order_service._session_factory)
         self._page = 1
         self._total = 0
 
@@ -96,8 +118,11 @@ class SettlementLedgerPage(QWidget):
             ("查询", self._on_query),
             ("重置", self._on_reset),
             ("刷新", self.reload_data),
+            ("导出 Excel", self._on_export_excel),
         ):
             btn = QPushButton(text)
+            if text == "导出 Excel":
+                self._btn_export_excel = btn
             btn.clicked.connect(handler)
             row.addWidget(btn)
         row.addStretch(1)
@@ -299,6 +324,31 @@ class SettlementLedgerPage(QWidget):
         self._end_date.setDate(self._end_date.minimumDate())
         self._page = 1
         self.reload_data()
+
+    def _on_export_excel(self) -> None:
+        if not self._validate_dates():
+            return
+        output_dir = QFileDialog.getExistingDirectory(self, "选择导出目录")
+        if not output_dir:
+            self._lbl_total.setText("已取消导出")
+            return
+
+        region, keyword, start_dt, end_dt = self._filters()
+        try:
+            result = self._excel_export_service.export_settlement_ledger(
+                region=region,
+                keyword=keyword,
+                start_date=start_dt,
+                end_date=end_dt,
+                output_dir=output_dir,
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "导出 Excel", f"导出失败：{exc}")
+            self._lbl_total.setText(f"导出失败：{exc}")
+            return
+
+        QMessageBox.information(self, "导出 Excel", _export_success_message(result))
+        self._lbl_total.setText(f"导出成功：{result.file_name}")
 
     def _prev_page(self) -> None:
         if self._page > 1:

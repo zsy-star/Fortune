@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDateEdit,
     QFrame,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from schemas.order_schema import OrderDetailResult, OrderSummary
 from services.draw_service import DrawService
+from services.excel_export_service import ExcelExportService
 from services.log_service import LogService
 from services.order_service import OrderService
 from services.settlement_service import SettlementService
@@ -45,6 +47,23 @@ def _dash(value: object | None) -> str:
     return str(value) if value not in (None, "") else "—"
 
 
+def _format_size(size_bytes: int) -> str:
+    if size_bytes >= 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.2f} MB"
+    if size_bytes >= 1024:
+        return f"{size_bytes / 1024:.2f} KB"
+    return f"{size_bytes} B"
+
+
+def _export_success_message(result) -> str:
+    return (
+        "导出成功\n"
+        f"文件路径：{result.export_path}\n"
+        f"行数：{result.row_count}\n"
+        f"文件大小：{_format_size(result.size_bytes)}"
+    )
+
+
 class OrderDetailPage(QWidget):
     def __init__(
         self,
@@ -53,6 +72,7 @@ class OrderDetailPage(QWidget):
         log_service: LogService | None = None,
         draw_service: DrawService | None = None,
         settlement_service: SettlementService | None = None,
+        excel_export_service: ExcelExportService | None = None,
     ):
         super().__init__(parent)
         self._order_service = order_service or OrderService()
@@ -60,6 +80,7 @@ class OrderDetailPage(QWidget):
         self._log_service = log_service or LogService(session_factory)
         self._draw_service = draw_service or DrawService(session_factory)
         self._settlement_service = settlement_service or SettlementService(session_factory)
+        self._excel_export_service = excel_export_service or ExcelExportService(session_factory)
         self._page = 1
         self._total = 0
         self._selected_order_id: int | None = None
@@ -127,12 +148,15 @@ class OrderDetailPage(QWidget):
         btn_query = QPushButton("查询")
         btn_reset = QPushButton("重置")
         btn_refresh = QPushButton("刷新")
+        self._btn_export_excel = QPushButton("导出 Excel")
         btn_query.clicked.connect(self._on_query)
         btn_reset.clicked.connect(self._on_reset)
         btn_refresh.clicked.connect(self.reload_data)
+        self._btn_export_excel.clicked.connect(self._on_export_excel)
         row.addWidget(btn_query)
         row.addWidget(btn_reset)
         row.addWidget(btn_refresh)
+        row.addWidget(self._btn_export_excel)
         return row
 
     def _make_date_edit(self) -> QDateEdit:
@@ -332,6 +356,33 @@ class OrderDetailPage(QWidget):
         self._end_date.setDate(self._end_date.minimumDate())
         self._page = 1
         self.reload_data()
+
+    def _on_export_excel(self) -> None:
+        if not self._validate_dates():
+            return
+        output_dir = QFileDialog.getExistingDirectory(self, "选择导出目录")
+        if not output_dir:
+            self._status_label.setText("已取消导出")
+            return
+
+        region, order_no, _customer, _channel, status, start_dt, end_dt = self._filters()
+        try:
+            result = self._excel_export_service.export_orders(
+                region=region,
+                status=status,
+                start_date=start_dt,
+                end_date=end_dt,
+                keyword=order_no,
+                include_voided=False,
+                output_dir=output_dir,
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "导出 Excel", f"导出失败：{exc}")
+            self._status_label.setText(f"导出失败：{exc}")
+            return
+
+        QMessageBox.information(self, "导出 Excel", _export_success_message(result))
+        self._status_label.setText(f"导出成功：{result.file_name}")
 
     def _prev_page(self) -> None:
         if self._page > 1:
