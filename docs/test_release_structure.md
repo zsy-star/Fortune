@@ -7,12 +7,14 @@ Fortune 测试版采用 PyInstaller **onedir** 模式，发布物为文件夹 `F
 ```text
 Fortune-Test/
   Fortune-Test.exe          # 主程序入口
-  docs/                     # 打包内置说明（*.md）
-  _internal/                # PyInstaller 运行时依赖（自动生成）
+  docs/                     # build 后由脚本从 _internal/docs/ 同步
+  _internal/                # PyInstaller 运行时依赖（含原始 docs/）
   data/                     # 首次运行自动创建
   data/backups/             # 首次运行自动创建
   exports/                  # 首次运行自动创建
 ```
+
+构建完成后，`build_test_release.py --build` 会将 `_internal/docs/` 复制到发布根 `docs/`。
 
 ## 首次运行后
 

@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 DEFAULT_SPEC = Path("packaging/fortune_test.spec")
 DEFAULT_DIST_DIR = Path("dist/Fortune-Test")
@@ -56,8 +61,21 @@ def plan_build_steps(
             f"--workpath {build_dir} {spec_path}"
         )
     steps.append(f"步骤 5：预期输出目录：{dist_dir}")
-    steps.append("步骤 6：构建后运行 check_test_release.py 验证发布目录")
+    steps.append("步骤 6：将 _internal/docs/ 同步到发布根 docs/（便于测试人员查阅）")
+    steps.append("步骤 7：构建后运行 check_test_release.py 验证发布目录")
     return steps
+
+
+def sync_release_docs(release_dir: Path) -> bool:
+    """Copy PyInstaller bundled docs to release root for testers."""
+    internal_docs = release_dir / "_internal" / "docs"
+    target_docs = release_dir / "docs"
+    if not internal_docs.is_dir():
+        return False
+    if target_docs.exists():
+        shutil.rmtree(target_docs)
+    shutil.copytree(internal_docs, target_docs)
+    return True
 
 
 def run_build(
@@ -123,8 +141,11 @@ def run_build(
         result["message"] = f"PyInstaller 构建失败，退出码 {completed.returncode}"
         return result
 
+    release_dir = (root / dist_dir).resolve()
+    sync_release_docs(release_dir)
+
     result["ok"] = True
-    result["message"] = f"构建完成：{(root / dist_dir).resolve()}"
+    result["message"] = f"构建完成：{release_dir}"
     return result
 
 

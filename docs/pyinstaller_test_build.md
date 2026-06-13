@@ -69,7 +69,7 @@ pyinstaller --noconfirm --distpath dist --workpath build/fortune_test packaging/
 ```text
 dist/Fortune-Test/
   Fortune-Test.exe
-  docs/              # 打包进去的说明文档
+  docs/              # build 后同步自 _internal/docs/
   _internal/         # PyInstaller 依赖（onedir 模式）
 ```
 
