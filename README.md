@@ -51,10 +51,16 @@ data/fortune.db
 - 权限系统、云同步、在线账号
 - PyInstaller 安装包
 
+## 验收与打包
+
+- [商用测试前验收清单](docs/commercial_acceptance_checklist.md)
+- [打包前自检清单](docs/pre_packaging_checklist.md)
+- [人工验收脚本](docs/manual_test_script.md)
+- 只读自检：`python scripts/pre_release_check.py --project-root .`
+
 ## 后续规划
 
-- 小范围商用测试前验收清单
-- 打包前自检和 PyInstaller 打包准备
+- PyInstaller 打包测试版准备
 - 按实际业务优先级补充赔率 / 盈亏、导入、调单等能力
 
 ## 迁移与测试

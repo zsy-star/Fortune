@@ -31,3 +31,9 @@ Fortune 当前测试版面向小范围商用记账验证，优先保证订单、
 - 未开放入口必须隐藏、禁用或明确标记。
 - 不修改数据库模型和迁移。
 - 不写入真实测试数据到 `data/fortune.db`。
+
+## 相关文档
+
+- [小范围商用测试前验收清单](commercial_acceptance_checklist.md)
+- [打包前自检清单](pre_packaging_checklist.md)
+- [人工验收脚本](manual_test_script.md)
