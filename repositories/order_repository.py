@@ -85,6 +85,69 @@ class OrderRepository:
         stmt = stmt.order_by(Order.created_at.desc(), Order.id.desc()).limit(limit).offset(offset)
         return list(self.session.scalars(stmt))
 
+    def _apply_settlement_ledger_filters(
+        self,
+        stmt,
+        *,
+        region: str | None = None,
+        keyword: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ):
+        stmt = stmt.where(Order.status == "settled")
+        if region:
+            stmt = stmt.where(Order.region == region)
+        if keyword:
+            keyword = keyword.strip()
+            if keyword.isdigit():
+                stmt = stmt.where(Order.id == int(keyword))
+            else:
+                stmt = stmt.where(Order.order_no.contains(keyword))
+        if start_date:
+            stmt = stmt.where(Order.updated_at >= start_date)
+        if end_date:
+            stmt = stmt.where(Order.updated_at <= end_date)
+        return stmt
+
+    def list_settlement_ledger(
+        self,
+        *,
+        region: str | None = None,
+        keyword: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Order]:
+        stmt: Select[tuple[Order]] = select(Order).options(selectinload(Order.items))
+        stmt = self._apply_settlement_ledger_filters(
+            stmt,
+            region=region,
+            keyword=keyword,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        stmt = stmt.order_by(Order.updated_at.desc(), Order.id.desc()).limit(limit).offset(offset)
+        return list(self.session.scalars(stmt))
+
+    def count_settlement_ledger(
+        self,
+        *,
+        region: str | None = None,
+        keyword: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> int:
+        stmt = select(func.count(Order.id))
+        stmt = self._apply_settlement_ledger_filters(
+            stmt,
+            region=region,
+            keyword=keyword,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return int(self.session.scalar(stmt) or 0)
+
     def count(
         self,
         *,

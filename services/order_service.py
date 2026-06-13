@@ -170,6 +170,48 @@ class OrderService:
                 end_date=end_date,
             )
 
+    def list_settlement_ledger(
+        self,
+        *,
+        region: str | None = None,
+        keyword: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[OrderSummary]:
+        limit, offset = self._validate_limit_offset(limit, offset)
+        if region is not None:
+            region = normalize_region(region)
+        with self._session_factory() as session:
+            orders = OrderRepository(session).list_settlement_ledger(
+                region=region,
+                keyword=keyword,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit,
+                offset=offset,
+            )
+            return [self._to_summary(order) for order in orders]
+
+    def count_settlement_ledger(
+        self,
+        *,
+        region: str | None = None,
+        keyword: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> int:
+        if region is not None:
+            region = normalize_region(region)
+        with self._session_factory() as session:
+            return OrderRepository(session).count_settlement_ledger(
+                region=region,
+                keyword=keyword,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
     def get_dashboard_summary(
         self,
         *,
