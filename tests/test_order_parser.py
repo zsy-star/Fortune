@@ -565,6 +565,62 @@ class TestErrorHandling:
 
 
 # ======================================================================
+# 前缀剥离（订单标记等场景）
+# ======================================================================
+
+
+class TestPrefixStripping:
+    """未知前缀自动跳过，不影响后续有效类别解析。"""
+
+    def test_single_word_prefix_zodiac(self) -> None:
+        r = parse_order("张三 兔各20")
+        assert r.success
+        assert r.category == "兔"
+        assert r.numbers == (4, 16, 28, 40)
+        assert r.amount == 20.0
+
+    def test_single_word_prefix_number_list(self) -> None:
+        r = parse_order("VIP 01,02,03各10")
+        assert r.success
+        assert r.category == "纯数字"
+        assert r.numbers == (1, 2, 3)
+        assert r.total == 30.0
+
+    def test_multi_word_prefix(self) -> None:
+        r = parse_order("客户A 标记 红波各10")
+        assert r.success
+        assert r.category == "红波"
+        assert 1 in r.numbers
+
+    def test_prefix_with_lianxiao(self) -> None:
+        r = parse_order("张三 连兔龙蛇各10")
+        assert r.success
+        assert r.category == "连肖"
+        assert len(r.zodiac_groups) == 3
+
+    def test_prefix_before_macau_order(self) -> None:
+        """地域前缀在开头才生效；订单标记在地域之后。"""
+        r = parse_order("澳门 VIP 兔各10")
+        assert r.success
+        # 地域必须在最开头
+        assert r.region == "澳门"
+        # "VIP" 被前缀剥离，兔成功匹配
+        assert r.category == "兔"
+
+    def test_no_prefix_no_regression(self) -> None:
+        """无前缀的正常输入不受影响。"""
+        r = parse_order("兔各10")
+        assert r.success
+        assert r.category == "兔"
+
+    def test_only_prefix_no_valid_category(self) -> None:
+        """只有前缀没有有效类别时仍报错。"""
+        r = parse_order("张三 李四各10")
+        assert not r.success
+        assert "无法识别" in r.error
+
+
+# ======================================================================
 # amount / total 语义
 # ======================================================================
 
@@ -631,11 +687,14 @@ class TestParseResultFields:
         assert isinstance(r.region, str)
         assert hasattr(r, "zodiac_groups")
         assert isinstance(r.zodiac_groups, list)
+        assert hasattr(r, "original_text")
+        assert isinstance(r.original_text, str)
 
     def test_success_result_fields(self) -> None:
         r = parse_order("兔各10")
         assert r.success
         assert r.error == ""  # 成功时错误为空
+        assert r.original_text == ""  # parse_order 不填，由调用方回填
         assert len(r.numbers) > 0
 
     def test_failure_result_fields(self) -> None:
@@ -670,13 +729,40 @@ class TestParseResultFields:
 # ======================================================================
 
 
+class TestReverseZodiac:
+    """反向查询：号码 → 生肖。"""
+
+    def test_single_zodiac_match(self) -> None:
+        r = parse_order("4,16,28,40各10")
+        assert r.success
+        output = format_result(r)
+        assert "→" in output
+        assert "兔(04,16,28,40)" in output
+
+    def test_mixed_zodiacs(self) -> None:
+        r = parse_order("1,2,3各10")  # 马, 蛇, 龙
+        assert r.success
+        output = format_result(r)
+        assert "马(01)" in output
+        assert "蛇(02)" in output
+        assert "龙(03)" in output
+
+    def test_zodiac_category_no_reverse(self) -> None:
+        """生肖类别（非纯数字）不附加反向查询。"""
+        r = parse_order("兔各10")
+        assert r.success
+        output = format_result(r)
+        assert "→" not in output
+
+
 class TestFormatResult:
     def test_success_format(self) -> None:
         r = parse_order("兔各20")
         output = format_result(r)
         assert "04,16,28,40" in output
         assert "20" in output
-        assert "80" in output
+        # total 保留在 ParseResult 中，输出不再显示总计行
+        assert r.total == 80.0
 
     def test_error_format(self) -> None:
         r = parse_order("各20")
@@ -686,4 +772,193 @@ class TestFormatResult:
     def test_multi_zodiac_format(self) -> None:
         r = parse_order("兔龙蛇各10")
         output = format_result(r)
-        assert "总计" in output
+        # 输出不再包含总计行，但 total 保留在 ParseResult 中
+        assert "总计" not in output
+        assert r.total > 0
+
+
+# ======================================================================
+# 每 / 每注 替换「各」
+# ======================================================================
+
+
+class TestMeiAsSeparator:
+    def test_mei_as_ge(self) -> None:
+        r = parse_order("兔每10")
+        assert r.success
+        assert r.category == "兔"
+        assert r.amount == 10.0
+
+    def test_meizhu_as_ge(self) -> None:
+        r = parse_order("红波每注20")
+        assert r.success
+        assert r.category == "红波"
+        assert r.amount == 20.0
+
+
+# ======================================================================
+# 金额倍数 *N
+# ======================================================================
+
+
+class TestAmountMultiplier:
+    def test_multiply_amount(self) -> None:
+        r = parse_order("兔各10*3")
+        assert r.success
+        assert r.amount == 30.0
+        assert r.total == 30.0 * 4  # 兔 4 号 × 30
+
+    def test_multiply_with_space(self) -> None:
+        r = parse_order("兔各10 * 5")
+        assert r.success
+        assert r.amount == 50.0
+
+
+# ======================================================================
+# 省略「各」的快捷格式
+# ======================================================================
+
+
+class TestNoSepShorthand:
+    def test_zodiac_no_sep(self) -> None:
+        r = parse_order("兔10")
+        assert r.success
+        assert r.category == "兔"
+        assert r.amount == 10.0
+
+    def test_number_list_no_sep(self) -> None:
+        r = parse_order("01,02,03 30")
+        assert r.success
+        assert r.category == "纯数字"
+        assert r.numbers == (1, 2, 3)
+        assert r.total == 90.0
+
+
+# ======================================================================
+# 一行多单
+# ======================================================================
+
+
+class TestInlineMultiOrder:
+    def test_comma_split_two_orders(self) -> None:
+        results = parse_lines("兔各10，马各20")
+        assert len(results) == 2
+        assert results[0].category == "兔"
+        assert results[1].category == "马"
+
+    def test_comma_between_numbers_not_split(self) -> None:
+        """数字间的逗号不应拆分。"""
+        results = parse_lines("01,02,03各10")
+        assert len(results) == 1
+
+
+# ======================================================================
+# 投注类型前缀
+# ======================================================================
+
+
+class TestBetTypePrefix:
+    def test_pingma(self) -> None:
+        r = parse_order("平码01,02,03各10")
+        assert r.success
+        assert r.category == "平码"
+        assert r.numbers == (1, 2, 3)
+
+    def test_pingte_yixiao(self) -> None:
+        r = parse_order("平特一肖兔各10")
+        assert r.success
+        assert r.category == "平特一肖"
+        assert r.numbers == (4, 16, 28, 40)
+
+    def test_pingte_yiwei(self) -> None:
+        r = parse_order("平特一尾1各10")
+        assert r.success
+        assert r.category == "平特一尾"
+        assert 1 in r.numbers and 11 in r.numbers
+
+    def test_buzhong_range(self) -> None:
+        r = parse_order("不中5-24各2")
+        assert r.success
+        assert r.category == "不中"
+        assert len(r.numbers) == 20  # 5..24
+        assert r.numbers[0] == 5
+        assert r.numbers[-1] == 24
+
+    def test_buzhong_zhi(self) -> None:
+        """「至」也是合法范围分隔符。"""
+        r = parse_order("不中10至20各2")
+        assert r.success
+        assert r.category == "不中"
+        assert r.numbers[0] == 10
+
+    def test_lianwei(self) -> None:
+        r = parse_order("连尾1,2,3各10")
+        assert r.success
+        assert r.category == "连尾"
+        # 尾1: 1,11,21,31,41; 尾2: 2,12,22,32,42; 尾3: 3,13,23,33,43
+        assert 1 in r.numbers and 11 in r.numbers and 41 in r.numbers
+        assert 2 in r.numbers and 42 in r.numbers
+
+    def test_dan_keyword(self) -> None:
+        r = parse_order("胆马拖兔各10")
+        assert r.success
+        assert "肖" in r.category  # 胆肖 或 连肖
+        assert 1 in r.numbers  # 马
+        assert 4 in r.numbers  # 兔
+
+
+# ======================================================================
+# 排除号码: 不要 / 除 / 去掉 / 排除 / 除了
+# ======================================================================
+
+
+class TestExcludeNumbers:
+    def test_buyao_single(self) -> None:
+        r = parse_order("兔各30 不要04")
+        assert r.success
+        assert 4 not in r.numbers
+        assert 16 in r.numbers
+        assert len(r.numbers) == 3  # 4号→3号
+        assert r.total == 30.0 * 3
+
+    def test_chu_multiple(self) -> None:
+        r = parse_order("兔各30 除04,16")
+        assert r.success
+        assert 4 not in r.numbers
+        assert 16 not in r.numbers
+        assert len(r.numbers) == 2
+        assert r.total == 30.0 * 2
+
+    def test_qudiao(self) -> None:
+        r = parse_order("大各10 去掉25,26")
+        assert r.success
+        assert 25 not in r.numbers
+        assert 26 not in r.numbers
+        assert r.category == "大"
+
+    def test_paichu(self) -> None:
+        r = parse_order("红波各10 排除01")
+        assert r.success
+        assert 1 not in r.numbers
+        assert r.category == "红波"
+
+    def test_chule(self) -> None:
+        r = parse_order("01,02,03,04各10 除了04")
+        assert r.success
+        assert r.numbers == (1, 2, 3)
+        assert r.total == 30.0
+
+    def test_no_exclusion_no_effect(self) -> None:
+        r = parse_order("兔各30")
+        assert r.success
+        assert len(r.numbers) == 4
+
+    def test_exclude_all_numbers(self) -> None:
+        r = parse_order("兔各30 不要04,16,28,40")
+        assert not r.success
+        assert "无剩余" in r.error
+
+    def test_exclude_with_marker_prefix(self) -> None:
+        r = parse_order("张三 兔各30 不要04")
+        assert r.success
+        assert 4 not in r.numbers

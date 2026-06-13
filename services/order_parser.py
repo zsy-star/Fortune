@@ -56,6 +56,12 @@ for _aliases, _ in _ZODIAC_ENTRIES:
     for _a in _aliases:
         _zodiac_name[_a] = _std
 
+# 号码 → 标准生肖名（反向查询）
+_number_to_zodiac: dict[int, str] = {}
+for _aliases, _nums in _ZODIAC_ENTRIES:
+    for _n in _nums:
+        _number_to_zodiac[_n] = _aliases[-1]
+
 # ======================================================================
 # 类别规则
 # ======================================================================
@@ -180,7 +186,7 @@ _RULES.sort(key=lambda r: r.priority)
 # 连肖关键词
 # ======================================================================
 
-_LIANXIAO_KEYWORDS: tuple[str, ...] = ("连", "拖", "托", "有", "友")
+_LIANXIAO_KEYWORDS: tuple[str, ...] = ("连", "拖", "托", "有", "友", "胆")
 
 # 「数字 + 连肖关键词」格式: 生肖们 + 可选中文数字 + 连/拖/托/有/友
 _CN_DIGIT_MAP: dict[str, int] = {
@@ -207,6 +213,7 @@ class ParseResult:
     total: float = 0.0  # 总金额
     error: str = ""  # 失败时的错误信息
     region: str = ""  # 地域标签: "香港"/"澳门"/""
+    original_text: str = ""  # 原始输入文本（调用方可回填）
     # 多生肖时每项为 (生肖名, 号码元组)；单类别为空列表
     zodiac_groups: list[tuple[str, tuple[int, ...]]] = field(default_factory=list)
 
@@ -287,6 +294,22 @@ def _parse_number_list(text: str) -> tuple[int, ...] | None:
     return tuple(sorted(set(numbers)))
 
 
+def _apply_exclusion(result: ParseResult, exclude_nums: set[int]) -> None:
+    """从结果中移除排除的号码，重新计算 total。"""
+    if not exclude_nums or not result.success or not result.numbers:
+        return
+    filtered = tuple(n for n in result.numbers if n not in exclude_nums)
+    if not filtered:
+        excluded_str = ",".join(f"{n:02d}" for n in sorted(exclude_nums))
+        result.success = False
+        result.error = f"排除 {excluded_str} 后无剩余号码"
+        result.numbers = ()
+        result.total = 0.0
+        return
+    result.numbers = filtered
+    result.total = result.amount * len(filtered)
+
+
 def _parse_zodiac_groups(text: str) -> list[tuple[str, tuple[int, ...]]]:
     """贪心解析连续生肖名，返回 [(标准名, 号码元组), ...]。"""
     pos = 0
@@ -354,7 +377,7 @@ def _try_parse_tuo_zodiacs(text: str) -> list[tuple[str, tuple[int, ...]]] | Non
 
 
 # ── "各" / "各数" 分隔符正则 ──
-_SEP_PATTERN = re.compile(r"各(?:数)?")
+_SEP_PATTERN = re.compile(r"(?:各|每)(?:数|注)?")
 
 
 def parse_order(text: str) -> ParseResult:
@@ -370,11 +393,37 @@ def parse_order(text: str) -> ParseResult:
     if not text:
         return ParseResult(success=False, error="输入为空")
 
+    # ── 提取排除号码: "兔各30 不要04,16" → 排除 04,16 ──
+    exclude_nums: set[int] = set()
+    _EXCLUDE_PATTERN = re.compile(r"\s+(?:不要|除了|排除|去掉|除)\s*(.+)$")
+    exclude_m = _EXCLUDE_PATTERN.search(text)
+    if exclude_m:
+        exclude_text = exclude_m.group(1)
+        parsed_ex = _parse_number_list(exclude_text)
+        if parsed_ex:
+            exclude_nums = set(parsed_ex)
+        text = text[:exclude_m.start()].strip()
+
     # ── 提取地域前缀 ──
     region = ""
     for prefix in ("澳门", "香港"):
         if text.startswith(prefix):
             region = prefix
+            text = text[len(prefix):].strip()
+            break
+
+    # ── 投注类型前缀（覆盖默认类别）──
+    bet_type_override = ""
+    _BET_PREFIXES = [
+        ("平特一肖", "平特一肖"),
+        ("平特一尾", "平特一尾"),
+        ("平码", "平码"),
+        ("不中", "不中"),
+        ("连尾", "连尾"),
+    ]
+    for prefix, bt in _BET_PREFIXES:
+        if text.startswith(prefix):
+            bet_type_override = bt
             text = text[len(prefix):].strip()
             break
 
@@ -384,41 +433,49 @@ def parse_order(text: str) -> ParseResult:
         num = int(slash_m.group(1))
         amount = float(slash_m.group(2))
         if 1 <= num <= 49:
-            return ParseResult(region=region, 
+            result = ParseResult(region=region,
                 success=True,
                 category="单号投注",
                 numbers=(num,),
                 amount=amount,
                 total=amount,
             )
+            _apply_exclusion(result, exclude_nums)
+            return result
         else:
-            return ParseResult(region=region, 
+            return ParseResult(region=region,
                 success=False,
                 error=f"号码 {num} 超出范围 (1-49)",
             )
 
-    # ── 1. 查找 "各" 或 "各数" 分隔符 ──
+    # ── 1. 查找 "各/各数/每/每注" 分隔符 ──
     sep_m = _SEP_PATTERN.search(text)
     if not sep_m:
-        # 无各/各数：尝试末尾金额 + 空格（旧格式兜底）
+        # 无分隔符：尝试末尾金额（旧格式兜底 / 省略「各」的快捷格式「兔10」）
         amount, category_text = _extract_amount(text)
         if amount == 0:
-            return ParseResult(region=region, 
+            return ParseResult(region=region,
                 success=False,
-                error=f"未找到「各/各数」分隔符，且无法提取末尾金额: {text}",
+                error=f"未找到「各/每」分隔符，且无法提取末尾金额: {text}",
             )
     else:
         category_text = text[: sep_m.start()].strip()
         amount_str = text[sep_m.end() :].strip()
         # 去除可选的 "元" 后缀
         amount_str = re.sub(r"元$", "", amount_str).strip()
-        try:
-            amount = float(amount_str)
-        except ValueError:
-            return ParseResult(region=region, 
-                success=False,
-                error=f"金额格式无效: 「{sep_m.group()}」后的 '{amount_str}' 无法转为数字",
-            )
+        # 金额倍数: *N（如「兔各10*3」→ 30）
+        mult_m = re.match(r"(\d+(?:\.\d+)?)\s*\*\s*(\d+)\s*$", amount_str)
+        if mult_m:
+            amount_str = mult_m.group(1)
+            amount = float(amount_str) * float(mult_m.group(2))
+        else:
+            try:
+                amount = float(amount_str)
+            except ValueError:
+                return ParseResult(region=region,
+                    success=False,
+                    error=f"金额格式无效: 「{sep_m.group()}」后的 '{amount_str}' 无法转为数字",
+                )
 
     if amount <= 0:
         return ParseResult(region=region, success=False, error=f"金额必须大于 0，当前: {amount}")
@@ -426,96 +483,143 @@ def parse_order(text: str) -> ParseResult:
     if not category_text:
         return ParseResult(region=region, success=False, error="未找到类别描述（分隔符之前为空）")
 
-    # ── 2. 判断是否为显式连肖（以连/拖/托/有/友开头）──
-    is_lianxiao = _starts_with_lianxiao(category_text)
+    # ── 2-4. 类别匹配（支持前缀剥离，如「张三 兔」→ 忽略「张三」匹配「兔」）──
 
-    if is_lianxiao:
-        kw = _get_lianxiao_keyword(category_text)
-        zodiac_text = category_text[len(kw) :]
-        groups = _parse_zodiac_groups(zodiac_text)
-        if not groups:
-            return ParseResult(region=region, 
-                success=False,
-                error=f"连肖「{kw}」后未识别到有效生肖名: '{zodiac_text}'",
-            )
-        all_nums = tuple(sorted({n for _, ns in groups for n in ns}))
-        return ParseResult(region=region, 
-            success=True,
-            category=f"{kw}肖",
-            numbers=all_nums,
-            amount=amount,
-            total=amount * len(all_nums),
-            zodiac_groups=groups,
-        )
+    def _try_match(cat: str, amt: float) -> ParseResult | None:
+        """尝试所有匹配策略，成功返回 ParseResult，失败返回 None。"""
+        # 0. 特殊投注类型处理
+        if bet_type_override == "不中":
+            # 不中范围: 5-24 或 5至24
+            range_m = re.match(r"^(\d{1,2})\s*[-至]\s*(\d{1,2})$", cat)
+            if range_m:
+                lo, hi = int(range_m.group(1)), int(range_m.group(2))
+                if 1 <= lo <= hi <= 49:
+                    nums = tuple(range(lo, hi + 1))
+                    return ParseResult(region=region,
+                        success=True,
+                        category="不中",
+                        numbers=nums,
+                        amount=amt,
+                        total=amt * len(nums),
+                    )
+            return None
 
-    # ── 2b. 「生肖们 + 可选数字 + 连/拖/托/有/友」格式 ──
-    tuo_groups = _try_parse_tuo_zodiacs(category_text)
-    if tuo_groups is not None:
-        # 提取实际关键词用于标签
-        remaining = category_text[_zodiac_consume_len(category_text):]
-        kw_m = _TUO_TAIL_PATTERN.match(remaining)
-        suffix = kw_m.group(2) if kw_m else "连"
-        all_nums = tuple(sorted({n for _, ns in tuo_groups for n in ns}))
-        return ParseResult(region=region, 
-            success=True,
-            category=f"{suffix}肖",
-            numbers=all_nums,
-            amount=amount,
-            total=amount * len(all_nums),
-            zodiac_groups=tuo_groups,
-        )
+        if bet_type_override in ("连尾", "平特一尾"):
+            # 尾数列表: 所有尾数为指定值的号码展开
+            tail_nums = _parse_number_list(cat)
+            if tail_nums is not None:
+                all_nums: list[int] = []
+                for t in tail_nums:
+                    if 0 <= t <= 9:
+                        all_nums.extend(n for n in range(1, 50) if n % 10 == t)
+                if all_nums:
+                    return ParseResult(region=region,
+                        success=True,
+                        category=bet_type_override,  # "连尾" 或 "平特一尾"
+                        numbers=tuple(sorted(set(all_nums))),
+                        amount=amt,
+                        total=amt * len(all_nums),
+                    )
+            return None
 
-    # ── 3. 按优先级匹配单一类别（精确别名匹配）──
-    for rule in _RULES:
-        if category_text in rule.aliases:
-            return ParseResult(region=region, 
+        # 2. 显式连肖（以连/拖/托/有/友/胆开头）
+        if _starts_with_lianxiao(cat):
+            kw = _get_lianxiao_keyword(cat)
+            zodiac_text = cat[len(kw):]
+            # 去除中间的关键词（如「胆马拖兔」→ 马兔）
+            for kw2 in _LIANXIAO_KEYWORDS:
+                zodiac_text = zodiac_text.replace(kw2, "")
+            groups_inner = _parse_zodiac_groups(zodiac_text)
+            if groups_inner:
+                all_nums = tuple(sorted({n for _, ns in groups_inner for n in ns}))
+                return ParseResult(region=region,
+                    success=True,
+                    category=f"{kw}肖",
+                    numbers=all_nums,
+                    amount=amt,
+                    total=amt * len(all_nums),
+                    zodiac_groups=groups_inner,
+                )
+            return None  # 连肖关键词后无有效生肖
+
+        # 2b. 「生肖们 + 可选数字 + 连/拖/托/有/友」格式
+        tuo_groups = _try_parse_tuo_zodiacs(cat)
+        if tuo_groups is not None:
+            remaining_inner = cat[_zodiac_consume_len(cat):]
+            kw_m = _TUO_TAIL_PATTERN.match(remaining_inner)
+            suffix = kw_m.group(2) if kw_m else "连"
+            all_nums = tuple(sorted({n for _, ns in tuo_groups for n in ns}))
+            return ParseResult(region=region,
                 success=True,
-                category=rule.name,
-                numbers=rule.numbers,
-                amount=amount,
-                total=amount * len(rule.numbers),
+                category=f"{suffix}肖",
+                numbers=all_nums,
+                amount=amt,
+                total=amt * len(all_nums),
+                zodiac_groups=tuo_groups,
             )
 
-    # ── 3b. 纯数字号码列表（如 "1 2 3 4 5各10"、"01,02,03各5"）──
-    num_list = _parse_number_list(category_text)
-    if num_list is not None:
-        return ParseResult(region=region, 
-            success=True,
-            category="纯数字",
-            numbers=num_list,
-            amount=amount,
-            total=amount * len(num_list),
-        )
+        # 3. 精确别名匹配
+        for rule in _RULES:
+            if cat in rule.aliases:
+                return ParseResult(region=region,
+                    success=True,
+                    category=rule.name,
+                    numbers=rule.numbers,
+                    amount=amt,
+                    total=amt * len(rule.numbers),
+                )
 
-    # ── 4. 尝试多生肖自动识别（无关键词的连续生肖名）──
-    groups = _parse_zodiac_groups(category_text)
-    if len(groups) >= 2:
-        # 验证完整消费：所有字符都匹配了生肖名
-        if _zodiac_consume_len(category_text) == len(category_text):
-            all_nums = tuple(sorted({n for _, ns in groups for n in ns}))
-            return ParseResult(region=region, 
+        # 3b. 纯数字号码列表
+        num_list = _parse_number_list(cat)
+        if num_list is not None:
+            return ParseResult(region=region,
+                success=True,
+                category="纯数字",
+                numbers=num_list,
+                amount=amt,
+                total=amt * len(num_list),
+            )
+
+        # 4. 多生肖 / 单生肖自动识别
+        groups_inner = _parse_zodiac_groups(cat)
+        if len(groups_inner) >= 2 and _zodiac_consume_len(cat) == len(cat):
+            all_nums = tuple(sorted({n for _, ns in groups_inner for n in ns}))
+            return ParseResult(region=region,
                 success=True,
                 category="多生肖",
                 numbers=all_nums,
-                amount=amount,
-                total=amount * len(all_nums),
-                zodiac_groups=groups,
+                amount=amt,
+                total=amt * len(all_nums),
+                zodiac_groups=groups_inner,
+            )
+        if len(groups_inner) == 1 and _zodiac_consume_len(cat) == len(cat):
+            name, nums = groups_inner[0]
+            return ParseResult(region=region,
+                success=True,
+                category=name,
+                numbers=nums,
+                amount=amt,
+                total=amt * len(nums),
+                zodiac_groups=groups_inner,
             )
 
-    # 单个生肖完整消费
-    if len(groups) == 1 and _zodiac_consume_len(category_text) == len(category_text):
-        name, nums = groups[0]
-        return ParseResult(region=region, 
-            success=True,
-            category=name,
-            numbers=nums,
-            amount=amount,
-            total=amount * len(nums),
-            zodiac_groups=groups,
-        )
+        return None
+
+    # 先尝试完整类别文本，失败则逐词剥离前缀重试
+    ct = category_text
+    while True:
+        result = _try_match(ct, amount)
+        if result is not None:
+            if bet_type_override:
+                result.category = bet_type_override
+            _apply_exclusion(result, exclude_nums)
+            return result
+        if " " not in ct:
+            break
+        _, ct = ct.split(" ", 1)
 
     # ── 5. 无匹配 ──
-    return ParseResult(region=region, 
+    return ParseResult(region=region,
         success=False,
         error=f"无法识别的类别: 「{category_text}」",
     )
@@ -542,13 +646,27 @@ def _zodiac_consume_len(text: str) -> int:
 
 
 def parse_lines(text: str) -> list[ParseResult]:
-    """解析多行文本，每行独立解析。空行忽略。"""
+    """解析多行文本，每行独立解析。空行忽略。
+
+    支持一行多单：逗号/中文逗号分隔，且两侧都有「各/每」时才拆分。
+    """
     results: list[ParseResult] = []
     for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
-        results.append(parse_order(line))
+        # 一行多单：兔各10，马各20 → 拆为两单
+        sub_lines = [line]
+        if "各" in line or "每" in line:
+            parts = re.split(r"[，,]", line)
+            if len(parts) >= 2 and all(
+                re.search(r"(?:各|每)(?:数|注)?", p) for p in parts
+            ):
+                sub_lines = parts
+        for sub in sub_lines:
+            sub = sub.strip()
+            if sub:
+                results.append(parse_order(sub))
     return results
 
 
@@ -562,29 +680,43 @@ def _fmt_nums(nums: tuple[int, ...]) -> str:
     return ",".join(f"{n:02d}" for n in nums)
 
 
+def _reverse_zodiac(numbers: tuple[int, ...]) -> str:
+    """反向查询：号码列表 → 生肖标注。"""
+    zodiacs: dict[str, list[int]] = {}
+    for n in numbers:
+        name = _number_to_zodiac.get(n, "?")
+        zodiacs.setdefault(name, []).append(n)
+
+    parts: list[str] = []
+    for name, nums in zodiacs.items():
+        parts.append(f"{name}({_fmt_nums(nums)})")
+    return " ".join(parts)
+
+
 def format_result(result: ParseResult) -> str:
     """将单条解析结果格式化为输出文本。
 
     多生肖时每个生肖单独一行；单类别时所有号码一行。
+    纯数字类别自动附加反向生肖查询。
     """
     if not result.success:
         return f"[错误] {result.error}"
 
     amount_display = f"{result.amount:g}" if result.amount != int(result.amount) else f"{int(result.amount)}"
-    total_display = f"{int(result.total)}" if result.total == int(result.total) else f"{result.total:g}"
     prefix = f"{result.region}：特码：" if result.region else ""
 
     groups = result.zodiac_groups
     if len(groups) >= 2:
         # 多生肖：每个生肖一行，均加前缀
         lines = [f"{prefix}{_fmt_nums(nums)} 各{amount_display}元" for _, nums in groups]
-        lines.append(f"总计 {total_display}元")
         return "\n".join(lines)
 
     # 单类别 / 单个生肖 / 无分组
-    lines = [f"{prefix}{_fmt_nums(result.numbers)} 各{amount_display}元"]
-    lines.append(f"总计 {total_display}元")
-    return "\n".join(lines)
+    line = f"{prefix}{_fmt_nums(result.numbers)} 各{amount_display}元"
+    # 纯数字列表：附加反向生肖查询
+    if result.category == "纯数字" and result.numbers:
+        line += f"\n→ {_reverse_zodiac(result.numbers)}"
+    return line
 
 
 def format_results(results: list[ParseResult]) -> str:
