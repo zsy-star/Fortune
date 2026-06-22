@@ -294,7 +294,7 @@ class MainWindow(QMainWindow):
 
         if self._record_order_window is None:
 
-            self._record_order_window = RecordOrderWindow(self)
+            self._record_order_window = RecordOrderWindow()
 
             self._record_order_window.destroyed.connect(self._on_record_order_window_destroyed)
 

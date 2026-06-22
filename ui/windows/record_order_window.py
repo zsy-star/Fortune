@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -79,9 +80,22 @@ class RecordOrderWindow(QMainWindow):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(6)
 
-        root.addWidget(self._build_table_section(), stretch=7)
-        root.addWidget(self._build_control_bar())
-        root.addWidget(self._build_text_section(), stretch=3)
+        # ── 垂直分割器：表格区 ↔ 控制栏+文本区 ──
+        text_panel = QWidget()
+        tp_layout = QVBoxLayout(text_panel)
+        tp_layout.setContentsMargins(0, 0, 0, 0)
+        tp_layout.setSpacing(4)
+        tp_layout.addWidget(self._build_control_bar())
+        tp_layout.addWidget(self._build_text_section(), stretch=1)
+
+        v_splitter = QSplitter(Qt.Orientation.Vertical)
+        v_splitter.setChildrenCollapsible(False)
+        v_splitter.addWidget(self._build_table_section())
+        v_splitter.addWidget(text_panel)
+        v_splitter.setStretchFactor(0, 7)
+        v_splitter.setStretchFactor(1, 3)
+
+        root.addWidget(v_splitter, stretch=1)
         root.addWidget(self._build_footer())
 
         # ── 剪贴板自动粘贴（信号驱动 + 窗口激活兜底）──
@@ -100,6 +114,29 @@ class RecordOrderWindow(QMainWindow):
         self._parse_timer.timeout.connect(self._do_parse)
 
         self._apply_stylesheet()
+        self._apply_font_scale()
+
+    # ─────────────────── 窗口缩放 → 字体自适应 ───────────────────
+
+    def _apply_font_scale(self) -> None:
+        """根据当前窗口高度设置输入/输出框的原生字号（12‒22px）。
+
+        使用 QFont.setPixelSize() 而非 QSS，因为 QSS 的字号会被 QTextEdit
+        内部文档层的默认样式覆盖；setPixelSize 走原生渲染管线，不受 QSS 干扰。
+        """
+        h = self.height()
+        clamped = max(680, min(1440, h))
+        size = int(12 + (clamped - 680) * (22 - 12) / (1440 - 680))
+
+        font = self._input_text.font()
+        font.setPixelSize(size)
+        self._input_text.setFont(font)
+        self._output_text.setFont(font)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "_input_text"):
+            self._apply_font_scale()
 
     # ─────────────────── 剪贴板监控 ───────────────────
 
@@ -761,8 +798,15 @@ class RecordOrderWindow(QMainWindow):
         side_btns.addWidget(btn_del)
         side_btns.addStretch(1)
 
-        text_row.addWidget(self._input_text, stretch=1)
-        text_row.addWidget(self._output_text, stretch=1)
+        # ── 水平分割器：输入框 ↔ 输出框 ──
+        h_splitter = QSplitter(Qt.Orientation.Horizontal)
+        h_splitter.setChildrenCollapsible(False)
+        h_splitter.addWidget(self._input_text)
+        h_splitter.addWidget(self._output_text)
+        h_splitter.setStretchFactor(0, 1)
+        h_splitter.setStretchFactor(1, 1)
+
+        text_row.addWidget(h_splitter, stretch=1)
 
         side_wrap = QWidget()
         side_wrap.setLayout(side_btns)
@@ -821,8 +865,7 @@ class RecordOrderWindow(QMainWindow):
             }
             QTextEdit {
                 border: 1px solid #a0a0a0;
-                font-family: "Microsoft YaHei", "SimSun", sans-serif;
-                font-size: 13px;
+                background-color: #ffffff;
             }
             QLabel#footerHint {
                 color: #555555;
@@ -830,6 +873,21 @@ class RecordOrderWindow(QMainWindow):
                 padding: 4px 2px;
                 background-color: #e8ecef;
                 border: 1px solid #c5ccd3;
+            }
+            QSplitter::handle {
+                background-color: #c0c0c0;
+                border: 1px solid #a0a0a0;
+            }
+            QSplitter::handle:vertical {
+                min-height: 8px;
+                height: 8px;
+            }
+            QSplitter::handle:horizontal {
+                min-width: 8px;
+                width: 8px;
+            }
+            QSplitter::handle:hover {
+                background-color: #3498db;
             }
             """
         )
