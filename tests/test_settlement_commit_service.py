@@ -199,3 +199,20 @@ def test_settled_order_cannot_commit_twice(session_factory) -> None:
     assert order_service.get_order(order.id).status == "settled"
     assert settlement_log_count(session_factory) == 1
     assert settlement_record_count(session_factory) == 1
+
+
+def test_batch_read_settlement_records_by_order_ids(session_factory) -> None:
+    order_service = OrderService(session_factory)
+    first = create_order(order_service)
+    second = create_order(order_service)
+    draw = create_draw(DrawService(session_factory))
+    service = SettlementService(session_factory)
+    service.commit_order_settlement(first.id, draw.id)
+    service.commit_order_settlement(second.id, draw.id)
+
+    records = service.get_settlement_records_by_order_ids([first.id, second.id, 999999, first.id])
+
+    assert set(records) == {first.id, second.id}
+    assert records[first.id].issue_number == "162"
+    assert records[second.id].hit_count == 1
+    assert settlement_record_count(session_factory) == 2

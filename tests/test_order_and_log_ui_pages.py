@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import os
+from datetime import date
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QDate, QItemSelectionModel
 from PySide6.QtWidgets import QApplication
 
+from models import Order, SettlementRecord
+from schemas.draw_schema import LotteryDrawCreate
 from schemas.order_schema import OrderCreate, OrderItemCreate
+from services.draw_service import DrawService
 from services.log_service import LogService
 from services.order_service import OrderService
+from services.settlement_service import SettlementService
 from ui.pages.operation_log_page import OperationLogPage
 from ui.pages.order_detail_page import OrderDetailPage
 
@@ -32,6 +37,53 @@ def create_order(service: OrderService, *, customer: str = "张三", region: str
             ],
         )
     )
+
+
+def create_single_item_order(
+    service: OrderService,
+    *,
+    selection: str,
+    customer: str,
+    region: str = "澳门",
+):
+    return service.create_order(
+        OrderCreate(
+            customer_name=customer,
+            channel="测试渠道",
+            region=region,
+            raw_text=f"特码 {selection} 各10",
+            source="test",
+            items=[OrderItemCreate(bet_type="特码", selection=selection, amount="10")],
+        )
+    )
+
+
+def create_settlement_draw(session_factory, *, region: str = "澳门", issue: str = "UI-162"):
+    return DrawService(session_factory).create_draw(
+        LotteryDrawCreate(
+            region=region,
+            issue_number=issue,
+            draw_date=date(2026, 6, 24),
+            regular_numbers=["02", "03", "04", "05", "06", "07"],
+            special_number="01",
+            source="test",
+        )
+    )
+
+
+def table_winning_status(page: OrderDetailPage, order_no: str) -> str:
+    for row in range(page._table.rowCount()):
+        if page._table.item(row, 6).text() == order_no:
+            return page._table.item(row, 8).text()
+    raise AssertionError(f"order not found in table: {order_no}")
+
+
+def select_order_row(page: OrderDetailPage, order_no: str) -> None:
+    for row in range(page._table.rowCount()):
+        if page._table.item(row, 6).text() == order_no:
+            page._table.selectRow(row)
+            return
+    raise AssertionError(f"order not found in table: {order_no}")
 
 
 def test_order_detail_page_empty_state(session_factory) -> None:
@@ -143,6 +195,123 @@ def test_order_detail_draw_area_has_empty_placeholders(session_factory) -> None:
     for region in ("澳门", "香港"):
         placeholder = page._draw_widgets[region]["placeholder"]
         assert placeholder.text() == "暂无开奖数据"
+
+
+def test_order_detail_unsettled_order_keeps_amount_unavailable(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    order = create_single_item_order(service, selection="01", customer="未结算")
+    page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
+
+    assert table_winning_status(page, order.order_no) == "未结算"
+    row = next(row for row in range(page._table.rowCount()) if page._table.item(row, 6).text() == order.order_no)
+    assert page._table.item(row, 9).text() == "—"
+    select_order_row(page, order.order_no)
+    assert page._macau_result.toPlainText() == "当前订单未结算，暂无兑奖结果。"
+    assert page._combined_result.toPlainText() == "当前订单未结算，暂无兑奖结果。"
+
+
+def test_order_detail_uses_persisted_counts_for_winning_statuses(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    hit = create_single_item_order(service, selection="01", customer="命中")
+    miss = create_single_item_order(service, selection="02", customer="未中")
+    partial = create_order(service, customer="部分命中")
+    unsupported = create_single_item_order(service, selection="01", customer="含不支持")
+    draw = create_settlement_draw(session_factory)
+    settlement_service = SettlementService(session_factory)
+    for order in (hit, miss, partial, unsupported):
+        settlement_service.commit_order_settlement(order.id, draw.id)
+
+    with session_factory() as session:
+        record = session.query(SettlementRecord).filter_by(order_id=unsupported.id).one()
+        record.unsupported_count = 1
+        record.total_items = 2
+        record.result_snapshot = {
+            "items": [
+                {
+                    "bet_type": "特码",
+                    "selection": "01",
+                    "is_supported": True,
+                    "is_winner": True,
+                },
+                {
+                    "bet_type": "连肖",
+                    "selection": "马,蛇",
+                    "is_supported": False,
+                    "is_winner": None,
+                },
+            ]
+        }
+        session.commit()
+
+    page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
+    assert table_winning_status(page, hit.order_no) == "命中"
+    assert table_winning_status(page, miss.order_no) == "未中"
+    assert table_winning_status(page, partial.order_no) == "部分命中"
+    assert table_winning_status(page, unsupported.order_no) == "含不支持"
+
+
+def test_order_detail_selected_settlement_summary_uses_snapshot(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    order = create_order(service, customer="摘要客户")
+    draw = create_settlement_draw(session_factory)
+    SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+    page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
+
+    select_order_row(page, order.order_no)
+
+    macau_text = page._macau_result.toPlainText()
+    assert f"订单 ID：{order.id}" in macau_text
+    assert "地区：澳门" in macau_text
+    assert "期号：UI-162" in macau_text
+    assert "命中数：1" in macau_text
+    assert "未命中数：1" in macau_text
+    assert "不支持数：0" in macau_text
+    assert "总明细数：2" in macau_text
+    assert "总金额：30.00" in macau_text
+    assert "特码/01：命中" in macau_text
+    assert "特码/02：未中" in macau_text
+    assert "订单 ID" not in page._hong_kong_result.toPlainText()
+    assert page._combined_result.toPlainText() == macau_text
+
+
+def test_order_detail_historical_settled_order_without_record(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    order = create_single_item_order(service, selection="01", customer="历史订单")
+    with session_factory() as session:
+        saved = session.get(Order, order.id)
+        assert saved is not None
+        saved.status = "settled"
+        session.commit()
+
+    page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
+    select_order_row(page, order.order_no)
+
+    expected = "该订单为历史已结算订单，但暂无结算快照记录。"
+    assert table_winning_status(page, order.order_no) == "已结算"
+    assert page._macau_result.toPlainText() == expected
+    assert page._combined_result.toPlainText() == expected
+
+
+def test_order_detail_malformed_snapshot_does_not_crash(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    order = create_single_item_order(service, selection="01", customer="坏快照")
+    draw = create_settlement_draw(session_factory)
+    SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+    with session_factory() as session:
+        record = session.query(SettlementRecord).filter_by(order_id=order.id).one()
+        record.result_snapshot = {"items": "not-a-list"}
+        session.commit()
+
+    page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
+    select_order_row(page, order.order_no)
+
+    assert "快照数据为空或格式不完整" in page._macau_result.toPlainText()
+    assert "快照数据为空或格式不完整" in page._combined_result.toPlainText()
 
 
 def test_order_detail_page_pagination_state(session_factory) -> None:

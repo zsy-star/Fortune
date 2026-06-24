@@ -107,6 +107,18 @@ class SettlementService:
             record = SettlementRecordRepository(session).get_by_order_id(order_id)
             return self._to_ledger_result(record) if record else None
 
+    def get_settlement_records_by_order_ids(
+        self,
+        order_ids: list[int],
+    ) -> dict[int, SettlementLedgerResult]:
+        """Return persisted settlement summaries without evaluating orders again."""
+        with self._session_factory() as session:
+            records = SettlementRecordRepository(session).get_by_order_ids(order_ids)
+            results: dict[int, SettlementLedgerResult] = {}
+            for record in records:
+                results.setdefault(record.order_id, self._to_ledger_result(record))
+            return results
+
     def get_settlement_record(self, record_id: int) -> SettlementLedgerResult | None:
         with self._session_factory() as session:
             record = SettlementRecordRepository(session).get(record_id)

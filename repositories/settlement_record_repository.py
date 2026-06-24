@@ -31,15 +31,22 @@ class SettlementRecordRepository:
 
     def get_by_order_id(self, order_id: int) -> SettlementRecord | None:
         stmt = (
-            select(SettlementRecord)
-            .options(
-                selectinload(SettlementRecord.order),
-                selectinload(SettlementRecord.draw),
-                selectinload(SettlementRecord.operation_log),
-            )
+            self._base_select()
             .where(SettlementRecord.order_id == order_id)
+            .order_by(SettlementRecord.settled_at.desc(), SettlementRecord.id.desc())
         )
         return self.session.scalars(stmt).first()
+
+    def get_by_order_ids(self, order_ids: list[int]) -> list[SettlementRecord]:
+        normalized_ids = list(dict.fromkeys(order_id for order_id in order_ids if order_id > 0))
+        if not normalized_ids:
+            return []
+        stmt = (
+            self._base_select()
+            .where(SettlementRecord.order_id.in_(normalized_ids))
+            .order_by(SettlementRecord.settled_at.desc(), SettlementRecord.id.desc())
+        )
+        return list(self.session.scalars(stmt))
 
     def _base_select(self) -> Select[tuple[SettlementRecord]]:
         return select(SettlementRecord).options(

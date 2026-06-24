@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 from domain.color_rules import get_wave_color
 from domain.zodiac_rules import get_zodiac
 from schemas.order_schema import OrderDetailResult, OrderSummary
+from schemas.settlement_schema import SettlementLedgerResult
 from services.draw_service import DrawService
 from services.excel_export_service import ExcelExportService
 from services.log_service import LogService
@@ -61,6 +62,20 @@ def _status_text(status: str) -> str:
         "voided": "已作废",
         "cancelled": "已取消",
     }.get(status, "不支持")
+
+
+def _settlement_status(record: SettlementLedgerResult | None, order_status: str) -> str:
+    if record is None:
+        return _status_text(order_status)
+    if record.unsupported_count > 0:
+        return "含不支持"
+    if record.hit_count > 0 and record.miss_count > 0:
+        return "部分命中"
+    if record.hit_count > 0:
+        return "命中"
+    if record.miss_count > 0:
+        return "未中"
+    return "已结算"
 
 
 def _format_size(size_bytes: int) -> str:
@@ -104,6 +119,7 @@ class OrderDetailPage(QWidget):
         self._row_order_ids: list[int] = []
         self._row_amounts: list[Decimal] = []
         self._row_statuses: list[str] = []
+        self._settlement_records: dict[int, SettlementLedgerResult] = {}
         self._draw_widgets: dict[str, dict[str, object]] = {}
 
         root = QVBoxLayout(self)
@@ -444,7 +460,17 @@ class OrderDetailPage(QWidget):
             limit=PAGE_SIZE,
             offset=(self._page - 1) * PAGE_SIZE,
         )
+        settlement_error = None
+        try:
+            self._settlement_records = self._settlement_service.get_settlement_records_by_order_ids(
+                [order.id for order in rows]
+            )
+        except Exception as exc:
+            self._settlement_records = {}
+            settlement_error = str(exc)
         self._fill_table(rows)
+        if settlement_error:
+            self._status_label.setText(f"订单已加载，但结算摘要读取失败：{settlement_error}")
         self._update_pager()
         self._reload_draws()
 
@@ -500,6 +526,8 @@ class OrderDetailPage(QWidget):
                 note_parts.append(f"渠道：{order.channel}")
             if order.source:
                 note_parts.append(f"来源：{order.source}")
+            settlement_record = self._settlement_records.get(order.id)
+            winning_status = _settlement_status(settlement_record, order.status)
             values = [
                 compact_raw,
                 "—",
@@ -509,7 +537,7 @@ class OrderDetailPage(QWidget):
                 "—",
                 order.order_no,
                 _dash(order.customer_name),
-                _status_text(order.status),
+                winning_status,
                 "—",
                 " / ".join(note_parts),
             ]
@@ -523,7 +551,15 @@ class OrderDetailPage(QWidget):
                 if col_idx == 0:
                     item.setToolTip(order.raw_text)
                 elif col_idx == 8:
-                    item.setToolTip(f"订单原始状态：{order.status}")
+                    if settlement_record is None:
+                        item.setToolTip(f"订单原始状态：{order.status}；暂无结算记录")
+                    else:
+                        item.setToolTip(
+                            f"期号：{settlement_record.issue_number}；"
+                            f"命中 {settlement_record.hit_count}；"
+                            f"未中 {settlement_record.miss_count}；"
+                            f"不支持 {settlement_record.unsupported_count}"
+                        )
                 self._table.setItem(row_idx, col_idx, item)
         self._table.blockSignals(False)
 
@@ -712,25 +748,72 @@ class OrderDetailPage(QWidget):
             zodiac_label.setText(get_zodiac(number, year=draw.draw_date.year))
 
     def _clear_result_panels(self) -> None:
-        unavailable = "当前版本暂未开放完整兑奖结果。"
-        self._macau_result.setPlainText(unavailable)
-        self._hong_kong_result.setPlainText(unavailable)
-        self._combined_result.setPlainText(unavailable)
+        empty = "请选择订单查看结算摘要。"
+        self._macau_result.setPlainText(empty)
+        self._hong_kong_result.setPlainText(empty)
+        self._combined_result.setPlainText(empty)
 
     def _update_result_panels(self, detail: OrderDetailResult) -> None:
-        summary = (
-            f"订单：{detail.order_no}\n"
-            f"结算状态：{_status_text(detail.status)}\n"
-            "完整兑奖结果暂未开放；请使用结算预览查看命中明细。"
-        )
-        other = "所选订单不属于此区域。\n当前版本暂未开放完整兑奖结果。"
-        self._macau_result.setPlainText(summary if detail.region == "澳门" else other)
-        self._hong_kong_result.setPlainText(summary if detail.region == "香港" else other)
-        self._combined_result.setPlainText(
-            f"已选择订单：{detail.order_no}\n"
-            f"订单总额：{_money(detail.total_amount)}\n"
-            "综合兑奖与赔付金额当前版本暂未开放。"
-        )
+        record = self._settlement_records.get(detail.id)
+        lookup_error = None
+        if detail.status == ORDER_STATUS_SETTLED and record is None:
+            try:
+                record = self._settlement_service.get_settlement_record_by_order_id(detail.id)
+            except Exception as exc:
+                lookup_error = str(exc)
+            if record is not None:
+                self._settlement_records[detail.id] = record
+
+        if lookup_error:
+            summary = f"结算摘要读取失败：{lookup_error}"
+        elif detail.status != ORDER_STATUS_SETTLED:
+            summary = "当前订单未结算，暂无兑奖结果。"
+        elif record is None:
+            summary = "该订单为历史已结算订单，但暂无结算快照记录。"
+        else:
+            item_summary = self._snapshot_item_summary(record.result_snapshot)
+            summary = (
+                f"订单 ID：{record.order_id}\n"
+                f"地区：{record.region}    期号：{record.issue_number}\n"
+                f"命中数：{record.hit_count}    未命中数：{record.miss_count}    "
+                f"不支持数：{record.unsupported_count}\n"
+                f"总明细数：{record.total_items}    总金额：{_money(record.total_amount)}\n"
+                f"简要明细摘要：{item_summary}"
+            )
+
+        self._macau_result.setPlainText("当前选中订单不属于澳门，未显示兑奖结果。")
+        self._hong_kong_result.setPlainText("当前选中订单不属于香港，未显示兑奖结果。")
+        if detail.region == "澳门":
+            self._macau_result.setPlainText(summary)
+        elif detail.region == "香港":
+            self._hong_kong_result.setPlainText(summary)
+        self._combined_result.setPlainText(summary)
+
+    def _snapshot_item_summary(self, snapshot: object) -> str:
+        if not isinstance(snapshot, dict):
+            return "快照数据为空或格式不完整"
+        items = snapshot.get("items")
+        if not isinstance(items, list) or not items:
+            return "快照数据为空或格式不完整"
+
+        summaries: list[str] = []
+        required_keys = {"bet_type", "selection", "is_supported", "is_winner"}
+        for item in items:
+            if not isinstance(item, dict) or not required_keys.issubset(item):
+                return "快照数据为空或格式不完整"
+            if item["is_supported"] is False:
+                result_text = "不支持"
+            elif item["is_winner"] is True:
+                result_text = "命中"
+            elif item["is_winner"] is False:
+                result_text = "未中"
+            else:
+                result_text = "状态未知"
+            summaries.append(f"{_dash(item['bet_type'])}/{_dash(item['selection'])}：{result_text}")
+
+        visible = summaries[:3]
+        suffix = f"；另有 {len(summaries) - 3} 条" if len(summaries) > 3 else ""
+        return "；".join(visible) + suffix
 
     def _on_settlement_preview(self) -> None:
         if self._selected_order_id is None:
