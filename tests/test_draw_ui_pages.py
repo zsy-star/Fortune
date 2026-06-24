@@ -33,8 +33,9 @@ def add_draw(session_factory) -> None:
 
 
 class _AcceptedDrawDialog:
-    def __init__(self, payload: LotteryDrawCreate | Exception):
+    def __init__(self, payload: LotteryDrawCreate | Exception, reason: str = "人工核对修正"):
         self._payload = payload
+        self._reason = reason
 
     def exec(self):
         return QDialog.DialogCode.Accepted
@@ -45,11 +46,33 @@ class _AcceptedDrawDialog:
         self._payload.source = source
         return self._payload
 
+    def correction_reason(self) -> str:
+        return self._reason
 
-def _patch_manual_dialog(monkeypatch, payload: LotteryDrawCreate | Exception) -> None:
-    monkeypatch.setattr(draw_history_module, "_ManualDrawDialog", lambda *args, **kwargs: _AcceptedDrawDialog(payload))
+
+def _patch_manual_dialog(
+    monkeypatch,
+    payload: LotteryDrawCreate | Exception,
+    *,
+    reason: str = "人工核对修正",
+    confirm=QMessageBox.StandardButton.Yes,
+) -> list[str]:
+    question_messages: list[str] = []
+
+    def question(*args, **kwargs):
+        if len(args) >= 3:
+            question_messages.append(str(args[2]))
+        return confirm
+
+    monkeypatch.setattr(
+        draw_history_module,
+        "_ManualDrawDialog",
+        lambda *args, **kwargs: _AcceptedDrawDialog(payload, reason),
+    )
     monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
     monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: None)
+    monkeypatch.setattr(QMessageBox, "question", question)
+    return question_messages
 
 
 def test_today_draw_page_loads_latest_and_empty_region(session_factory) -> None:
@@ -170,7 +193,7 @@ def test_draw_history_manual_edit_existing_draw_success(session_factory, monkeyp
             special_number=7,
         )
     )
-    _patch_manual_dialog(
+    question_messages = _patch_manual_dialog(
         monkeypatch,
         LotteryDrawCreate(
             region="澳门",
@@ -179,6 +202,7 @@ def test_draw_history_manual_edit_existing_draw_success(session_factory, monkeyp
             regular_numbers=[8, 9, 10, 11, 12, 13],
             special_number=14,
         ),
+        reason="同步源更正",
     )
 
     page = DrawHistoryPage(draw_service=service)
@@ -190,7 +214,98 @@ def test_draw_history_manual_edit_existing_draw_success(session_factory, monkeyp
     assert found.draw_date == date(2026, 6, 16)
     assert found.regular_numbers == ["08", "09", "10", "11", "12", "13"]
     assert found.special_number == "14"
-    assert LogService(session_factory).count_logs(module="draw", action="manual_update") == 1
+    logs = LogService(session_factory).list_logs(module="draw", action="manual_update")
+    assert len(logs) == 1
+    assert "reason=同步源更正" in logs[0].description
+    assert "before_numbers=regular=[01,02,03,04,05,06], special=07" in logs[0].description
+    assert "after_numbers=regular=[08,09,10,11,12,13], special=14" in logs[0].description
+    assert len(question_messages) == 1
+    assert "地区：澳门" in question_messages[0]
+    assert "期号：202" in question_messages[0]
+    assert "修正前号码：正码 01 02 03 04 05 06 / 特码 07" in question_messages[0]
+    assert "修正后号码：正码 08 09 10 11 12 13 / 特码 14" in question_messages[0]
+    assert "修正原因：同步源更正" in question_messages[0]
+
+
+def test_draw_history_manual_edit_empty_reason_fails(session_factory, monkeypatch) -> None:
+    app()
+    service = DrawService(session_factory)
+    service.create_draw(
+        LotteryDrawCreate(
+            region="澳门",
+            issue_number="203",
+            draw_date=date(2026, 6, 17),
+            regular_numbers=[1, 2, 3, 4, 5, 6],
+            special_number=7,
+        )
+    )
+    question_messages = _patch_manual_dialog(
+        monkeypatch,
+        LotteryDrawCreate(
+            region="澳门",
+            issue_number="203",
+            draw_date=date(2026, 6, 18),
+            regular_numbers=[8, 9, 10, 11, 12, 13],
+            special_number=14,
+        ),
+        reason="   ",
+    )
+
+    page = DrawHistoryPage(draw_service=service)
+    page._table.selectRow(0)
+    page._on_manual_edit_draw()
+
+    found = service.get_draw("澳门", "203")
+    assert found is not None
+    assert found.special_number == "07"
+    assert "修正原因不能为空" in page._status_label.text()
+    assert question_messages == []
+    assert LogService(session_factory).count_logs(module="draw", action="manual_update") == 0
+
+
+def test_draw_history_manual_edit_cancel_confirmation_does_not_save(session_factory, monkeypatch) -> None:
+    app()
+    service = DrawService(session_factory)
+    service.create_draw(
+        LotteryDrawCreate(
+            region="澳门",
+            issue_number="204",
+            draw_date=date(2026, 6, 19),
+            regular_numbers=[1, 2, 3, 4, 5, 6],
+            special_number=7,
+        )
+    )
+    update_calls = []
+    original_update = service.update_draw
+
+    def track_update(*args, **kwargs):
+        update_calls.append((args, kwargs))
+        return original_update(*args, **kwargs)
+
+    monkeypatch.setattr(service, "update_draw", track_update)
+    question_messages = _patch_manual_dialog(
+        monkeypatch,
+        LotteryDrawCreate(
+            region="澳门",
+            issue_number="204",
+            draw_date=date(2026, 6, 20),
+            regular_numbers=[8, 9, 10, 11, 12, 13],
+            special_number=14,
+        ),
+        reason="录入复核发现错误",
+        confirm=QMessageBox.StandardButton.No,
+    )
+
+    page = DrawHistoryPage(draw_service=service)
+    page._table.selectRow(0)
+    page._on_manual_edit_draw()
+
+    found = service.get_draw("澳门", "204")
+    assert found is not None
+    assert found.special_number == "07"
+    assert len(question_messages) == 1
+    assert update_calls == []
+    assert LogService(session_factory).count_logs(module="draw", action="manual_update") == 0
 
 
 def test_draw_history_manual_buttons_do_not_disable_sync_buttons(session_factory) -> None:

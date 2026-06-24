@@ -130,7 +130,11 @@ class DrawService:
                 session.rollback()
                 raise
 
-    def update_draw(self, draw_id: int, draw_create: LotteryDrawCreate) -> LotteryDraw:
+    def update_draw(self, draw_id: int, draw_create: LotteryDrawCreate, *, reason: str | None) -> LotteryDraw:
+        reason = "" if reason is None else str(reason).strip()
+        if not reason:
+            raise ValueError("Draw update reason cannot be empty")
+
         with self._session_factory() as session:
             try:
                 repo = DrawRepository(session)
@@ -144,6 +148,9 @@ class DrawService:
                         f"Draw already exists: {draw_create.region} {draw_create.issue_number}"
                     )
 
+                before_region = draw.region
+                before_issue_number = draw.issue_number
+                before_numbers = self._format_numbers(draw.regular_numbers, draw.special_number)
                 draw.region = draw_create.region
                 draw.issue_number = draw_create.issue_number
                 draw.draw_date = draw_create.draw_date
@@ -151,11 +158,22 @@ class DrawService:
                 draw.special_number = draw_create.special_number
                 draw.source = draw_create.source
                 draw.status = draw_create.status
+                after_numbers = self._format_numbers(draw.regular_numbers, draw.special_number)
                 session.flush()
                 self._log_service.create_log(
                     module="draw",
                     action="manual_update",
-                    description=f"Manually updated draw {draw.region} {draw.issue_number}",
+                    description=(
+                        "Manually updated draw; "
+                        f"draw_id={draw.id}; "
+                        f"before_region={before_region}; "
+                        f"before_issue_number={before_issue_number}; "
+                        f"region={draw.region}; "
+                        f"issue_number={draw.issue_number}; "
+                        f"before_numbers={before_numbers}; "
+                        f"after_numbers={after_numbers}; "
+                        f"reason={reason}"
+                    ),
                     related_type="lottery_draw",
                     related_id=draw.id,
                     session=session,
@@ -178,6 +196,9 @@ class DrawService:
     def get_draw_by_id(self, draw_id: int) -> LotteryDraw | None:
         with self._session_factory() as session:
             return DrawRepository(session).get_by_id(draw_id)
+
+    def _format_numbers(self, regular_numbers: list[str], special_number: str) -> str:
+        return f"regular=[{','.join(regular_numbers)}], special={special_number}"
 
     def list_draws(
         self,

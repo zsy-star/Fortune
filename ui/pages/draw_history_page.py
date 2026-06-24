@@ -362,7 +362,18 @@ class DrawHistoryPage(QWidget):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         try:
-            updated = self._draw_service.update_draw(draw_id, dialog.to_draw_create(source="manual_ui"))
+            draw_create = dialog.to_draw_create(source="manual_ui")
+            reason = dialog.correction_reason().strip()
+            if not reason:
+                raise ValueError("修正原因不能为空")
+        except Exception as exc:
+            self._show_manual_error("修正开奖记录失败", exc)
+            return
+        if not self._confirm_manual_update(draw, draw_create, reason):
+            self._status_label.setText("已取消修正开奖记录，未保存修改。")
+            return
+        try:
+            updated = self._draw_service.update_draw(draw_id, draw_create, reason=reason)
         except Exception as exc:
             self._show_manual_error("修正开奖记录失败", exc)
             return
@@ -374,6 +385,33 @@ class DrawHistoryPage(QWidget):
         message = str(exc) or exc.__class__.__name__
         self._status_label.setText(f"{title}：{message}")
         QMessageBox.warning(self, "开奖记录", f"{title}：{message}")
+
+    def _confirm_manual_update(
+        self,
+        before: LotteryDraw,
+        after: LotteryDrawCreate,
+        reason: str,
+    ) -> bool:
+        message = (
+            "请确认修正开奖记录：\n"
+            f"地区：{after.region}\n"
+            f"期号：{after.issue_number}\n"
+            f"修正前号码：{self._format_draw_numbers(before.regular_numbers, before.special_number)}\n"
+            f"修正后号码：{self._format_draw_numbers(after.regular_numbers, after.special_number)}\n"
+            f"修正原因：{reason}\n\n"
+            "确认保存本次修正？"
+        )
+        result = QMessageBox.question(
+            self,
+            "确认修正开奖记录",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return result == QMessageBox.StandardButton.Yes
+
+    def _format_draw_numbers(self, regular_numbers: list[str], special_number: str) -> str:
+        return f"正码 {' '.join(regular_numbers)} / 特码 {special_number}"
 
     def _set_sync_enabled(self, enabled: bool) -> None:
         self._btn_sync_latest.setEnabled(enabled)
@@ -453,6 +491,7 @@ class _ManualDrawDialog(QDialog):
         self._draw_date.setDate(QDate.currentDate())
         self._regular_edits = [QLineEdit() for _ in range(6)]
         self._special = QLineEdit()
+        self._reason: QLineEdit | None = None
 
         for edit in [*self._regular_edits, self._special]:
             edit.setPlaceholderText("1-49")
@@ -478,6 +517,14 @@ class _ManualDrawDialog(QDialog):
         special_row.addWidget(QLabel("特码"))
         special_row.addWidget(self._special, stretch=1)
         layout.addLayout(special_row)
+
+        if draw is not None:
+            reason_row = QHBoxLayout()
+            self._reason = QLineEdit()
+            self._reason.setPlaceholderText("必填，说明本次修正原因")
+            reason_row.addWidget(QLabel("修正原因"))
+            reason_row.addWidget(self._reason, stretch=1)
+            layout.addLayout(reason_row)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
@@ -506,6 +553,11 @@ class _ManualDrawDialog(QDialog):
             source=source,
             status="confirmed",
         )
+
+    def correction_reason(self) -> str:
+        if self._reason is None:
+            return ""
+        return self._reason.text().strip()
 
 
 class _HistorySyncDialog(QDialog):

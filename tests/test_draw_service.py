@@ -123,12 +123,51 @@ def test_update_draw_success_and_writes_operation_log(session_factory) -> None:
             special_number=14,
             source="manual_ui",
         ),
+        reason="同步源号码更正",
     )
 
     assert updated.draw_date == date(2026, 2, 6)
     assert updated.regular_numbers == ["08", "09", "10", "11", "12", "13"]
     assert updated.special_number == "14"
-    assert LogService(session_factory).count_logs(module="draw", action="manual_update") == 1
+    logs = LogService(session_factory).list_logs(module="draw", action="manual_update")
+    assert len(logs) == 1
+    assert "reason=同步源号码更正" in logs[0].description
+    assert "draw_id=" in logs[0].description
+    assert "region=澳门" in logs[0].description
+    assert "issue_number=013" in logs[0].description
+    assert "before_numbers=regular=[01,02,03,04,05,06], special=07" in logs[0].description
+    assert "after_numbers=regular=[08,09,10,11,12,13], special=14" in logs[0].description
+
+
+def test_update_draw_requires_non_empty_reason(session_factory) -> None:
+    service = DrawService(session_factory)
+    draw = service.create_draw(
+        LotteryDrawCreate(
+            region="澳门",
+            issue_number="017",
+            draw_date=date(2026, 2, 11),
+            regular_numbers=[1, 2, 3, 4, 5, 6],
+            special_number=7,
+        )
+    )
+
+    with pytest.raises(ValueError, match="reason"):
+        service.update_draw(
+            draw.id,
+            LotteryDrawCreate(
+                region="澳门",
+                issue_number="017",
+                draw_date=date(2026, 2, 12),
+                regular_numbers=[8, 9, 10, 11, 12, 13],
+                special_number=14,
+            ),
+            reason="   ",
+        )
+
+    found = service.get_draw("澳门", "017")
+    assert found is not None
+    assert found.special_number == "07"
+    assert LogService(session_factory).count_logs(module="draw", action="manual_update") == 0
 
 
 def test_update_draw_duplicate_region_issue_rejected(session_factory) -> None:
@@ -162,6 +201,7 @@ def test_update_draw_duplicate_region_issue_rejected(session_factory) -> None:
                 regular_numbers=[15, 16, 17, 18, 19, 20],
                 special_number=21,
             ),
+            reason="修正重复期号测试",
         )
 
 
