@@ -148,15 +148,16 @@ def test_high_risk_and_snapshot_unavailable_handlers_are_explicit(session_factor
     assert "当前测试版暂未开放：结算快照详情查看" in ledger_page._lbl_total.text()
 
 
-def test_draw_history_manual_maintenance_is_disabled(session_factory) -> None:
+def test_draw_history_manual_maintenance_is_opened_safely(session_factory) -> None:
     app()
     page = DrawHistoryPage(draw_service=DrawService(session_factory))
 
-    assert not page._btn_manual_maintain.isEnabled()
-    assert page._btn_manual_maintain.toolTip() == UNAVAILABLE_TOOLTIP
-    page._on_manual_maintain_disabled()
-    assert "当前测试版暂未开放：手工新增/修正开奖记录" in page._status_label.text()
-    assert "权限、校验和操作日志" in page._status_label.text()
+    assert page._btn_manual_add.text() == "手工新增开奖"
+    assert page._btn_manual_add.isEnabled()
+    assert page._btn_manual_edit.text() == "修正选中开奖"
+    assert not page._btn_manual_edit.isEnabled()
+    assert page._btn_sync_latest.isEnabled()
+    assert page._btn_sync_history.isEnabled()
 
 
 def test_number_catalog_shows_static_reference_notice() -> None:

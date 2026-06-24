@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QTableWidget,
@@ -24,9 +25,9 @@ from PySide6.QtWidgets import (
 )
 
 from models import LotteryDraw
+from schemas.draw_schema import LotteryDrawCreate
 from services.draw_service import DrawService
 from services.draw_sync_service import DrawSyncResult
-from ui.unavailable import mark_unavailable, unavailable_text
 from ui.workers import DrawSyncTask
 
 REGION_LOTTERY_TYPE = {"澳门": 2, "香港": 1}
@@ -40,6 +41,7 @@ class DrawHistoryPage(QWidget):
         self._sync_task: DrawSyncTask | None = None
         self._page = 1
         self._total = 0
+        self._row_draw_ids: list[int] = []
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 10, 12, 10)
@@ -105,17 +107,21 @@ class DrawHistoryPage(QWidget):
         row.addStretch(1)
         self._btn_sync_latest = QPushButton("获取最新数据")
         self._btn_sync_history = QPushButton("同步历史数据")
-        self._btn_manual_maintain = QPushButton("手工维护开奖")
+        self._btn_manual_add = QPushButton("手工新增开奖")
+        self._btn_manual_edit = QPushButton("修正选中开奖")
         self._btn_sync_latest.setObjectName("fetchButton")
         self._btn_sync_history.setObjectName("fetchButton")
-        self._btn_manual_maintain.setObjectName("fetchButton")
+        self._btn_manual_add.setObjectName("fetchButton")
+        self._btn_manual_edit.setObjectName("fetchButton")
         self._btn_sync_latest.clicked.connect(self._sync_latest)
         self._btn_sync_history.clicked.connect(self._open_history_sync_dialog)
-        self._btn_manual_maintain.clicked.connect(self._on_manual_maintain_disabled)
-        mark_unavailable(self._btn_manual_maintain)
+        self._btn_manual_add.clicked.connect(self._on_manual_add_draw)
+        self._btn_manual_edit.clicked.connect(self._on_manual_edit_draw)
+        self._btn_manual_edit.setEnabled(False)
         row.addWidget(self._btn_sync_latest)
         row.addWidget(self._btn_sync_history)
-        row.addWidget(self._btn_manual_maintain)
+        row.addWidget(self._btn_manual_add)
+        row.addWidget(self._btn_manual_edit)
         return row
 
     def _build_table(self) -> QTableWidget:
@@ -127,6 +133,7 @@ class DrawHistoryPage(QWidget):
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.itemSelectionChanged.connect(self._on_selection_changed)
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -194,8 +201,10 @@ class DrawHistoryPage(QWidget):
         return date(value.year(), value.month(), value.day())
 
     def _fill_table(self, rows: list[LotteryDraw]) -> None:
+        self._row_draw_ids = []
         self._table.setRowCount(len(rows))
         for row_idx, draw in enumerate(rows):
+            self._row_draw_ids.append(draw.id)
             values = [
                 draw.region,
                 draw.issue_number,
@@ -219,6 +228,8 @@ class DrawHistoryPage(QWidget):
             self._status_label.setText("暂无开奖数据")
         else:
             self._status_label.setText(f"已加载 {len(rows)} 条记录")
+
+        self._on_selection_changed()
 
     def _update_pager(self) -> None:
         total_pages = max(1, (self._total + PAGE_SIZE - 1) // PAGE_SIZE)
@@ -311,14 +322,58 @@ class DrawHistoryPage(QWidget):
     def _on_sync_failed(self, message: str) -> None:
         self._status_label.setText(f"同步失败：{self._friendly_error(message)}")
 
-    def _on_manual_maintain_disabled(self) -> None:
-        self._status_label.setText(
-            unavailable_text(
-                "手工新增/修正开奖记录",
-                "开奖数据会影响正式结算，当前测试版仅允许从已验证同步流程写入。",
-                "后续需要权限、校验和操作日志策略后再开放。",
-            )
-        )
+    def _on_selection_changed(self) -> None:
+        self._btn_manual_edit.setEnabled(self._selected_draw_id() is not None)
+
+    def _selected_draw_id(self) -> int | None:
+        rows = self._table.selectionModel().selectedRows() if self._table.selectionModel() else []
+        if not rows:
+            return None
+        row = rows[0].row()
+        if row < 0 or row >= len(self._row_draw_ids):
+            return None
+        return self._row_draw_ids[row]
+
+    def _on_manual_add_draw(self) -> None:
+        dialog = _ManualDrawDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            draw = self._draw_service.create_draw(dialog.to_draw_create(source="manual_ui"))
+        except Exception as exc:
+            self._show_manual_error("手工新增开奖记录失败", exc)
+            return
+        self.reload_data()
+        self._status_label.setText(f"已手工新增开奖记录：{draw.region} 第{draw.issue_number}期")
+        QMessageBox.information(self, "开奖记录", "手工新增开奖记录已保存。")
+
+    def _on_manual_edit_draw(self) -> None:
+        draw_id = self._selected_draw_id()
+        if draw_id is None:
+            self._status_label.setText("请先选择一条开奖记录后再修正。")
+            QMessageBox.warning(self, "开奖记录", "请先选择一条开奖记录。")
+            return
+        draw = self._draw_service.get_draw_by_id(draw_id)
+        if draw is None:
+            self._status_label.setText("选中的开奖记录已不存在，请刷新后重试。")
+            QMessageBox.warning(self, "开奖记录", "选中的开奖记录已不存在。")
+            return
+        dialog = _ManualDrawDialog(self, draw)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        try:
+            updated = self._draw_service.update_draw(draw_id, dialog.to_draw_create(source="manual_ui"))
+        except Exception as exc:
+            self._show_manual_error("修正开奖记录失败", exc)
+            return
+        self.reload_data()
+        self._status_label.setText(f"已修正开奖记录：{updated.region} 第{updated.issue_number}期")
+        QMessageBox.information(self, "开奖记录", "开奖记录修正已保存。")
+
+    def _show_manual_error(self, title: str, exc: Exception) -> None:
+        message = str(exc) or exc.__class__.__name__
+        self._status_label.setText(f"{title}：{message}")
+        QMessageBox.warning(self, "开奖记录", f"{title}：{message}")
 
     def _set_sync_enabled(self, enabled: bool) -> None:
         self._btn_sync_latest.setEnabled(enabled)
@@ -379,6 +434,77 @@ class DrawHistoryPage(QWidget):
                 color: #2c3e50;
             }
             """
+        )
+
+
+class _ManualDrawDialog(QDialog):
+    def __init__(self, parent=None, draw: LotteryDraw | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("修正开奖记录" if draw else "手工新增开奖记录")
+        layout = QVBoxLayout(self)
+
+        self._region = QComboBox()
+        self._region.addItems(["澳门", "香港"])
+        self._issue = QLineEdit()
+        self._draw_date = QDateEdit()
+        self._draw_date.setCalendarPopup(True)
+        self._draw_date.setDisplayFormat("yyyy-MM-dd")
+        self._draw_date.setMinimumDate(QDate(2000, 1, 1))
+        self._draw_date.setDate(QDate.currentDate())
+        self._regular_edits = [QLineEdit() for _ in range(6)]
+        self._special = QLineEdit()
+
+        for edit in [*self._regular_edits, self._special]:
+            edit.setPlaceholderText("1-49")
+            edit.setMaxLength(2)
+
+        for label, widget in (
+            ("地区", self._region),
+            ("期号", self._issue),
+            ("开奖日期", self._draw_date),
+        ):
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label))
+            row.addWidget(widget, stretch=1)
+            layout.addLayout(row)
+
+        numbers_row = QHBoxLayout()
+        numbers_row.addWidget(QLabel("正码"))
+        for edit in self._regular_edits:
+            numbers_row.addWidget(edit)
+        layout.addLayout(numbers_row)
+
+        special_row = QHBoxLayout()
+        special_row.addWidget(QLabel("特码"))
+        special_row.addWidget(self._special, stretch=1)
+        layout.addLayout(special_row)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        if draw is not None:
+            self._load_draw(draw)
+
+    def _load_draw(self, draw: LotteryDraw) -> None:
+        self._region.setCurrentText(draw.region)
+        self._issue.setText(draw.issue_number)
+        self._draw_date.setDate(QDate(draw.draw_date.year, draw.draw_date.month, draw.draw_date.day))
+        for edit, value in zip(self._regular_edits, draw.regular_numbers, strict=True):
+            edit.setText(value)
+        self._special.setText(draw.special_number)
+
+    def to_draw_create(self, *, source: str = "manual_ui") -> LotteryDrawCreate:
+        value = self._draw_date.date()
+        return LotteryDrawCreate(
+            region=self._region.currentText(),
+            issue_number=self._issue.text(),
+            draw_date=date(value.year(), value.month(), value.day()),
+            regular_numbers=[edit.text().strip() for edit in self._regular_edits],
+            special_number=self._special.text().strip(),
+            source=source,
+            status="confirmed",
         )
 
 

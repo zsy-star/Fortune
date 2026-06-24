@@ -130,10 +130,54 @@ class DrawService:
                 session.rollback()
                 raise
 
+    def update_draw(self, draw_id: int, draw_create: LotteryDrawCreate) -> LotteryDraw:
+        with self._session_factory() as session:
+            try:
+                repo = DrawRepository(session)
+                draw = repo.get_by_id(draw_id)
+                if draw is None:
+                    raise ValueError(f"Draw not found: {draw_id}")
+
+                existing = repo.get(draw_create.region, draw_create.issue_number)
+                if existing is not None and existing.id != draw.id:
+                    raise DuplicateDrawError(
+                        f"Draw already exists: {draw_create.region} {draw_create.issue_number}"
+                    )
+
+                draw.region = draw_create.region
+                draw.issue_number = draw_create.issue_number
+                draw.draw_date = draw_create.draw_date
+                draw.regular_numbers = list(draw_create.regular_numbers)
+                draw.special_number = draw_create.special_number
+                draw.source = draw_create.source
+                draw.status = draw_create.status
+                session.flush()
+                self._log_service.create_log(
+                    module="draw",
+                    action="manual_update",
+                    description=f"Manually updated draw {draw.region} {draw.issue_number}",
+                    related_type="lottery_draw",
+                    related_id=draw.id,
+                    session=session,
+                )
+                session.commit()
+                session.refresh(draw)
+                return draw
+            except IntegrityError as exc:
+                session.rollback()
+                raise DuplicateDrawError("Draw violates unique constraints") from exc
+            except Exception:
+                session.rollback()
+                raise
+
     def get_draw(self, region: str, issue_number: str) -> LotteryDraw | None:
         region = normalize_region(region)
         with self._session_factory() as session:
             return DrawRepository(session).get(region, issue_number)
+
+    def get_draw_by_id(self, draw_id: int) -> LotteryDraw | None:
+        with self._session_factory() as session:
+            return DrawRepository(session).get_by_id(draw_id)
 
     def list_draws(
         self,

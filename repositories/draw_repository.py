@@ -28,6 +28,9 @@ class DrawRepository:
         )
         return self.session.scalars(stmt).first()
 
+    def get_by_id(self, draw_id: int) -> LotteryDraw | None:
+        return self.session.get(LotteryDraw, draw_id)
+
     def _apply_filters(
         self,
         stmt,
