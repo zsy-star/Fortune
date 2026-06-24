@@ -33,6 +33,18 @@ class IntakeItemPreview:
 
 
 @dataclass(slots=True)
+class IntakeTableRow:
+    row_number: int
+    region: str
+    bet_type: str
+    selection: str
+    total_amount: Decimal | int | float | str
+    per_item_amount: Decimal | int | float | str | None = None
+    note: str | None = None
+    source_line: str | None = None
+
+
+@dataclass(slots=True)
 class OrderIntakePreview:
     raw_text: str
     region: str | None

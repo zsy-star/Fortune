@@ -88,6 +88,15 @@ def _order_counts(session_factory) -> tuple[int, int]:
     return int(order_count), int(item_count)
 
 
+def _log_count(session_factory) -> int:
+    from sqlalchemy import func, select
+
+    from models import OperationLog
+
+    with session_factory() as session:
+        return int(session.scalar(select(func.count(OperationLog.id))) or 0)
+
+
 # ══════════════════════════════════════════════════════════════════════
 # 1. 窗口创建/关闭
 # ══════════════════════════════════════════════════════════════════════
@@ -965,16 +974,147 @@ class TestSaveOrder:
             assert [item.selection for item in items] == ["01", "02", "03"]
             assert [item.amount for item in items] == [10, 10, 10]
 
-    def test_table_user_adjusted_blocks_save(self, save_window, session_factory):
-        """表格被人工调整后，本阶段禁止直接保存。"""
+    def test_delete_one_table_row_then_save_success(self, save_window, session_factory):
+        """解析后删除错误行，剩余表格明细可以保存。"""
+        from sqlalchemy import select
+
+        from models import Order, OrderItem
+
+        save_window._input_text.setPlainText("01/10\n02/20")
+        save_window._do_parse()
+        save_window._on_add_result()
+        save_window._order_table.selectRow(1)
+        save_window._on_delete_selected()
+        assert save_window._table_user_adjusted is True
+
+        with (
+            patch(
+                "ui.windows.record_order_window.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+            patch("ui.windows.record_order_window.QMessageBox.information") as info,
+        ):
+            save_window._on_save_order()
+
+        info.assert_called_once()
+        assert "订单保存成功" in info.call_args.args[2]
+        with session_factory() as session:
+            order = session.scalars(select(Order)).one()
+            items = session.scalars(select(OrderItem)).all()
+            assert order.total_amount == 10
+            assert len(items) == 1
+            assert items[0].selection == "01"
+            assert items[0].amount == 10
+        assert _log_count(session_factory) == 1
+
+    def test_modify_table_amount_then_save_recalculates_total(self, save_window, session_factory):
+        """修改金额后保存，以表格金额重新计算订单总额和明细金额。"""
+        from sqlalchemy import select
+
+        from models import Order, OrderItem
+
         save_window._input_text.setPlainText("01/10")
         save_window._do_parse()
-        save_window._table_user_adjusted = True
+        save_window._on_add_result()
+        save_window._order_table.item(0, 5).setText("25")
+        assert save_window._table_user_adjusted is True
+
+        with (
+            patch(
+                "ui.windows.record_order_window.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+            patch("ui.windows.record_order_window.QMessageBox.information"),
+        ):
+            save_window._on_save_order()
+
+        with session_factory() as session:
+            order = session.scalars(select(Order)).one()
+            item = session.scalars(select(OrderItem)).one()
+            assert order.total_amount == 25
+            assert item.amount == 25
+        assert _log_count(session_factory) == 1
+
+    def test_modify_table_number_and_region_then_save(self, save_window, session_factory):
+        """修改号码和地区后保存，使用表格中的最终数据。"""
+        from sqlalchemy import select
+
+        from models import Order, OrderItem
+
+        save_window._input_text.setPlainText("01/10")
+        save_window._do_parse()
+        save_window._on_add_result()
+        save_window._order_table.item(0, 0).setText("香港")
+        save_window._order_table.item(0, 2).setText("03")
+
+        with (
+            patch(
+                "ui.windows.record_order_window.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+            patch("ui.windows.record_order_window.QMessageBox.information"),
+        ):
+            save_window._on_save_order()
+
+        with session_factory() as session:
+            order = session.scalars(select(Order)).one()
+            item = session.scalars(select(OrderItem)).one()
+            assert order.region == "香港"
+            assert item.selection == "03"
+            assert item.amount == 10
+
+    def test_invalid_table_amount_blocks_save(self, save_window, session_factory):
+        """表格金额不合法时阻止保存。"""
+        save_window._input_text.setPlainText("01/10")
+        save_window._do_parse()
+        save_window._on_add_result()
+        save_window._order_table.item(0, 5).setText("abc")
         with patch("ui.windows.record_order_window.QMessageBox.warning") as warning:
             save_window._on_save_order()
         warning.assert_called_once()
-        assert "当前表格已人工调整" in warning.call_args.args[2]
+        assert "金额不是有效数字" in warning.call_args.args[2]
         assert _order_counts(session_factory) == (0, 0)
+
+    def test_delete_all_table_rows_blocks_save(self, save_window, session_factory):
+        """删除全部表格行后不能保存。"""
+        save_window._input_text.setPlainText("01/10")
+        save_window._do_parse()
+        save_window._on_add_result()
+        save_window._order_table.selectRow(0)
+        save_window._on_delete_selected()
+        with patch("ui.windows.record_order_window.QMessageBox.warning") as warning:
+            save_window._on_save_order()
+        warning.assert_called_once()
+        assert "表格没有可保存的订单明细" in warning.call_args.args[2]
+        assert _order_counts(session_factory) == (0, 0)
+
+    def test_adjusted_multi_number_row_saves_expected_item_count(self, save_window, session_factory):
+        """人工调整多号码行金额后，保存成功且明细数量正确。"""
+        from sqlalchemy import select
+
+        from models import Order, OrderItem
+
+        save_window._input_text.setPlainText("01,02,03各10")
+        save_window._do_parse()
+        save_window._on_add_result()
+        save_window._order_table.item(0, 5).setText("45")
+
+        with (
+            patch(
+                "ui.windows.record_order_window.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+            patch("ui.windows.record_order_window.QMessageBox.information"),
+        ):
+            save_window._on_save_order()
+
+        with session_factory() as session:
+            order = session.scalars(select(Order)).one()
+            items = session.scalars(select(OrderItem).order_by(OrderItem.selection)).all()
+            assert order.total_amount == 45
+            assert [item.selection for item in items] == ["01", "02", "03"]
+            assert [item.amount for item in items] == [15, 15, 15]
+        assert _log_count(session_factory) == 1
 
     def test_preview_can_save_false_blocks_save(self, save_window, session_factory):
         """preview.can_save=False 时提示原因，不写入数据库。"""

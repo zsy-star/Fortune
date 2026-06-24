@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 
 from models import OperationLog, Order
 from schemas.draw_schema import LotteryDrawCreate
+from schemas.order_intake_schema import IntakeMetadata, IntakeTableRow
 from schemas.order_schema import OrderItemCreate
 from services.draw_service import DrawService
 from services.order_intake_mapper import (
@@ -200,6 +201,62 @@ def test_save_end_to_end(session_factory) -> None:
     assert {item.selection for item in detail.items} == {"01", "02"}
 
 
+def test_preview_table_rows_recalculates_total_and_expands_numbers() -> None:
+    service = OrderIntakeService()
+    preview = service.preview_table_rows(
+        [
+            IntakeTableRow(
+                row_number=1,
+                region="澳门",
+                bet_type="特码",
+                selection="01,02",
+                total_amount="30",
+                per_item_amount="10",
+                note="manual row",
+            )
+        ],
+        IntakeMetadata(channel="个人微信", region="澳门", source="record_window_adjusted", raw_text="01,02各10"),
+    )
+
+    assert preview.can_save
+    assert preview.total_amount == Decimal("30.00")
+    assert [item.selection for item in preview.order_items] == ["01", "02"]
+    assert [item.amount for item in preview.order_items] == [Decimal("15.00"), Decimal("15.00")]
+
+
+def test_preview_table_rows_rejects_invalid_amount() -> None:
+    service = OrderIntakeService()
+    preview = service.preview_table_rows(
+        [
+            IntakeTableRow(
+                row_number=1,
+                region="澳门",
+                bet_type="特码",
+                selection="01",
+                total_amount="abc",
+            )
+        ],
+        IntakeMetadata(channel="个人微信", region="澳门", source="record_window_adjusted", raw_text="01/10"),
+    )
+
+    assert not preview.can_save
+    assert any("第 1 行金额不是有效数字" in error for error in preview.errors)
+
+
+def test_preview_table_rows_rejects_mixed_regions() -> None:
+    service = OrderIntakeService()
+    preview = service.preview_table_rows(
+        [
+            IntakeTableRow(row_number=1, region="澳门", bet_type="特码", selection="01", total_amount="10"),
+            IntakeTableRow(row_number=2, region="香港", bet_type="特码", selection="02", total_amount="10"),
+        ],
+        IntakeMetadata(channel="个人微信", region="澳门", source="record_window_adjusted", raw_text="mixed"),
+    )
+
+    assert not preview.can_save
+    assert any("表格地区不一致" in error for error in preview.errors)
+
+
 def test_invalid_item_blocks_whole_order_save(session_factory) -> None:
     service = OrderIntakeService(session_factory)
     preview = service.preview_raw_text("01/10\n50/10", region="澳门")
@@ -238,4 +295,3 @@ def test_saved_order_can_be_settlement_previewed(session_factory) -> None:
     )
     preview = SettlementService(session_factory).preview_order(order.id, draw.id)
     assert preview.winning_items == 1
-

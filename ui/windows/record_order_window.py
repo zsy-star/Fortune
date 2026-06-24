@@ -1,7 +1,10 @@
 """我要录单弹窗（布局参照业务录单界面，功能后续实现）。"""
 
+from decimal import Decimal, InvalidOperation
+
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -24,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from schemas.order_intake_schema import IntakeMetadata, IntakeTableRow
 from services.order_intake_service import OrderIntakeService
 from services.order_parser import format_result, parse_lines
 from ui.unavailable import UNAVAILABLE_TOOLTIP
@@ -76,6 +80,8 @@ class RecordOrderWindow(QMainWindow):
     def __init__(self, parent=None, order_intake_service: OrderIntakeService | None = None):
         super().__init__(parent)
         self._order_intake_service = order_intake_service or OrderIntakeService()
+        self._table_user_adjusted = False
+        self._table_loading = False
         self.setWindowTitle("我要录单")
         self.resize(1280, 840)
         self.setMinimumSize(1024, 680)
@@ -114,7 +120,6 @@ class RecordOrderWindow(QMainWindow):
         self._parsed_results: list = []
         self._last_parse_results: list = []
         self._last_parse_raw = ""
-        self._table_user_adjusted = False
         self._replace_presets: list[tuple[str, str]] = []  # (查找, 替换)
         self._parse_timer = QTimer(self)
         self._parse_timer.setSingleShot(True)
@@ -256,26 +261,30 @@ class RecordOrderWindow(QMainWindow):
         reporter = self._cmb_channel.currentText()
         calc_method = self._cmb_calc.currentText()
 
-        for r in self._parsed_results:
-            row = self._order_table.rowCount()
-            self._order_table.insertRow(row)
-            # 号码用逗号拼接，如 01,02,03
-            nums_text = ",".join(f"{n:02d}" for n in r.numbers)
-            items = [
-                QTableWidgetItem(region),  # 区域
-                QTableWidgetItem("特码"),  # 投注类型
-                QTableWidgetItem(nums_text),  # 订单信息
-                QTableWidgetItem(""),  # 复选类型
-                QTableWidgetItem(calc_method),  # 计算方式
-                QTableWidgetItem(f"{r.total:g}"),  # 金额（总金额）
-                QTableWidgetItem(f"{r.amount:g}"),  # 每号金额
-                QTableWidgetItem("标准"),  # 是否自定义
-                QTableWidgetItem(reporter),  # 申报人
-                QTableWidgetItem(r.original_text),  # 备注
-            ]
-            for col, item in enumerate(items):
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                self._order_table.setItem(row, col, item)
+        self._table_loading = True
+        try:
+            for r in self._parsed_results:
+                row = self._order_table.rowCount()
+                self._order_table.insertRow(row)
+                # 号码用逗号拼接，如 01,02,03
+                nums_text = ",".join(f"{n:02d}" for n in r.numbers)
+                items = [
+                    QTableWidgetItem(region),  # 区域
+                    QTableWidgetItem("特码"),  # 投注类型
+                    QTableWidgetItem(nums_text),  # 订单信息
+                    QTableWidgetItem(""),  # 复选类型
+                    QTableWidgetItem(calc_method),  # 计算方式
+                    QTableWidgetItem(f"{r.total:g}"),  # 金额（总金额）
+                    QTableWidgetItem(f"{r.amount:g}"),  # 每号金额
+                    QTableWidgetItem("标准"),  # 是否自定义
+                    QTableWidgetItem(reporter),  # 申报人
+                    QTableWidgetItem(r.original_text),  # 备注
+                ]
+                for col, item in enumerate(items):
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    self._order_table.setItem(row, col, item)
+        finally:
+            self._table_loading = False
 
         # 更新总额
         self._update_order_totals()
@@ -305,12 +314,20 @@ class RecordOrderWindow(QMainWindow):
     def _on_save_order(self) -> None:
         """通过 OrderIntakeService 保存当前解析成功的原始订单文本。"""
         raw = self._current_raw_text_for_save()
-        if not raw.strip():
+        if not raw.strip() and self._order_table.rowCount() == 0:
             self._show_warning("请输入订单内容")
             return
 
         if self._table_user_adjusted:
-            self._show_warning("当前表格已人工调整，暂不支持直接保存。请重新解析后再保存。")
+            save_result = self._save_adjusted_table(raw)
+            if save_result is None:
+                return
+            order = save_result.order
+            message = "订单保存成功"
+            if order is not None:
+                message = f"订单保存成功：{order.order_no} (ID: {order.id})"
+            self._show_info(message)
+            self._on_clear_output()
             return
 
         if raw != self._last_parse_raw or not self._last_parse_results:
@@ -359,15 +376,72 @@ class RecordOrderWindow(QMainWindow):
         self._show_info(message)
         self._on_clear_output()
 
+    def _save_adjusted_table(self, raw: str):
+        rows = self._table_rows_for_save()
+        if not rows:
+            self._show_warning("表格没有可保存的订单明细")
+            return None
+
+        try:
+            preview = self._order_intake_service.preview_table_rows(
+                rows,
+                IntakeMetadata(
+                    channel=self._cmb_channel.currentText(),
+                    region=self._current_region(),
+                    source="record_window_adjusted",
+                    raw_text=raw,
+                ),
+            )
+        except Exception as exc:
+            self._show_warning(f"表格数据校验失败：{exc}")
+            return None
+
+        if not preview.can_save:
+            reason = "\n".join(preview.errors) if preview.errors else "表格数据不可保存"
+            self._show_warning(reason)
+            return None
+
+        if preview.warnings:
+            warning_text = "保存前请确认以下提示：\n" + "\n".join(preview.warnings)
+            if not self._confirm_warning(warning_text):
+                return None
+
+        save_result = self._order_intake_service.save_preview(preview)
+        if not save_result.success:
+            self._show_warning(save_result.error or "订单保存失败")
+            return None
+        return save_result
+
+    def _table_rows_for_save(self) -> list[IntakeTableRow]:
+        rows: list[IntakeTableRow] = []
+        for row in range(self._order_table.rowCount()):
+            rows.append(
+                IntakeTableRow(
+                    row_number=row + 1,
+                    region=self._table_text(row, 0),
+                    bet_type=self._table_text(row, 1),
+                    selection=self._table_text(row, 2),
+                    total_amount=self._table_text(row, 5),
+                    per_item_amount=self._table_text(row, 6),
+                    note=self._table_text(row, 9),
+                    source_line=self._table_text(row, 9) or None,
+                )
+            )
+        return rows
+
+    def _table_text(self, row: int, column: int) -> str:
+        item = self._order_table.item(row, column)
+        return item.text().strip() if item is not None else ""
+
     def _update_order_totals(self) -> None:
         """更新订单表中的总额标签。"""
-        total = 0.0
+        total = Decimal("0")
         for row in range(self._order_table.rowCount()):
             item = self._order_table.item(row, 5)  # "金额" 列
             if item:
                 try:
-                    total += float(item.text())
-                except ValueError:
+                    total += Decimal(item.text().strip())
+                except (InvalidOperation, ValueError):
                     pass
         self._lbl_total.setText(f"当前总额: {total:g}")
 
@@ -381,6 +455,12 @@ class RecordOrderWindow(QMainWindow):
         for row in sorted(rows, reverse=True):
             self._order_table.removeRow(row)
 
+        self._table_user_adjusted = True
+        self._update_order_totals()
+
+    def _on_table_item_changed(self, _item: QTableWidgetItem) -> None:
+        if self._table_loading:
+            return
         self._table_user_adjusted = True
         self._update_order_totals()
 
@@ -731,7 +811,8 @@ class RecordOrderWindow(QMainWindow):
         self._order_table.setHorizontalHeaderLabels(_TABLE_COLUMNS)
         self._order_table.setAlternatingRowColors(True)
         self._order_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._order_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._order_table.setEditTriggers(QAbstractItemView.EditTrigger.AllEditTriggers)
+        self._order_table.itemChanged.connect(self._on_table_item_changed)
         self._order_table.horizontalHeader().setStretchLastSection(True)
         self._order_table.verticalHeader().setVisible(False)
         # 列宽：订单信息列给足空间展示逗号拼接的号码
