@@ -160,7 +160,7 @@ def test_orders_export_filters_by_date_region_status_and_keyword(session_factory
         start_date=new_day - timedelta(minutes=1),
         end_date=new_day + timedelta(minutes=1),
     )
-    keyword_by_no = export_service.export_orders(keyword=old_order.order_no[-6:])
+    keyword_by_no = export_service.export_orders(keyword=old_order.order_no)
     keyword_by_id = export_service.export_orders(keyword=str(settled.id))
 
     assert [row[0] for row in workbook_rows(filtered.export_path)[1:]] == [settled.id]

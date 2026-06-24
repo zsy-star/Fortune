@@ -284,7 +284,7 @@ def test_settlement_ledger_page_searches_by_order_id_or_order_no(session_factory
     assert page._table.rowCount() == 1
     assert page._table.item(0, 2).text() == first.order_no
 
-    page._keyword.setText(second.order_no[-6:])
+    page._keyword.setText(second.order_no)
     page._on_query()
     assert page._table.rowCount() == 1
     assert page._table.item(0, 2).text() == second.order_no

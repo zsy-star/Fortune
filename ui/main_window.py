@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 
 from core.config import APP_NAME
+from ui.dialogs.settings_dialog import SettingsDialog
 
 from ui.pages import (
 
@@ -173,6 +174,7 @@ class MainWindow(QMainWindow):
         self._nav_group.setExclusive(True)
 
         self._record_order_window: RecordOrderWindow | None = None
+        self._settings_dialog: SettingsDialog | None = None
 
         self._adjust_nav: NavHoverMenuButton | None = None
 
@@ -221,6 +223,12 @@ class MainWindow(QMainWindow):
 
 
         nav_layout.addStretch(1)
+
+        self._btn_settings = QPushButton("设置")
+        self._btn_settings.setObjectName("settingsButton")
+        self._btn_settings.setToolTip("打开个人设置 / 配置中心")
+        self._btn_settings.clicked.connect(self._open_settings_dialog)
+        nav_layout.addWidget(self._btn_settings)
 
 
 
@@ -316,6 +324,14 @@ class MainWindow(QMainWindow):
 
         self._record_order_window = None
 
+    def _open_settings_dialog(self) -> None:
+        """Open the modal local configuration center."""
+        self._settings_dialog = SettingsDialog(parent=self)
+        try:
+            self._settings_dialog.exec()
+        finally:
+            self._settings_dialog = None
+
 
 
     def _apply_stylesheet(self) -> None:
@@ -384,6 +400,20 @@ class MainWindow(QMainWindow):
 
                 background-color: #34495e;
 
+            }
+
+            QPushButton#settingsButton {
+                color: #ecf0f1;
+                background-color: #34495e;
+                border: 1px solid #5d6d7e;
+                border-radius: 4px;
+                padding: 8px 14px;
+                font-size: 13px;
+            }
+
+            QPushButton#settingsButton:hover {
+                background-color: #3f5870;
+                border-color: #85a2b8;
             }
 
             QLabel#pageTitle {
