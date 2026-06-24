@@ -31,6 +31,7 @@ from schemas.order_intake_schema import IntakeMetadata, IntakeTableRow
 from services.order_intake_service import OrderIntakeService
 from services.order_parser import format_result, parse_lines
 from services.settings_service import SettingsService
+from ui.app_events import app_events
 from ui.unavailable import UNAVAILABLE_TOOLTIP
 
 _TABLE_COLUMNS = [
@@ -341,6 +342,7 @@ class RecordOrderWindow(QMainWindow):
             message = "订单保存成功"
             if order is not None:
                 message = f"订单保存成功：{order.order_no} (ID: {order.id})"
+            self._emit_order_saved_events()
             self._show_info(message)
             self._on_clear_output()
             return
@@ -390,8 +392,13 @@ class RecordOrderWindow(QMainWindow):
         message = "订单保存成功"
         if order is not None:
             message = f"订单保存成功：{order.order_no} (ID: {order.id})"
+        self._emit_order_saved_events()
         self._show_info(message)
         self._on_clear_output()
+
+    def _emit_order_saved_events(self) -> None:
+        app_events.orders_changed.emit()
+        app_events.logs_changed.emit()
 
     def _save_adjusted_table(self, raw: str):
         rows = self._table_rows_for_save()

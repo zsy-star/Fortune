@@ -39,6 +39,7 @@ from services.order_service import OrderService
 from services.settlement_service import SettlementService
 from services.settings_service import SettingsService
 from ui.dialogs.settlement_preview_dialog import SettlementPreviewDialog
+from ui.app_events import app_events
 
 PAGE_SIZE = 20
 VOIDABLE_ORDER_STATUSES = {"active", "pending"}
@@ -141,11 +142,21 @@ class OrderDetailPage(QWidget):
         root.addWidget(self._build_result_section(), stretch=1)
 
         self._apply_stylesheet()
+        app_events.orders_changed.connect(self._on_orders_changed)
         self.reload_data()
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
         self.reload_data()
+
+    def _on_orders_changed(self) -> None:
+        selected_order_id = self._selected_order_id
+        try:
+            self.reload_data()
+            if selected_order_id is not None:
+                self._load_detail(selected_order_id)
+        except Exception as exc:
+            self._status_label.setText(f"订单数据已变更，但自动刷新失败：{exc}")
 
     def _build_toolbar(self) -> QFrame:
         frame = QFrame()
@@ -859,11 +870,6 @@ class OrderDetailPage(QWidget):
             QMessageBox.warning(self, "结算预览", "订单不存在或已被删除。")
             return
         dialog.exec()
-        if dialog.settlement_committed():
-            selected_order_id = self._selected_order_id
-            self.reload_data()
-            if selected_order_id is not None:
-                self._load_detail(selected_order_id)
 
     def _on_void_order(self) -> None:
         if self._selected_order_id is None:
@@ -933,10 +939,10 @@ class OrderDetailPage(QWidget):
             f"作废原因：{result.reason}\n"
             f"操作日志ID：{result.operation_log_id}"
         )
-        QMessageBox.information(self, "作废订单", message)
+        app_events.orders_changed.emit()
+        app_events.logs_changed.emit()
         self._status_label.setText(f"订单作废成功：{result.order_no}")
-        self.reload_data()
-        self._load_detail(result.order_id)
+        QMessageBox.information(self, "作废订单", message)
 
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(

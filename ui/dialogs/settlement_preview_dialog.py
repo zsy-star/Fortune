@@ -25,6 +25,7 @@ from schemas.settlement_schema import OrderSettlementPreview
 from services.draw_service import DrawService
 from services.order_service import OrderService
 from services.settlement_service import SettlementService
+from ui.app_events import app_events
 from settlement.exceptions import SettlementDataError
 
 
@@ -426,6 +427,9 @@ class SettlementPreviewDialog(QDialog):
       self._settlement_committed = True
       self._load_order()
       self._btn_commit.setEnabled(False)
+      app_events.orders_changed.emit()
+      app_events.settlements_changed.emit()
+      app_events.logs_changed.emit()
       QMessageBox.information(
           self,
           "结算确认",

@@ -7,6 +7,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtTest import QSignalSpy
 
 from schemas.draw_schema import LotteryDrawCreate
 from schemas.order_schema import OrderCreate, OrderItemCreate
@@ -16,6 +17,7 @@ from services.order_service import OrderService
 from services.settlement_service import SettlementService
 from ui.dialogs.settlement_preview_dialog import SettlementPreviewDialog
 from ui.pages.order_detail_page import OrderDetailPage
+from ui.app_events import app_events
 
 
 def app() -> QApplication:
@@ -327,6 +329,9 @@ def test_commit_confirm_calls_service_and_persists_status_and_log(session_factor
     draw = create_draw(draw_service, special="01")
     dialog = open_preview_dialog(session_factory, order.id)
     dialog._on_start_preview()
+    orders_spy = QSignalSpy(app_events.orders_changed)
+    settlements_spy = QSignalSpy(app_events.settlements_changed)
+    logs_spy = QSignalSpy(app_events.logs_changed)
 
     assert dialog._btn_commit.isEnabled()
     with (
@@ -351,6 +356,9 @@ def test_commit_confirm_calls_service_and_persists_status_and_log(session_factor
     assert "结算成功" in info.call_args.args[2]
     assert "操作日志ID" in info.call_args.args[2]
     assert dialog.settlement_committed()
+    assert orders_spy.count() == 1
+    assert settlements_spy.count() == 1
+    assert logs_spy.count() == 1
     assert dialog._lbl_status.text() == "settled"
     assert not dialog._btn_commit.isEnabled()
     assert order_service.get_order(order.id).status == "settled"

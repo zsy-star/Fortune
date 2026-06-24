@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from schemas.order_schema import OrderAnalysisGroup, OrderAnalysisSummary
 from services.order_service import OrderService
+from ui.app_events import app_events
 
 _REPORT_EMPTY_HTML = """
 <p><b>订单分析报告 (仅参考)：</b></p>
@@ -63,7 +64,14 @@ class OrderAnalysisPage(QWidget):
         root.addLayout(self._build_body_row(), stretch=1)
 
         self._apply_stylesheet()
+        app_events.orders_changed.connect(self._on_orders_changed)
         self.reload_data()
+
+    def _on_orders_changed(self) -> None:
+        try:
+            self.reload_data()
+        except Exception as exc:
+            self._report_view.setPlainText(f"订单数据已变更，但自动刷新失败：{exc}")
 
     def _build_filter_row(self) -> QHBoxLayout:
         row = QHBoxLayout()

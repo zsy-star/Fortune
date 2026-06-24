@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from schemas.log_schema import OperationLogResult
 from services.excel_export_service import ExcelExportService
 from services.log_service import LogService
+from ui.app_events import app_events
 from ui.unavailable import unavailable_text
 
 PAGE_SIZE = 20
@@ -75,7 +76,14 @@ class OperationLogPage(QWidget):
         root.addLayout(self._build_pager())
 
         self._apply_stylesheet()
+        app_events.logs_changed.connect(self._on_logs_changed)
         self.reload_data()
+
+    def _on_logs_changed(self) -> None:
+        try:
+            self.reload_data()
+        except Exception as exc:
+            self._lbl_total.setText(f"日志数据已变更，但自动刷新失败：{exc}")
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)

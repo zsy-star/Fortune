@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from services.order_service import OrderService
+from ui.app_events import app_events
 
 
 @dataclass(frozen=True)
@@ -83,7 +84,14 @@ class OverviewPage(QWidget):
         root.addLayout(self._build_bottom_row(), stretch=2)
 
         self._apply_stylesheet()
+        app_events.orders_changed.connect(self._on_orders_changed)
         self.reload_data()
+
+    def _on_orders_changed(self) -> None:
+        try:
+            self.reload_data()
+        except Exception as exc:
+            self._lbl_total_orders.setText(f"订单数据已变更，但自动刷新失败：{exc}")
 
     def _build_filter_row(self) -> QHBoxLayout:
         row = QHBoxLayout()

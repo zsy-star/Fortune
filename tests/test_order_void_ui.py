@@ -7,12 +7,14 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtTest import QSignalSpy
 
 from models import Order
 from schemas.order_schema import OrderCreate, OrderItemCreate
 from services.log_service import LogService
 from services.order_service import OrderService
 from ui.pages.order_detail_page import OrderDetailPage
+from ui.app_events import app_events
 
 
 def app() -> QApplication:
@@ -155,6 +157,8 @@ def test_void_confirm_calls_service_persists_status_log_and_disables_button(sess
     order = create_order(service)
     page = OrderDetailPage(order_service=service, log_service=log_service)
     load_order(page, order.id)
+    orders_spy = QSignalSpy(app_events.orders_changed)
+    logs_spy = QSignalSpy(app_events.logs_changed)
 
     with (
         patch("ui.pages.order_detail_page.QInputDialog.getMultiLineText", return_value=("entered wrong", True)),
@@ -173,6 +177,8 @@ def test_void_confirm_calls_service_persists_status_log_and_disables_button(sess
     assert "订单作废成功" in info.call_args.args[2]
     assert "操作日志ID" in info.call_args.args[2]
     assert page._order_service.get_order(order.id).status == "voided"
+    assert orders_spy.count() == 1
+    assert logs_spy.count() == 1
     assert "状态：已作废" in page._detail_info.text()
     assert not page._btn_void.isEnabled()
     assert log_service.count_logs(module="order", action="void") == 1

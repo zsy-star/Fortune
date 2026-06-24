@@ -32,6 +32,7 @@ from services.excel_export_service import ExcelExportService
 from services.log_service import LogService
 from services.order_service import OrderService
 from services.settlement_service import SettlementService
+from ui.app_events import app_events
 
 PAGE_SIZE = 20
 
@@ -204,7 +205,14 @@ class SettlementLedgerPage(QWidget):
         root.addLayout(self._build_pager())
 
         self._apply_stylesheet()
+        app_events.settlements_changed.connect(self._on_settlements_changed)
         self.reload_data()
+
+    def _on_settlements_changed(self) -> None:
+        try:
+            self.reload_data()
+        except Exception as exc:
+            self._lbl_total.setText(f"结算数据已变更，但自动刷新失败：{exc}")
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
