@@ -37,11 +37,17 @@ from services.order_parser import ParseResult, parse_order
 
 
 class FakeSettingsService:
-    def __init__(self, names: list[str] | None = None):
+    def __init__(self, names: list[str] | None = None, plan_name: str | None = None):
         self._names = names or []
+        self._plan_name = plan_name
 
     def list_declarers(self):
-        return [SimpleNamespace(name=name) for name in self._names]
+        return [SimpleNamespace(name=name, plan_name=self._plan_name) for name in self._names]
+
+
+class FailingSettingsService:
+    def list_declarers(self):
+        raise RuntimeError("settings unavailable")
 
 # ── 模块级 QApplication ──
 
@@ -908,8 +914,9 @@ class TestDeclarerIntegration:
 
         settings = SettingsService(session_factory)
         plan = settings.ensure_default_plan()
+        custom = settings.create_plan("46倍6水")
         settings.add_declarer("林林", plan.id)
-        settings.add_declarer("老汪", plan.id)
+        settings.add_declarer("老汪", custom.id)
         window = RecordOrderWindow(
             order_intake_service=OrderIntakeService(session_factory),
             settings_service=settings,
@@ -917,6 +924,11 @@ class TestDeclarerIntegration:
         try:
             assert [window._cmb_declarer.itemText(index) for index in range(2)] == ["林林", "老汪"]
             assert window._selected_declarer_name() == "林林"
+            assert window._selected_config_plan_name() == "默认方案"
+            assert window._lbl_declarer_plan.text() == "配置方案：默认方案"
+            window._cmb_declarer.setCurrentText("老汪")
+            assert window._selected_config_plan_name() == "46倍6水"
+            assert window._lbl_declarer_plan.text() == "配置方案：46倍6水"
         finally:
             window.close()
             window.deleteLater()
@@ -925,6 +937,31 @@ class TestDeclarerIntegration:
         assert save_window._cmb_declarer.count() == 1
         assert "未设置" in save_window._cmb_declarer.currentText()
         assert save_window._selected_declarer_name() is None
+        assert save_window._lbl_declarer_plan.text() == "配置方案：未绑定配置方案"
+
+    def test_declarer_without_plan_uses_safe_placeholder(self, qapp):
+        from ui.windows.record_order_window import RecordOrderWindow
+
+        window = RecordOrderWindow(settings_service=FakeSettingsService(["临时申报人"]))
+        try:
+            assert window._selected_declarer_name() == "临时申报人"
+            assert window._selected_config_plan_name() is None
+            assert window._lbl_declarer_plan.text() == "配置方案：未绑定配置方案"
+        finally:
+            window.close()
+            window.deleteLater()
+
+    def test_settings_read_failure_does_not_crash(self, qapp):
+        from ui.windows.record_order_window import RecordOrderWindow
+
+        window = RecordOrderWindow(settings_service=FailingSettingsService())
+        try:
+            assert "配置读取失败" in window._cmb_declarer.currentText()
+            assert window._lbl_declarer_plan.text() == "配置方案：配置读取失败"
+            assert window._selected_declarer_name() is None
+        finally:
+            window.close()
+            window.deleteLater()
 
     def test_selected_declarer_saves_and_displays_in_order_detail(self, qapp, session_factory):
         from sqlalchemy import select
@@ -939,6 +976,7 @@ class TestDeclarerIntegration:
 
         settings = SettingsService(session_factory)
         plan = settings.ensure_default_plan()
+        settings.add_item(plan.id, "特码", "999", "100")
         settings.add_declarer("林林", plan.id)
         window = RecordOrderWindow(
             order_intake_service=OrderIntakeService(session_factory),
@@ -963,7 +1001,9 @@ class TestDeclarerIntegration:
                 )
             ).one()
             assert order.customer_name == "林林"
+            assert order.total_amount == 10
             assert "declarer=林林" in order_log.description
+            assert "config_plan=默认方案" in order_log.description
 
         page = OrderDetailPage(
             order_service=OrderService(session_factory),
@@ -975,7 +1015,7 @@ class TestDeclarerIntegration:
     def test_adjusted_table_save_preserves_selected_declarer(self, qapp, session_factory):
         from sqlalchemy import select
 
-        from models import Order
+        from models import OperationLog, Order
         from services.order_intake_service import OrderIntakeService
         from services.settings_service import SettingsService
         from ui.windows.record_order_window import RecordOrderWindow
@@ -1002,8 +1042,15 @@ class TestDeclarerIntegration:
 
         with session_factory() as session:
             order = session.scalars(select(Order)).one()
+            order_log = session.scalars(
+                select(OperationLog).where(
+                    OperationLog.module == "order",
+                    OperationLog.action == "create",
+                )
+            ).one()
             assert order.customer_name == "老汪"
             assert order.source == "record_window_adjusted"
+            assert "config_plan=默认方案" in order_log.description
 
 
 # ══════════════════════════════════════════════════════════════════════

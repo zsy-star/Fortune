@@ -37,6 +37,7 @@ class OrderRepository:
         region: str | None = None,
         order_no: str | None = None,
         customer_name: str | None = None,
+        declarer_name: str | None = None,
         channel: str | None = None,
         status: str | None = None,
         exclude_statuses: tuple[str, ...] | None = None,
@@ -49,6 +50,8 @@ class OrderRepository:
             stmt = stmt.where(Order.order_no.contains(order_no))
         if customer_name:
             stmt = stmt.where(Order.customer_name.contains(customer_name))
+        if declarer_name:
+            stmt = stmt.where(Order.customer_name == declarer_name)
         if channel:
             stmt = stmt.where(Order.channel.contains(channel))
         if status:
@@ -67,6 +70,7 @@ class OrderRepository:
         region: str | None = None,
         order_no: str | None = None,
         customer_name: str | None = None,
+        declarer_name: str | None = None,
         channel: str | None = None,
         status: str | None = None,
         exclude_statuses: tuple[str, ...] | None = None,
@@ -81,6 +85,7 @@ class OrderRepository:
             region=region,
             order_no=order_no,
             customer_name=customer_name,
+            declarer_name=declarer_name,
             channel=channel,
             status=status,
             exclude_statuses=exclude_statuses,
@@ -159,6 +164,7 @@ class OrderRepository:
         region: str | None = None,
         order_no: str | None = None,
         customer_name: str | None = None,
+        declarer_name: str | None = None,
         channel: str | None = None,
         status: str | None = None,
         exclude_statuses: tuple[str, ...] | None = None,
@@ -171,6 +177,7 @@ class OrderRepository:
             region=region,
             order_no=order_no,
             customer_name=customer_name,
+            declarer_name=declarer_name,
             channel=channel,
             status=status,
             exclude_statuses=exclude_statuses,
@@ -178,6 +185,15 @@ class OrderRepository:
             end_date=end_date,
         )
         return int(self.session.scalar(stmt) or 0)
+
+    def list_declarer_names(self) -> list[str]:
+        stmt = (
+            select(Order.customer_name)
+            .where(Order.customer_name.is_not(None), func.trim(Order.customer_name) != "")
+            .distinct()
+            .order_by(Order.customer_name.asc())
+        )
+        return [str(name).strip() for name in self.session.scalars(stmt) if str(name).strip()]
 
     def sum_amount(
         self,

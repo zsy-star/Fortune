@@ -54,6 +54,7 @@ class OrderCreate:
     items: list[OrderItemCreate]
     customer_name: str | None = None
     channel: str | None = None
+    config_plan_name: str | None = None
 
     def __post_init__(self) -> None:
         self.region = normalize_region(self.region)
@@ -75,6 +76,8 @@ class OrderCreate:
             self.customer_name = self.customer_name.strip() or None
         if self.channel is not None:
             self.channel = self.channel.strip() or None
+        if self.config_plan_name is not None:
+            self.config_plan_name = self.config_plan_name.strip() or None
 
 
 @dataclass(frozen=True, slots=True)

@@ -49,6 +49,7 @@ class ExcelExportService:
         start_date: datetime | None = None,
         end_date: datetime | None = None,
         keyword: str | None = None,
+        declarer_name: str | None = None,
         include_voided: bool = False,
         output_dir: str | Path | None = None,
     ) -> ExcelExportResult:
@@ -58,6 +59,7 @@ class ExcelExportService:
             "start_date": start_date,
             "end_date": end_date,
             "keyword": keyword,
+            "declarer_name": declarer_name,
             "include_voided": include_voided,
         }
         orders = self._list_orders_for_export(
@@ -66,6 +68,7 @@ class ExcelExportService:
             start_date=start_date,
             end_date=end_date,
             keyword=keyword,
+            declarer_name=declarer_name,
             include_voided=include_voided,
         )
         headers = [
@@ -250,6 +253,7 @@ class ExcelExportService:
         start_date: datetime | None,
         end_date: datetime | None,
         keyword: str | None,
+        declarer_name: str | None,
         include_voided: bool,
     ) -> list[OrderSummary]:
         keyword = keyword.strip() if keyword else None
@@ -281,12 +285,14 @@ class ExcelExportService:
                 status=status,
                 start_date=start_date,
                 end_date=end_date,
+                declarer_name=declarer_name,
                 include_voided=include_voided,
             ) else []
 
         rows = self._page_orders(
             region=region,
             order_no=keyword,
+            declarer_name=declarer_name,
             status=status,
             start_date=start_date,
             end_date=end_date,
@@ -360,6 +366,7 @@ class ExcelExportService:
         *,
         region: str | None,
         order_no: str | None,
+        declarer_name: str | None,
         status: str | None,
         start_date: datetime | None,
         end_date: datetime | None,
@@ -371,6 +378,7 @@ class ExcelExportService:
             page = self._order_service.list_orders(
                 region=region,
                 order_no=order_no,
+                declarer_name=declarer_name,
                 status=status,
                 start_date=start_date,
                 end_date=end_date,
@@ -410,11 +418,14 @@ class ExcelExportService:
         status: str | None,
         start_date: datetime | None,
         end_date: datetime | None,
+        declarer_name: str | None,
         include_voided: bool,
     ) -> bool:
         if region and order.region != region:
             return False
         if status and order.status != status:
+            return False
+        if declarer_name and order.customer_name != declarer_name:
             return False
         if not include_voided and order.status == ORDER_STATUS_VOIDED:
             return False

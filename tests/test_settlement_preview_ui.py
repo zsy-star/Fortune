@@ -463,7 +463,7 @@ def test_order_detail_empty_state_and_existing_features(session_factory) -> None
         create_order(service, customer=f"客户{idx}")
     page.reload_data()
     assert page._table.rowCount() == 20
-    page._edit_customer.setText("客户1")
+    page._cmb_declarer.setCurrentText("客户1")
     page._on_query()
     assert page._table.rowCount() >= 1
     page._table.selectRow(0)

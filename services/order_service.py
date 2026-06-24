@@ -96,9 +96,11 @@ class OrderService:
                     repo.add_item(item)
 
                 session.flush()
-                log_description = f"Created order {order.order_no}"
-                if order.customer_name:
-                    log_description += f"; declarer={order.customer_name}"
+                log_description = (
+                    f"Created order {order.order_no}; "
+                    f"declarer={order.customer_name or '未设置'}; "
+                    f"config_plan={order_create.config_plan_name or '未绑定配置方案'}"
+                )
                 self._log_service.create_log(
                     module="order",
                     action="create",
@@ -195,6 +197,7 @@ class OrderService:
         region: str | None = None,
         order_no: str | None = None,
         customer_name: str | None = None,
+        declarer_name: str | None = None,
         channel: str | None = None,
         status: str | None = None,
         start_date: datetime | None = None,
@@ -210,6 +213,7 @@ class OrderService:
                 region=region,
                 order_no=order_no,
                 customer_name=customer_name,
+                declarer_name=declarer_name,
                 channel=channel,
                 status=status,
                 start_date=start_date,
@@ -225,6 +229,7 @@ class OrderService:
         region: str | None = None,
         order_no: str | None = None,
         customer_name: str | None = None,
+        declarer_name: str | None = None,
         channel: str | None = None,
         status: str | None = None,
         start_date: datetime | None = None,
@@ -237,6 +242,7 @@ class OrderService:
                 region=region,
                 order_no=order_no,
                 customer_name=customer_name,
+                declarer_name=declarer_name,
                 channel=channel,
                 status=status,
                 start_date=start_date,
@@ -284,6 +290,11 @@ class OrderService:
                 start_date=start_date,
                 end_date=end_date,
             )
+
+    def list_declarer_names(self) -> list[str]:
+        """Return distinct non-empty declarer names found in historical orders."""
+        with self._session_factory() as session:
+            return OrderRepository(session).list_declarer_names()
 
     def get_dashboard_summary(
         self,

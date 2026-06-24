@@ -11,6 +11,7 @@ from schemas.draw_schema import LotteryDrawCreate
 from schemas.order_intake_schema import IntakeMetadata, IntakeTableRow
 from schemas.order_schema import OrderItemCreate
 from services.draw_service import DrawService
+from services.log_service import LogService
 from services.order_intake_mapper import (
     IntakeConversionError,
     RegionConflictError,
@@ -238,6 +239,7 @@ def test_adjusted_table_preview_and_save_preserve_declarer(session_factory) -> N
         ],
         IntakeMetadata(
             customer_name="林林",
+            config_plan_name="46倍6水",
             channel="个人微信",
             region="澳门",
             source="record_window_adjusted",
@@ -247,11 +249,16 @@ def test_adjusted_table_preview_and_save_preserve_declarer(session_factory) -> N
 
     assert preview.can_save
     assert preview.customer_name == "林林"
+    assert preview.config_plan_name == "46倍6水"
     saved = service.save_preview(preview)
     assert saved.success
     detail = service._order_service.get_order(saved.order.id)
     assert detail is not None
     assert detail.customer_name == "林林"
+    logs = LogService(session_factory).list_logs(module="order", action="create")
+    assert len(logs) == 1
+    assert "declarer=林林" in logs[0].description
+    assert "config_plan=46倍6水" in logs[0].description
 
 
 def test_preview_table_rows_rejects_invalid_amount() -> None:

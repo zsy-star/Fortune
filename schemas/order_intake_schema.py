@@ -11,6 +11,7 @@ from schemas.order_schema import OrderCreate, OrderItemCreate, OrderResult
 @dataclass(slots=True)
 class IntakeMetadata:
     customer_name: str | None = None
+    config_plan_name: str | None = None
     channel: str | None = None
     region: str | None = None
     source: str = "record_window"
@@ -51,6 +52,7 @@ class OrderIntakePreview:
     customer_name: str | None
     channel: str | None
     source: str
+    config_plan_name: str | None = None
     items: list[IntakeItemPreview] = field(default_factory=list)
     total_amount: Decimal = Decimal("0")
     valid_items: int = 0

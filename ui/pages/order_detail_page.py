@@ -37,6 +37,7 @@ from services.excel_export_service import ExcelExportService
 from services.log_service import LogService
 from services.order_service import OrderService
 from services.settlement_service import SettlementService
+from services.settings_service import SettingsService
 from ui.dialogs.settlement_preview_dialog import SettlementPreviewDialog
 
 PAGE_SIZE = 20
@@ -104,6 +105,7 @@ class OrderDetailPage(QWidget):
         draw_service: DrawService | None = None,
         settlement_service: SettlementService | None = None,
         excel_export_service: ExcelExportService | None = None,
+        settings_service: SettingsService | None = None,
     ):
         super().__init__(parent)
         self._order_service = order_service or OrderService()
@@ -112,6 +114,7 @@ class OrderDetailPage(QWidget):
         self._draw_service = draw_service or DrawService(session_factory)
         self._settlement_service = settlement_service or SettlementService(session_factory)
         self._excel_export_service = excel_export_service or ExcelExportService(session_factory)
+        self._settings_service = settings_service or SettingsService(session_factory)
         self._page = 1
         self._total = 0
         self._selected_order_id: int | None = None
@@ -279,10 +282,7 @@ class OrderDetailPage(QWidget):
         self._cmb_winning.setEnabled(False)
         self._cmb_winning.setToolTip("完整中奖筛选需要兑奖结果数据，当前版本暂未开放")
         self._cmb_declarer = QComboBox()
-        self._cmb_declarer.setEditable(True)
-        self._cmb_declarer.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self._cmb_declarer.lineEdit().setPlaceholderText("不限申报人")
-        self._edit_customer = self._cmb_declarer.lineEdit()
+        self._cmb_declarer.addItem("不限申报人", None)
 
         grid.addWidget(self._cmb_region, 0, 0)
         grid.addWidget(self._cmb_bet_type, 0, 1)
@@ -436,11 +436,12 @@ class OrderDetailPage(QWidget):
     def reload_data(self) -> None:
         if not self._validate_dates():
             return
-        region, order_no, customer, channel, status, start_dt, end_dt = self._filters()
+        self._reload_declarer_filter_options()
+        region, order_no, declarer, channel, status, start_dt, end_dt = self._filters()
         self._total = self._order_service.count_orders(
             region=region,
             order_no=order_no,
-            customer_name=customer,
+            declarer_name=declarer,
             channel=channel,
             status=status,
             start_date=start_dt,
@@ -452,7 +453,7 @@ class OrderDetailPage(QWidget):
         rows = self._order_service.list_orders(
             region=region,
             order_no=order_no,
-            customer_name=customer,
+            declarer_name=declarer,
             channel=channel,
             status=status,
             start_date=start_dt,
@@ -480,12 +481,39 @@ class OrderDetailPage(QWidget):
         return (
             region,
             self._edit_order_no.text().strip() or None,
-            self._edit_customer.text().strip() or None,
+            self._cmb_declarer.currentData(),
             self._edit_channel.text().strip() or None,
             status,
             self._start_datetime(),
             self._end_datetime(),
         )
+
+    def _reload_declarer_filter_options(self) -> None:
+        selected_name = self._cmb_declarer.currentData()
+        names: list[str] = []
+        errors: list[str] = []
+        try:
+            names.extend(declarer.name for declarer in self._settings_service.list_declarers())
+        except Exception as exc:
+            errors.append(f"设置中心：{exc}")
+        try:
+            names.extend(self._order_service.list_declarer_names())
+        except Exception as exc:
+            errors.append(f"历史订单：{exc}")
+
+        unique_names = list(dict.fromkeys(name.strip() for name in names if name and name.strip()))
+        self._cmb_declarer.blockSignals(True)
+        self._cmb_declarer.clear()
+        self._cmb_declarer.addItem("不限申报人", None)
+        for name in unique_names:
+            self._cmb_declarer.addItem(name, name)
+        selected_index = self._cmb_declarer.findData(selected_name)
+        self._cmb_declarer.setCurrentIndex(max(0, selected_index))
+        self._cmb_declarer.blockSignals(False)
+        if errors:
+            self._cmb_declarer.setToolTip("申报人来源部分读取失败：" + "；".join(errors))
+        else:
+            self._cmb_declarer.setToolTip("申报人来自设置中心和历史订单")
 
     def _date_or_none(self, edit: QDateEdit):
         value = edit.date()
@@ -586,8 +614,8 @@ class OrderDetailPage(QWidget):
     def _on_reset(self) -> None:
         self._cmb_region.setCurrentIndex(0)
         self._cmb_status.setCurrentIndex(0)
+        self._cmb_declarer.setCurrentIndex(0)
         self._edit_order_no.clear()
-        self._edit_customer.clear()
         self._edit_channel.clear()
         self._start_date.setDate(self._start_date.minimumDate())
         self._end_date.setDate(self._end_date.minimumDate())
@@ -602,7 +630,7 @@ class OrderDetailPage(QWidget):
             self._status_label.setText("已取消导出")
             return
 
-        region, order_no, _customer, _channel, status, start_dt, end_dt = self._filters()
+        region, order_no, declarer, _channel, status, start_dt, end_dt = self._filters()
         try:
             result = self._excel_export_service.export_orders(
                 region=region,
@@ -610,6 +638,7 @@ class OrderDetailPage(QWidget):
                 start_date=start_dt,
                 end_date=end_dt,
                 keyword=order_no,
+                declarer_name=declarer,
                 include_voided=False,
                 output_dir=output_dir,
             )

@@ -168,6 +168,20 @@ def test_orders_export_filters_by_date_region_status_and_keyword(session_factory
     assert [row[0] for row in workbook_rows(keyword_by_id.export_path)[1:]] == [settled.id]
 
 
+def test_orders_export_filters_by_declarer(session_factory, tmp_path) -> None:
+    service = OrderService(session_factory)
+    target = create_order(service, customer="林林", region="澳门")
+    create_order(service, customer="老汪", region="澳门")
+
+    result = ExcelExportService(session_factory).export_orders(
+        declarer_name="林林",
+        output_dir=tmp_path,
+    )
+
+    assert [row[0] for row in workbook_rows(result.export_path)[1:]] == [target.id]
+    assert result.filters["declarer_name"] == "林林"
+
+
 def test_export_directory_is_created_and_real_exports_dir_not_used(session_factory, tmp_path) -> None:
     output_dir = tmp_path / "nested" / "exports"
 

@@ -58,12 +58,14 @@ class OrderIntakeService:
         raw_text: str,
         *,
         customer_name: str | None = None,
+        config_plan_name: str | None = None,
         channel: str | None = None,
         region: str | None = None,
         source: str = "record_window",
     ) -> OrderIntakePreview:
         metadata = IntakeMetadata(
             customer_name=customer_name,
+            config_plan_name=config_plan_name,
             channel=channel,
             region=region,
             source=source,
@@ -96,6 +98,9 @@ class OrderIntakeService:
             customer_name=(metadata.customer_name or None) and metadata.customer_name.strip() or None,
             channel=(metadata.channel or None) and metadata.channel.strip() or None,
             source=(metadata.source or "record_window_adjusted").strip() or "record_window_adjusted",
+            config_plan_name=(metadata.config_plan_name or None)
+            and metadata.config_plan_name.strip()
+            or None,
         )
         if not rows:
             preview.errors.append("表格没有可保存的订单明细")
@@ -172,6 +177,7 @@ class OrderIntakeService:
         order_create = OrderCreate(
             customer_name=preview.customer_name,
             channel=preview.channel,
+            config_plan_name=preview.config_plan_name,
             region=preview.region,
             raw_text=preview.raw_text,
             source=preview.source,
@@ -191,6 +197,7 @@ class OrderIntakeService:
         raw_text: str,
         *,
         customer_name: str | None = None,
+        config_plan_name: str | None = None,
         channel: str | None = None,
         region: str | None = None,
         source: str = "record_window",
@@ -198,6 +205,7 @@ class OrderIntakeService:
         preview = self.preview_raw_text(
             raw_text,
             customer_name=customer_name,
+            config_plan_name=config_plan_name,
             channel=channel,
             region=region,
             source=source,
@@ -369,6 +377,9 @@ class OrderIntakeService:
             customer_name=(metadata.customer_name or None) and metadata.customer_name.strip() or None,
             channel=(metadata.channel or None) and metadata.channel.strip() or None,
             source=(metadata.source or "record_window").strip() or "record_window",
+            config_plan_name=(metadata.config_plan_name or None)
+            and metadata.config_plan_name.strip()
+            or None,
         )
 
         if not metadata.raw_text.strip():

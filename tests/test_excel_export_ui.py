@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication
 from schemas.excel_export_schema import ExcelExportResult
 from services.log_service import LogService
 from services.order_service import OrderService
+from schemas.order_schema import OrderCreate, OrderItemCreate
 from ui.pages.operation_log_page import OperationLogPage
 from ui.pages.order_detail_page import OrderDetailPage
 from ui.pages.settlement_ledger_page import SettlementLedgerPage
@@ -131,6 +132,7 @@ def test_order_export_button_calls_export_orders(session_factory, tmp_path) -> N
                 "start_date": None,
                 "end_date": None,
                 "keyword": "ORD-001",
+                "declarer_name": None,
                 "include_voided": False,
                 "output_dir": str(tmp_path),
             },
@@ -140,6 +142,37 @@ def test_order_export_button_calls_export_orders(session_factory, tmp_path) -> N
     assert "导出成功" in info.call_args.args[2]
     assert "orders.xlsx" in info.call_args.args[2]
     assert "行数：5" in info.call_args.args[2]
+
+
+def test_order_export_uses_selected_declarer_filter(session_factory, tmp_path) -> None:
+    app()
+    order_service = OrderService(session_factory)
+    order_service.create_order(
+        OrderCreate(
+            customer_name="林林",
+            channel="微信",
+            region="澳门",
+            raw_text="01/10",
+            source="test",
+            items=[OrderItemCreate(bet_type="特码", selection="01", amount="10")],
+        )
+    )
+    fake = FakeExcelExportService(make_result(tmp_path, "declarer-orders.xlsx"))
+    page = OrderDetailPage(
+        order_service=order_service,
+        log_service=LogService(session_factory),
+        excel_export_service=fake,
+    )
+    page._cmb_declarer.setCurrentText("林林")
+
+    with (
+        patch("ui.pages.order_detail_page.QFileDialog.getExistingDirectory", return_value=str(tmp_path)),
+        patch("ui.pages.order_detail_page.QMessageBox.information"),
+    ):
+        page._on_export_excel()
+
+    assert fake.calls[0][0] == "export_orders"
+    assert fake.calls[0][1]["declarer_name"] == "林林"
 
 
 def test_settlement_ledger_export_button_calls_export_settlement_ledger(session_factory, tmp_path) -> None:

@@ -58,6 +58,18 @@ def test_order_service_query_filters_and_detached_dto(session_factory) -> None:
     assert by_no.items[0].bet_type == "特码"
 
 
+def test_order_service_exact_declarer_filter_and_distinct_names(session_factory) -> None:
+    service = OrderService(session_factory)
+    exact = create_order(service, region="澳门", customer="张", channel="微信")
+    create_order(service, region="澳门", customer="张三", channel="现金")
+    create_order(service, region="香港", customer="李四", channel="现金")
+
+    assert [order.id for order in service.list_orders(declarer_name="张")] == [exact.id]
+    assert service.count_orders(declarer_name="张") == 1
+    assert service.count_orders(declarer_name="张", region="香港") == 0
+    assert service.list_declarer_names() == ["张", "张三", "李四"]
+
+
 def test_order_service_dashboard_summary_counts_amounts_and_recent_orders(session_factory) -> None:
     service = OrderService(session_factory)
     macau = create_order(

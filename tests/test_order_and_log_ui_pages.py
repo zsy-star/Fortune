@@ -15,6 +15,7 @@ from services.draw_service import DrawService
 from services.log_service import LogService
 from services.order_service import OrderService
 from services.settlement_service import SettlementService
+from services.settings_service import SettingsService
 from ui.pages.operation_log_page import OperationLogPage
 from ui.pages.order_detail_page import OrderDetailPage
 
@@ -103,7 +104,7 @@ def test_order_detail_page_loads_filters_and_details(session_factory) -> None:
     page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
 
     assert page._table.rowCount() == 2
-    page._edit_customer.setText("张")
+    page._cmb_declarer.setCurrentText("张三")
     page._on_query()
     assert page._table.rowCount() == 1
     assert page._table.item(0, 7).text() == "张三"
@@ -115,6 +116,64 @@ def test_order_detail_page_loads_filters_and_details(session_factory) -> None:
     assert page._item_table.rowCount() == 2
     assert page._item_table.item(0, 2).text() == "10.00"
     assert LogService(session_factory).count_logs(module="订单详情", action="查看订单") == 1
+
+
+def test_order_detail_declarer_filter_merges_settings_and_history(session_factory) -> None:
+    app()
+    order_service = OrderService(session_factory)
+    create_order(order_service, customer="历史申报人")
+    settings_service = SettingsService(session_factory)
+    plan = settings_service.ensure_default_plan()
+    settings_service.add_declarer("配置申报人", plan.id)
+
+    page = OrderDetailPage(
+        order_service=order_service,
+        log_service=LogService(session_factory),
+        settings_service=settings_service,
+    )
+
+    options = [page._cmb_declarer.itemText(index) for index in range(page._cmb_declarer.count())]
+    assert options == ["不限申报人", "配置申报人", "历史申报人"]
+
+
+def test_order_detail_declarer_filter_empty_sources_is_safe(session_factory) -> None:
+    app()
+    page = OrderDetailPage(
+        order_service=OrderService(session_factory),
+        log_service=LogService(session_factory),
+        settings_service=SettingsService(session_factory),
+    )
+
+    assert page._cmb_declarer.count() == 1
+    assert page._cmb_declarer.currentText() == "不限申报人"
+    assert page._table.rowCount() == 0
+
+
+def test_order_detail_filters_exact_declarer_and_combines_conditions(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    exact = create_order(service, customer="张", region="澳门")
+    create_order(service, customer="张三", region="澳门")
+    hk = create_order(service, customer="李四", region="香港")
+    page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
+
+    page._cmb_declarer.setCurrentText("张")
+    page._on_query()
+    assert page._table.rowCount() == 1
+    assert page._table.item(0, 6).text() == exact.order_no
+    assert page._table.item(0, 7).text() == "张"
+
+    page._cmb_region.setCurrentText("香港")
+    page._cmb_declarer.setCurrentText("李四")
+    page._edit_order_no.setText(hk.order_no)
+    page._on_query()
+    assert page._table.rowCount() == 1
+    assert page._table.item(0, 6).text() == hk.order_no
+
+    page._on_reset()
+    assert page._cmb_declarer.currentIndex() == 0
+    assert page._cmb_declarer.currentText() == "不限申报人"
+    assert page._table.rowCount() == 3
 
 
 def test_order_detail_business_layout_and_core_entries(session_factory) -> None:

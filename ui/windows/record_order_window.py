@@ -87,6 +87,8 @@ class RecordOrderWindow(QMainWindow):
         super().__init__(parent)
         self._order_intake_service = order_intake_service or OrderIntakeService()
         self._settings_service = settings_service or SettingsService()
+        self._declarer_plans: dict[str, str | None] = {}
+        self._declarer_config_load_failed = False
         self._table_user_adjusted = False
         self._table_loading = False
         self.setWindowTitle("我要录单")
@@ -361,6 +363,7 @@ class RecordOrderWindow(QMainWindow):
             preview = self._order_intake_service.preview_raw_text(
                 raw,
                 customer_name=self._selected_declarer_name(),
+                config_plan_name=self._selected_config_plan_name(),
                 channel=self._cmb_channel.currentText(),
                 region=self._current_region(),
                 source="record_window",
@@ -401,6 +404,7 @@ class RecordOrderWindow(QMainWindow):
                 rows,
                 IntakeMetadata(
                     customer_name=self._selected_declarer_name(),
+                    config_plan_name=self._selected_config_plan_name(),
                     channel=self._cmb_channel.currentText(),
                     region=self._current_region(),
                     source="record_window_adjusted",
@@ -866,6 +870,9 @@ class RecordOrderWindow(QMainWindow):
         self._cmb_declarer = QComboBox()
         self._cmb_declarer.setMinimumWidth(130)
         self._cmb_declarer.setToolTip("申报人来自设置中心；未配置时可保持未设置")
+        self._cmb_declarer.currentIndexChanged.connect(self._update_declarer_plan_label)
+        self._lbl_declarer_plan = QLabel("配置方案：未绑定配置方案")
+        self._lbl_declarer_plan.setObjectName("declarerPlanLabel")
 
         self._radio_macau = QRadioButton("澳门 (ALT+1)")
         self._radio_hk = QRadioButton("香港 (ALT+2)")
@@ -879,6 +886,7 @@ class RecordOrderWindow(QMainWindow):
         layout.addWidget(self._cmb_channel)
         layout.addWidget(QLabel("申报人"))
         layout.addWidget(self._cmb_declarer)
+        layout.addWidget(self._lbl_declarer_plan)
         layout.addWidget(self._radio_macau)
         layout.addWidget(self._radio_hk)
         layout.addWidget(self._cmb_calc)
@@ -890,16 +898,21 @@ class RecordOrderWindow(QMainWindow):
         if not hasattr(self, "_cmb_declarer"):
             return
         previous_name = self._selected_declarer_name()
+        self._declarer_plans = {}
+        self._declarer_config_load_failed = False
         self._cmb_declarer.blockSignals(True)
         self._cmb_declarer.clear()
         try:
             declarers = self._settings_service.list_declarers()
         except Exception as exc:
+            self._declarer_config_load_failed = True
             self._cmb_declarer.addItem("未设置（配置读取失败）", None)
             self._cmb_declarer.setToolTip(f"申报人配置读取失败：{exc}")
         else:
             if declarers:
                 for declarer in declarers:
+                    plan_name = str(getattr(declarer, "plan_name", "") or "").strip() or None
+                    self._declarer_plans[declarer.name] = plan_name
                     self._cmb_declarer.addItem(declarer.name, declarer.name)
                 previous_index = self._cmb_declarer.findData(previous_name)
                 if previous_index >= 0:
@@ -909,6 +922,7 @@ class RecordOrderWindow(QMainWindow):
                 self._cmb_declarer.addItem("未设置（请在设置中心配置）", None)
                 self._cmb_declarer.setToolTip("设置中心尚未配置申报人；订单仍可保存")
         self._cmb_declarer.blockSignals(False)
+        self._update_declarer_plan_label()
 
     def _selected_declarer_name(self) -> str | None:
         if not hasattr(self, "_cmb_declarer"):
@@ -916,6 +930,21 @@ class RecordOrderWindow(QMainWindow):
         value = self._cmb_declarer.currentData()
         text = str(value).strip() if value is not None else ""
         return text or None
+
+    def _selected_config_plan_name(self) -> str | None:
+        declarer_name = self._selected_declarer_name()
+        if declarer_name is None:
+            return None
+        return self._declarer_plans.get(declarer_name)
+
+    def _update_declarer_plan_label(self, _index: int | None = None) -> None:
+        if not hasattr(self, "_lbl_declarer_plan"):
+            return
+        if self._declarer_config_load_failed:
+            text = "配置读取失败"
+        else:
+            text = self._selected_config_plan_name() or "未绑定配置方案"
+        self._lbl_declarer_plan.setText(f"配置方案：{text}")
 
     def _build_text_section(self) -> QGroupBox:
         group = QGroupBox()
