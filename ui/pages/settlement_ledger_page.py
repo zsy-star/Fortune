@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, time
 from decimal import Decimal
 
@@ -9,6 +10,8 @@ from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDateEdit,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QFileDialog,
     QHBoxLayout,
@@ -16,6 +19,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -28,7 +32,6 @@ from services.excel_export_service import ExcelExportService
 from services.log_service import LogService
 from services.order_service import OrderService
 from services.settlement_service import SettlementService
-from ui.unavailable import mark_unavailable, unavailable_text
 
 PAGE_SIZE = 20
 
@@ -58,6 +61,118 @@ def _export_success_message(result) -> str:
     )
 
 
+def _snapshot_json(snapshot: object) -> str:
+    if not snapshot:
+        return "快照数据为空或格式不完整。"
+    try:
+        return json.dumps(snapshot, ensure_ascii=False, indent=2, default=str)
+    except TypeError:
+        return str(snapshot)
+
+
+def _snapshot_result_text(item: dict) -> str:
+    if item.get("is_supported") is False:
+        return "不支持"
+    if item.get("is_winner") is True:
+        return "命中"
+    if item.get("is_winner") is False:
+        return "未中"
+    return "-"
+
+
+class _SettlementSnapshotDialog(QDialog):
+    def __init__(self, record: SettlementLedgerResult, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"结算快照详情 #{record.id}")
+        self.resize(980, 680)
+
+        layout = QVBoxLayout(self)
+        self._summary_label = QLabel(self._build_summary(record))
+        self._summary_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self._summary_label)
+
+        self._empty_label = QLabel("")
+        self._empty_label.setObjectName("snapshotEmptyLabel")
+        layout.addWidget(self._empty_label)
+
+        self._items_table = QTableWidget(0, 6)
+        self._items_table.setHorizontalHeaderLabels(
+            ["投注类型", "投注内容", "金额", "判定结果", "命中号码或原因", "不支持说明"]
+        )
+        self._items_table.verticalHeader().setVisible(False)
+        self._items_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._items_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table_header = self._items_table.horizontalHeader()
+        for col in range(5):
+            table_header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        table_header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self._items_table, stretch=2)
+
+        self._raw_snapshot = QPlainTextEdit()
+        self._raw_snapshot.setReadOnly(True)
+        self._raw_snapshot.setPlainText(_snapshot_json(record.result_snapshot))
+        layout.addWidget(self._raw_snapshot, stretch=2)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._load_items(record.result_snapshot)
+
+    def _build_summary(self, record: SettlementLedgerResult) -> str:
+        return (
+            f"订单 ID：{record.order_id}    "
+            f"地区：{record.region}    "
+            f"期号：{record.issue_number}    "
+            f"draw_id：{record.draw_id}    "
+            f"结算时间：{record.settled_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"总明细数：{record.total_items}    "
+            f"命中数：{record.hit_count}    "
+            f"未命中数：{record.miss_count}    "
+            f"不支持数：{record.unsupported_count}    "
+            f"总金额：{_money(record.total_amount)}"
+        )
+
+    def _load_items(self, snapshot: object) -> None:
+        if not isinstance(snapshot, dict):
+            self._show_empty_snapshot()
+            return
+        items = snapshot.get("items")
+        if not isinstance(items, list) or not items:
+            self._show_empty_snapshot()
+            return
+
+        self._items_table.setRowCount(len(items))
+        for row_idx, item in enumerate(items):
+            if not isinstance(item, dict):
+                self._set_item_row(row_idx, ["-", "-", "-", "格式不完整", "-", str(item)])
+                continue
+            reason = _dash(item.get("reason"))
+            unsupported_reason = reason if item.get("is_supported") is False else "-"
+            matched_or_reason = _dash(item.get("matched_number")) if item.get("matched_number") else reason
+            self._set_item_row(
+                row_idx,
+                [
+                    _dash(item.get("bet_type")),
+                    _dash(item.get("selection")),
+                    _dash(item.get("amount")),
+                    _snapshot_result_text(item),
+                    matched_or_reason,
+                    unsupported_reason,
+                ],
+            )
+
+    def _set_item_row(self, row_idx: int, values: list[str]) -> None:
+        for col_idx, value in enumerate(values):
+            item = QTableWidgetItem(value)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._items_table.setItem(row_idx, col_idx, item)
+
+    def _show_empty_snapshot(self) -> None:
+        self._empty_label.setText("快照数据为空或格式不完整。")
+        self._items_table.setRowCount(0)
+
+
 class SettlementLedgerPage(QWidget):
     def __init__(
         self,
@@ -75,6 +190,7 @@ class SettlementLedgerPage(QWidget):
         self._excel_export_service = excel_export_service or ExcelExportService(self._order_service._session_factory)
         self._page = 1
         self._total = 0
+        self._row_record_ids: list[int] = []
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
@@ -130,8 +246,7 @@ class SettlementLedgerPage(QWidget):
             btn.clicked.connect(handler)
             row.addWidget(btn)
         self._btn_snapshot_detail = QPushButton("查看结算快照详情")
-        mark_unavailable(self._btn_snapshot_detail)
-        self._btn_snapshot_detail.clicked.connect(self._on_snapshot_detail_disabled)
+        self._btn_snapshot_detail.clicked.connect(self._on_snapshot_detail)
         row.addWidget(self._btn_snapshot_detail)
         row.addStretch(1)
         return row
@@ -141,7 +256,7 @@ class SettlementLedgerPage(QWidget):
         self._lbl_total = QLabel()
         self._lbl_displayed = QLabel()
         self._lbl_readonly = QLabel(
-            "只读流水：本页面不修改订单状态，不触发重新结算；完整快照详情查看暂未开放。"
+            "只读流水：本页面不修改订单状态，不触发重新结算；快照详情直接展示正式结算保存时的数据。"
         )
         self._lbl_readonly.setObjectName("hintLabel")
         row.addWidget(self._lbl_total)
@@ -275,8 +390,10 @@ class SettlementLedgerPage(QWidget):
         return True
 
     def _fill_table(self, rows: list[SettlementLedgerResult]) -> None:
+        self._row_record_ids = []
         self._table.setRowCount(len(rows))
         for row_idx, record in enumerate(rows):
+            self._row_record_ids.append(record.id)
             settlement_time = record.settled_at
             log_text = record.operation_log_description or "-"
             shown_log = log_text if len(log_text) <= 80 else log_text[:77] + "..."
@@ -357,14 +474,28 @@ class SettlementLedgerPage(QWidget):
         QMessageBox.information(self, "导出 Excel", _export_success_message(result))
         self._lbl_total.setText(f"导出成功：{result.file_name}")
 
-    def _on_snapshot_detail_disabled(self) -> None:
-        self._lbl_total.setText(
-            unavailable_text(
-                "结算快照详情查看",
-                "正式结算已保存快照，当前测试版先提供结算历史列表和 Excel 导出。",
-                "后续版本会增加明细弹窗，不会重新计算历史订单。",
-            )
-        )
+    def _selected_record_id(self) -> int | None:
+        rows = self._table.selectionModel().selectedRows() if self._table.selectionModel() else []
+        if not rows:
+            return None
+        row = rows[0].row()
+        if row < 0 or row >= len(self._row_record_ids):
+            return None
+        return self._row_record_ids[row]
+
+    def _on_snapshot_detail(self) -> None:
+        record_id = self._selected_record_id()
+        if record_id is None:
+            self._lbl_total.setText("请先选择一条结算记录。")
+            QMessageBox.warning(self, "结算快照详情", "请先选择一条结算记录。")
+            return
+        record = self._settlement_service.get_settlement_record(record_id)
+        if record is None:
+            self._lbl_total.setText("选中的结算记录已不存在，请刷新后重试。")
+            QMessageBox.warning(self, "结算快照详情", "选中的结算记录已不存在。")
+            return
+        dialog = _SettlementSnapshotDialog(record, self)
+        dialog.exec()
 
     def _prev_page(self) -> None:
         if self._page > 1:

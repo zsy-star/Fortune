@@ -134,7 +134,7 @@ def test_operation_log_page_does_not_expose_clear_log_button(session_factory) ->
     assert "清空日志等高风险维护功能暂未开放" in "\n".join(_texts(page, QLabel))
 
 
-def test_high_risk_and_snapshot_unavailable_handlers_are_explicit(session_factory) -> None:
+def test_high_risk_handler_is_explicit_and_snapshot_detail_is_read_only(session_factory) -> None:
     app()
     log_page = OperationLogPage(log_service=LogService(session_factory))
     log_page._on_clear_disabled()
@@ -142,10 +142,9 @@ def test_high_risk_and_snapshot_unavailable_handlers_are_explicit(session_factor
     assert "审计策略" in log_page._lbl_total.text()
 
     ledger_page = SettlementLedgerPage(order_service=OrderService(session_factory))
-    assert not ledger_page._btn_snapshot_detail.isEnabled()
-    assert ledger_page._btn_snapshot_detail.toolTip() == UNAVAILABLE_TOOLTIP
-    ledger_page._on_snapshot_detail_disabled()
-    assert "当前测试版暂未开放：结算快照详情查看" in ledger_page._lbl_total.text()
+    assert ledger_page._btn_snapshot_detail.isEnabled()
+    assert ledger_page._btn_snapshot_detail.text() == "查看结算快照详情"
+    assert "快照详情直接展示正式结算保存时的数据" in ledger_page._lbl_readonly.text()
 
 
 def test_draw_history_manual_maintenance_is_opened_safely(session_factory) -> None:

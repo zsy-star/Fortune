@@ -3,19 +3,23 @@ from __future__ import annotations
 import inspect
 import os
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QDate
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QWidget
 
 from models import OperationLog, Order, SettlementRecord
 from schemas.draw_schema import LotteryDrawCreate
 from schemas.order_schema import OrderCreate, OrderItemCreate
+from schemas.settlement_schema import SettlementLedgerResult
 from services.draw_service import DrawService
 from services.log_service import LogService
 from services.order_service import OrderService
 from services.settlement_service import SettlementService
+import ui.pages.settlement_ledger_page as settlement_ledger_module
+from ui.pages.settlement_ledger_page import _SettlementSnapshotDialog
 from ui.pages.settlement_ledger_page import SettlementLedgerPage
 
 
@@ -85,6 +89,31 @@ def make_page(session_factory) -> SettlementLedgerPage:
     )
 
 
+def make_ledger_result(snapshot) -> SettlementLedgerResult:
+    now = datetime(2026, 6, 12, 10, 30, 0)
+    return SettlementLedgerResult(
+        id=9,
+        order_id=101,
+        draw_id=202,
+        operation_log_id=None,
+        order_no="ORD-SNAPSHOT",
+        customer_name="客户",
+        region="澳门",
+        order_status="settled",
+        total_amount=Decimal("60.00"),
+        settled_at=now,
+        issue_number="162",
+        total_items=3,
+        hit_count=1,
+        miss_count=1,
+        unsupported_count=1,
+        result_snapshot=snapshot,
+        order_created_at=now,
+        order_updated_at=now,
+        operation_log_description=None,
+    )
+
+
 def test_settlement_ledger_page_empty_database_shows_empty_state(session_factory) -> None:
     app()
     page = make_page(session_factory)
@@ -93,6 +122,106 @@ def test_settlement_ledger_page_empty_database_shows_empty_state(session_factory
     assert page._lbl_total.text() == "暂无结算记录"
     assert not page._btn_prev.isEnabled()
     assert not page._btn_next.isEnabled()
+
+
+def test_settlement_ledger_page_exposes_snapshot_detail_entry(session_factory) -> None:
+    app()
+    page = make_page(session_factory)
+
+    assert page._btn_snapshot_detail.text() == "查看结算快照详情"
+    assert page._btn_snapshot_detail.isEnabled()
+
+
+def test_settlement_ledger_snapshot_detail_requires_selected_record(session_factory, monkeypatch) -> None:
+    app()
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: None)
+    page = make_page(session_factory)
+
+    page._on_snapshot_detail()
+
+    assert page._lbl_total.text() == "请先选择一条结算记录。"
+
+
+def test_settlement_ledger_snapshot_detail_opens_selected_record(session_factory, monkeypatch) -> None:
+    app()
+    order_service = OrderService(session_factory)
+    order = create_order(order_service, customer="快照客户", region="澳门", amount="10")
+    settle_order(session_factory, order.id, order.order_no)
+    opened: list[SettlementLedgerResult] = []
+
+    class FakeSnapshotDialog:
+        def __init__(self, record, parent=None):
+            opened.append(record)
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(settlement_ledger_module, "_SettlementSnapshotDialog", FakeSnapshotDialog)
+
+    page = make_page(session_factory)
+    page._table.selectRow(0)
+    page._on_snapshot_detail()
+
+    assert len(opened) == 1
+    assert opened[0].order_id == order.id
+    assert opened[0].result_snapshot["items"][0]["selection"] == "01"
+
+
+def test_settlement_snapshot_dialog_displays_hit_miss_and_unsupported_items() -> None:
+    app()
+    dialog = _SettlementSnapshotDialog(
+        make_ledger_result(
+            {
+                "items": [
+                    {
+                        "bet_type": "特码",
+                        "selection": "01",
+                        "amount": "10.00",
+                        "is_supported": True,
+                        "is_winner": True,
+                        "matched_number": "01",
+                        "reason": "特码 01 命中号码 01",
+                    },
+                    {
+                        "bet_type": "特码",
+                        "selection": "02",
+                        "amount": "20.00",
+                        "is_supported": True,
+                        "is_winner": False,
+                        "matched_number": None,
+                        "reason": "特码 01 未命中号码 02",
+                    },
+                    {
+                        "bet_type": "连肖",
+                        "selection": "马,蛇",
+                        "amount": "30.00",
+                        "is_supported": False,
+                        "is_winner": None,
+                        "matched_number": None,
+                        "reason": "暂不支持玩法",
+                    },
+                ]
+            }
+        )
+    )
+
+    assert "订单 ID：101" in dialog._summary_label.text()
+    assert "draw_id：202" in dialog._summary_label.text()
+    assert dialog._items_table.rowCount() == 3
+    assert dialog._items_table.item(0, 3).text() == "命中"
+    assert dialog._items_table.item(1, 3).text() == "未中"
+    assert dialog._items_table.item(2, 3).text() == "不支持"
+    assert dialog._items_table.item(2, 5).text() == "暂不支持玩法"
+    assert '"selection": "01"' in dialog._raw_snapshot.toPlainText()
+
+
+def test_settlement_snapshot_dialog_handles_empty_or_malformed_snapshot() -> None:
+    app()
+    dialog = _SettlementSnapshotDialog(make_ledger_result({}))
+
+    assert dialog._items_table.rowCount() == 0
+    assert "快照数据为空或格式不完整" in dialog._empty_label.text()
+    assert "快照数据为空或格式不完整" in dialog._raw_snapshot.toPlainText()
 
 
 def test_settlement_ledger_page_lists_only_settled_orders_with_log_summary(session_factory) -> None:

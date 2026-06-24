@@ -107,6 +107,11 @@ class SettlementService:
             record = SettlementRecordRepository(session).get_by_order_id(order_id)
             return self._to_ledger_result(record) if record else None
 
+    def get_settlement_record(self, record_id: int) -> SettlementLedgerResult | None:
+        with self._session_factory() as session:
+            record = SettlementRecordRepository(session).get(record_id)
+            return self._to_ledger_result(record) if record else None
+
     def commit_order_settlement(self, order_id: int, draw_id: int) -> OrderSettlementCommitResult:
         with self._session_factory() as session:
             try:
