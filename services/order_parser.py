@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import itertools
 import re
 from dataclasses import dataclass, field
 
@@ -216,6 +217,8 @@ class ParseResult:
     original_text: str = ""  # 原始输入文本（调用方可回填）
     # 多生肖时每项为 (生肖名, 号码元组)；单类别为空列表
     zodiac_groups: list[tuple[str, tuple[int, ...]]] = field(default_factory=list)
+    # 复试连肖专用：用户指定的连数列表，如 (3, 4, 5)
+    fushi_lian_sizes: tuple[int, ...] = ()
 
 
 # ======================================================================
@@ -377,7 +380,29 @@ def _try_parse_tuo_zodiacs(text: str) -> list[tuple[str, tuple[int, ...]]] | Non
 
 
 # ── "各" / "各数" 分隔符正则 ──
-_SEP_PATTERN = re.compile(r"(?:各|每)(?:数|注)?")
+_SEP_PATTERN = re.compile(r"(?:各|每)(?:数|注)?|打")
+
+# ── 复试连肖格式: "牛鸡猪狗虎复试3.4.5连各组50" ──
+_FUSHI_PATTERN = re.compile(
+    r"^(.+?)复试(\d+(?:[\.。]\d+)*)连各组(\d+(?:\.\d+)?)$"
+)
+
+# ── bet 类型中缀: 可出现在类别名后面的投注类型关键词 ──
+_BET_TYPE_INFIX: list[str] = sorted(
+    ["平特一肖", "平特一尾", "特码波色", "特码两面",
+     "包半波", "六肖中特", "特码", "平码", "连尾"],
+    key=len, reverse=True,  # 长优先
+)
+
+
+def _strip_bet_type_infix(category_text: str) -> tuple[str, str]:
+    """从类别文本末尾剥离投注类型关键词。返回 (剩余类别名, bet_type)。"""
+    for bt in _BET_TYPE_INFIX:
+        if category_text.endswith(bt):
+            remaining = category_text[:-len(bt)].strip()
+            if remaining:  # 剥离后还有内容（如 "蛇"、"红波"）
+                return remaining, bt
+    return category_text, ""
 
 
 def parse_order(text: str) -> ParseResult:
@@ -406,9 +431,9 @@ def parse_order(text: str) -> ParseResult:
 
     # ── 提取地域前缀 ──
     region = ""
-    for prefix in ("澳门", "香港"):
+    for prefix, full_name in (("澳门", "澳门"), ("澳", "澳门"), ("香港", "香港"), ("港", "香港")):
         if text.startswith(prefix):
-            region = prefix
+            region = full_name
             text = text[len(prefix):].strip()
             break
 
@@ -417,10 +442,15 @@ def parse_order(text: str) -> ParseResult:
     _BET_PREFIXES = [
         ("平特一肖", "平特一肖"),
         ("平特一尾", "平特一尾"),
+        ("特码波色", "特码波色"),
+        ("特码两面", "特码两面"),
+        ("六肖中特", "六肖中特"),
+        ("包半波", "包半波"),
         ("平码", "平码"),
-        ("不中", "不中"),
         ("连尾", "连尾"),
-    ]
+        ("不中", "不中"),
+        ("特码", "特码"),
+    ]  # 长优先，避免 "特码" 截胡 "特码波色"
     for prefix, bt in _BET_PREFIXES:
         if text.startswith(prefix):
             bet_type_override = bt
@@ -448,18 +478,71 @@ def parse_order(text: str) -> ParseResult:
                 error=f"号码 {num} 超出范围 (1-49)",
             )
 
+    # ── 0b. 复试连肖: 牛鸡猪狗虎复试3.4.5连各组50 ──
+    fushi_m = _FUSHI_PATTERN.match(text)
+    if fushi_m:
+        zodiac_text = fushi_m.group(1)
+        lian_str = fushi_m.group(2)
+        amount = float(fushi_m.group(3))
+
+        if amount <= 0:
+            return ParseResult(region=region,
+                success=False,
+                error=f"复试金额必须大于 0，当前: {amount}",
+            )
+
+        groups = _parse_zodiac_groups(zodiac_text)
+        if not groups:
+            return ParseResult(region=region,
+                success=False,
+                error=f"复试格式中无法识别生肖: 「{zodiac_text}」",
+            )
+
+        lian_sizes = [int(s) for s in re.split(r"[\.。]", lian_str) if s]
+        zc = len(groups)
+        for n in lian_sizes:
+            if n < 2 or n > zc:
+                return ParseResult(region=region,
+                    success=False,
+                    error=f"复试连数 {n} 无效（最少2连，最多{zc}连，当前{len(groups)}个生肖）",
+                )
+
+        total_combos = sum(
+            len(list(itertools.combinations(groups, n))) for n in lian_sizes
+        )
+        all_nums = tuple(sorted({n for _, ns in groups for n in ns}))
+
+        return ParseResult(
+            region=region,
+            success=True,
+            category="复试连肖",
+            numbers=all_nums,
+            amount=amount,
+            total=amount * total_combos,
+            zodiac_groups=groups,
+            fushi_lian_sizes=tuple(lian_sizes),
+        )
+
     # ── 1. 查找 "各/各数/每/每注" 分隔符 ──
     sep_m = _SEP_PATTERN.search(text)
     if not sep_m:
         # 无分隔符：尝试末尾金额（旧格式兜底 / 省略「各」的快捷格式「兔10」）
         amount, category_text = _extract_amount(text)
+        # 清理末尾残留的分隔关键字（"蛇打" → "蛇"）
+        category_text = re.sub(r'(打|各|各数|每|每注)$', '', category_text).strip()
         if amount == 0:
             return ParseResult(region=region,
                 success=False,
-                error=f"未找到「各/每」分隔符，且无法提取末尾金额: {text}",
+                error=f"未找到「各/每/打」分隔符，且无法提取末尾金额: {text}",
             )
     else:
         category_text = text[: sep_m.start()].strip()
+
+        # ── 检查 bet 类型中缀（如 "蛇平特一肖打1000"）──
+        category_text, infix_bt = _strip_bet_type_infix(category_text)
+        if infix_bt and not bet_type_override:
+            bet_type_override = infix_bt
+
         amount_str = text[sep_m.end() :].strip()
         # 去除可选的 "元" 后缀
         amount_str = re.sub(r"元$", "", amount_str).strip()
@@ -645,28 +728,160 @@ def _zodiac_consume_len(text: str) -> int:
 # ======================================================================
 
 
-def parse_lines(text: str) -> list[ParseResult]:
-    """解析多行文本，每行独立解析。空行忽略。
+def _normalize_line(text: str) -> str | None:
+    """清洗一行自然语言口语订单，转换为标准格式。无法识别返回 None。
 
-    支持一行多单：逗号/中文逗号分隔，且两侧都有「各/每」时才拆分。
+    >>> _normalize_line("张二，澳门码，09号，45号，以上二个数各5元")
+    '澳门09,45各5'
+    >>> _normalize_line("01号一10元")
+    '01各10'
+    >>> _normalize_line("共计40")
+    None
+    """
+    t = text.strip()
+    if not t:
+        return None
+
+    # 丢弃仅有"共计NN"的行
+    if re.match(r'^共计\s*\d+$', t):
+        return None
+
+    # 去掉开头的「人名，」/「人名、」（2-3个中文字 + 中文逗号）
+    t = re.sub(r'^[^\d\s澳门香港澳港各每打连复试]{2,4}[，,]\s*', '', t)
+
+    # 地区口语：澳门码 / 香港码 → 澳门 / 香港
+    t = re.sub(r'(澳门|香港)码', r'\1', t)
+
+    # "，N号不要" / "，N,N号除外" → " 不要 N,N"（翻转给后续排除逻辑用）
+    t = re.sub(
+        r'(?:^|[，,]\s*)(\d{1,2}(?:[，,]\d{1,2})*)号(不要|除外|排除|去掉|除了)',
+        r' \2 \1',
+        t,
+    )
+
+    # "NN号" / "NN号码" → "NN"
+    t = re.sub(r'(\d+)号(?:码)?', r'\1', t)
+
+    # "以上N个数各X元" / "以上N个各X元" → 各X
+    # 先转中文数字：五→5, 六→6, 七→7, 八→8, 九→9, 十→10
+    for cn, nb in [("五", "5"), ("六", "6"), ("七", "7"), ("八", "8"), ("九", "9"), ("十", "10")]:
+        t = t.replace(f'以上{cn}个', f'以上{nb}个')
+    t = re.sub(r'以上(\d+)个(?:数)?各(\d+)', r'各\2', t)
+
+    # "各X元" / "每X元" → "各X"
+    t = re.sub(r'(各|每)(\d+)元', r'\1\2', t)
+
+    # "一X元" → "各X"  (口语 "01号一10元" → "01各10")
+    t = re.sub(r'一(\d+)元', r'各\1', t)
+
+    # 中文逗号、顿号 → 英文逗号（号码分隔）
+    t = t.replace('，', ',').replace('、', ',')
+
+    # 去掉首尾逗号（"澳门,09,45,各5" 保留逗号；",09,45,各5" 清理首部逗号）
+    t = re.sub(r'^[,\s]+', '', t)
+    t = re.sub(r'[,\s]+$', '', t)
+    t = re.sub(r',\s*,', ',', t)  # 双逗号合并
+
+    # 残留的"元"字清理
+    t = re.sub(r'(\d)元', r'\1', t)
+
+    t = t.strip()
+    if not t:
+        return None
+
+    return t
+
+
+def parse_lines(text: str) -> list[ParseResult]:
+    """解析多行文本，支持上下文标题行和口语自然语言清洗。
+
+    标题行格式: [地域]投注类型   如 "澳平特一肖"、"港特码"
+    数据行自动继承标题行的地域和投注类型。
+
+    口语清洗示例:
+        张二，澳门码，09号，45号，以上二个数各5元  →  澳门09,45各5
+        01号一10元                                    →  01各10
+        共计40                                        →  (丢弃)
     """
     results: list[ParseResult] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
+    ctx_region = ""
+    ctx_bet_type = ""
+
+    # 所有可作为标题的投注类型（长优先匹配）
+    _ALL_BT = sorted(
+        {"平特一肖", "平特一尾", "特码波色", "特码两面",
+         "包半波", "六肖中特", "特码", "平码", "不中", "连尾"},
+        key=len, reverse=True,
+    )
+
+    for raw_line in text.splitlines():
+        raw_line = raw_line.strip()
+        if not raw_line:
             continue
-        # 一行多单：兔各10，马各20 → 拆为两单
-        sub_lines = [line]
-        if "各" in line or "每" in line:
-            parts = re.split(r"[，,]", line)
-            if len(parts) >= 2 and all(
-                re.search(r"(?:各|每)(?:数|注)?", p) for p in parts
-            ):
-                sub_lines = parts
-        for sub in sub_lines:
-            sub = sub.strip()
-            if sub:
-                results.append(parse_order(sub))
+
+        # ── 按句号分号拆子句，逐条清洗 ──
+        sub_lines: list[str] = []
+        for sub in re.split(r'[。；;]', raw_line):
+            normalized = _normalize_line(sub)
+            if normalized:
+                sub_lines.append(normalized)
+        if not sub_lines:
+            continue
+
+        for line in sub_lines:
+
+            # ── 尝试解析为标题行 ──
+            h_region = ""
+            h_bt = ""
+            remaining = line
+            for prefix, full_name in (("澳门", "澳门"), ("澳", "澳门"), ("香港", "香港"), ("港", "香港")):
+                if remaining.startswith(prefix):
+                    h_region = full_name
+                    remaining = remaining[len(prefix):].strip()
+                    break
+            for bt in _ALL_BT:
+                if remaining.startswith(bt):
+                    h_bt = bt
+                    remaining = remaining[len(bt):].strip()
+                    break
+
+            if h_bt and not remaining:
+                # 纯标题行：更新上下文，不产生输出
+                ctx_region = h_region or ctx_region
+                ctx_bet_type = h_bt
+                continue
+
+            # ── 数据行：继承上下文 ──
+            if ctx_region and not any(line.startswith(p) for p in ("澳门", "香港", "澳", "港")):
+                line = ctx_region + line
+            if ctx_bet_type and not any(line.startswith(bt) for bt in _ALL_BT):
+                # 投注类型要紧挨地域之后（parse_order 先剥地域再剥投注类型）
+                inserted = False
+                for prefix in ("澳门", "香港", "澳", "港"):
+                    if line.startswith(prefix):
+                        line = prefix + ctx_bet_type + line[len(prefix):]
+                        inserted = True
+                        break
+                if not inserted:
+                    line = ctx_bet_type + line
+
+            # ── 一行多单：逗号/中文逗号分隔 ──
+            sub_parts = [line]
+            sep_keywords = ("各", "每", "打")
+            if any(kw in line for kw in sep_keywords):
+                parts = re.split(r"[，,]", line)
+                if len(parts) >= 2 and all(
+                    re.search(_SEP_PATTERN, p) for p in parts
+                ):
+                    sub_parts = parts
+            for sub in sub_parts:
+                sub = sub.strip()
+                if sub:
+                    r = parse_order(sub)
+                    if r.success and sub != line:
+                        r.original_text = sub.strip()
+                    results.append(r)
+
     return results
 
 
@@ -693,6 +908,38 @@ def _reverse_zodiac(numbers: tuple[int, ...]) -> str:
     return " ".join(parts)
 
 
+def _format_fushi(result: ParseResult, amount_display: str) -> str:
+    """格式化复试连肖结果，展示组合明细。"""
+    groups = result.zodiac_groups
+    zodiac_names = [name for name, _ in groups]
+    all_nums = list(result.numbers)  # sorted
+    lian_sizes = list(result.fushi_lian_sizes) if result.fushi_lian_sizes else []
+
+    # 计算每个连数的组合数
+    lian_breakdown: list[tuple[int, int]] = []  # [(连数, 组合数), ...]
+    total_combos = 0
+    for n in lian_sizes:
+        cnt = len(list(itertools.combinations(groups, n)))
+        lian_breakdown.append((n, cnt))
+        total_combos += cnt
+
+    zc = len(groups)
+    lian_label = ".".join(str(n) for n in lian_sizes)
+    lines = [
+        f"复试连肖: {' '.join(zodiac_names)}  ({zc}个生肖, {lian_label}连)",
+        f"号码: {' '.join(f'{n:02d}' for n in all_nums)}",
+        "",
+    ]
+    for n, cnt in lian_breakdown:
+        sub_total = cnt * result.amount
+        sub_display = f"{sub_total:g}" if sub_total != int(sub_total) else f"{int(sub_total)}"
+        lines.append(f"  {n}连: {cnt}组 × {amount_display}元 = {sub_display}元")
+    lines.append("")
+    total_display = f"{result.total:g}" if result.total != int(result.total) else f"{int(result.total)}"
+    lines.append(f"  合计: {total_combos}组, 总{total_display}元")
+    return "\n".join(lines)
+
+
 def format_result(result: ParseResult) -> str:
     """将单条解析结果格式化为输出文本。
 
@@ -704,6 +951,10 @@ def format_result(result: ParseResult) -> str:
 
     amount_display = f"{result.amount:g}" if result.amount != int(result.amount) else f"{int(result.amount)}"
     prefix = f"{result.region}：特码：" if result.region else ""
+
+    # ── 复试连肖专用展示 ──
+    if result.category == "复试连肖" and result.zodiac_groups:
+        return _format_fushi(result, amount_display)
 
     groups = result.zodiac_groups
     if len(groups) >= 2:
