@@ -17,12 +17,12 @@ from core.database import SessionLocal
 from schemas.excel_export_schema import ExcelExportResult
 from schemas.log_schema import OperationLogResult
 from schemas.order_schema import OrderSummary
+from schemas.settlement_schema import SettlementLedgerResult
 from services.log_service import LogService
 from services.order_service import OrderService
 
 DEFAULT_EXPORT_DIR = Path("exports")
 ORDER_STATUS_VOIDED = "voided"
-ORDER_STATUS_SETTLED = "settled"
 
 
 class ExcelExportError(RuntimeError):
@@ -127,6 +127,7 @@ class ExcelExportService:
             end_date=end_date,
         )
         headers = [
+            "结算ID",
             "订单ID",
             "订单号",
             "客户",
@@ -135,27 +136,32 @@ class ExcelExportService:
             "投注总额",
             "结算时间",
             "开奖期号",
+            "命中数量",
+            "未中数量",
+            "不支持数量",
             "最近操作日志摘要",
             "创建时间",
             "更新时间",
         ]
         rows = []
-        for order in orders:
-            log = self._latest_settlement_log(order)
-            settlement_time = log.created_at if log else order.updated_at
+        for record in orders:
             rows.append(
                 [
-                    order.id,
-                    order.order_no,
-                    _dash(order.customer_name),
-                    order.region,
-                    order.status,
-                    _decimal_to_float(order.total_amount),
-                    settlement_time,
-                    "-",
-                    log.description if log else "-",
-                    order.created_at,
-                    order.updated_at,
+                    record.id,
+                    record.order_id,
+                    record.order_no,
+                    _dash(record.customer_name),
+                    record.region,
+                    record.order_status,
+                    _decimal_to_float(record.total_amount),
+                    record.settled_at,
+                    record.issue_number,
+                    record.hit_count,
+                    record.miss_count,
+                    record.unsupported_count,
+                    record.operation_log_description or "-",
+                    record.order_created_at,
+                    record.order_updated_at,
                 ]
             )
         return self._export_workbook(
@@ -296,8 +302,8 @@ class ExcelExportService:
         keyword: str | None,
         start_date: datetime | None,
         end_date: datetime | None,
-    ) -> list[OrderSummary]:
-        rows: list[OrderSummary] = []
+    ) -> list[SettlementLedgerResult]:
+        rows: list[SettlementLedgerResult] = []
         offset = 0
         page_size = 200
         while True:
@@ -313,7 +319,7 @@ class ExcelExportService:
             if len(page) < page_size:
                 break
             offset += page_size
-        return [order for order in rows if order.status == ORDER_STATUS_SETTLED]
+        return rows
 
     def _list_logs_for_export(
         self,

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from schemas.log_schema import OperationLogResult
 from services.excel_export_service import ExcelExportService
 from services.log_service import LogService
+from ui.unavailable import unavailable_text
 
 PAGE_SIZE = 20
 
@@ -140,7 +141,10 @@ class OperationLogPage(QWidget):
         row = QHBoxLayout()
         self._lbl_total = QLabel()
         self._lbl_displayed = QLabel()
+        self._lbl_safety = QLabel("清空日志等高风险维护功能暂未开放；后续需要权限系统和审计策略支持。")
+        self._lbl_safety.setObjectName("safetyHint")
         row.addWidget(self._lbl_total)
+        row.addWidget(self._lbl_safety)
         row.addStretch(1)
         row.addWidget(self._lbl_displayed)
         return row
@@ -362,7 +366,13 @@ class OperationLogPage(QWidget):
             self.reload_data()
 
     def _on_clear_disabled(self) -> None:
-        self._lbl_total.setText("清空日志暂未开放")
+        self._lbl_total.setText(
+            unavailable_text(
+                "清空操作日志",
+                "操作日志用于追溯订单、结算、备份恢复等关键行为，当前测试版不提供清空入口。",
+                "后续需要权限系统和审计策略后再评估。",
+            )
+        )
 
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(
@@ -400,6 +410,9 @@ class OperationLogPage(QWidget):
             QLabel {
                 font-size: 13px;
                 color: #2c3e50;
+            }
+            QLabel#safetyHint {
+                color: #7f8c8d;
             }
             QLineEdit, QDateEdit {
                 padding: 4px 6px;

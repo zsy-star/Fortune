@@ -23,11 +23,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from schemas.log_schema import OperationLogResult
-from schemas.order_schema import OrderSummary
+from schemas.settlement_schema import SettlementLedgerResult
 from services.excel_export_service import ExcelExportService
 from services.log_service import LogService
 from services.order_service import OrderService
+from services.settlement_service import SettlementService
+from ui.unavailable import mark_unavailable, unavailable_text
 
 PAGE_SIZE = 20
 
@@ -63,11 +64,14 @@ class SettlementLedgerPage(QWidget):
         parent=None,
         order_service: OrderService | None = None,
         log_service: LogService | None = None,
+        settlement_service: SettlementService | None = None,
         excel_export_service: ExcelExportService | None = None,
     ):
         super().__init__(parent)
         self._order_service = order_service or OrderService()
-        self._log_service = log_service or LogService()
+        session_factory = self._order_service._session_factory
+        self._log_service = log_service or LogService(session_factory)
+        self._settlement_service = settlement_service or SettlementService(session_factory)
         self._excel_export_service = excel_export_service or ExcelExportService(self._order_service._session_factory)
         self._page = 1
         self._total = 0
@@ -125,6 +129,10 @@ class SettlementLedgerPage(QWidget):
                 self._btn_export_excel = btn
             btn.clicked.connect(handler)
             row.addWidget(btn)
+        self._btn_snapshot_detail = QPushButton("查看结算快照详情")
+        mark_unavailable(self._btn_snapshot_detail)
+        self._btn_snapshot_detail.clicked.connect(self._on_snapshot_detail_disabled)
+        row.addWidget(self._btn_snapshot_detail)
         row.addStretch(1)
         return row
 
@@ -132,7 +140,9 @@ class SettlementLedgerPage(QWidget):
         row = QHBoxLayout()
         self._lbl_total = QLabel()
         self._lbl_displayed = QLabel()
-        self._lbl_readonly = QLabel("只读流水：本页面不修改订单状态，不触发重新结算。")
+        self._lbl_readonly = QLabel(
+            "只读流水：本页面不修改订单状态，不触发重新结算；完整快照详情查看暂未开放。"
+        )
         self._lbl_readonly.setObjectName("hintLabel")
         row.addWidget(self._lbl_total)
         row.addWidget(self._lbl_readonly)
@@ -149,9 +159,10 @@ class SettlementLedgerPage(QWidget):
         return line
 
     def _build_table(self) -> QTableWidget:
-        self._table = QTableWidget(0, 11)
+        self._table = QTableWidget(0, 13)
         self._table.setHorizontalHeaderLabels(
             [
+                "结算ID",
                 "订单ID",
                 "订单号",
                 "客户",
@@ -159,7 +170,8 @@ class SettlementLedgerPage(QWidget):
                 "状态",
                 "投注总额",
                 "结算时间",
-                "开奖期号（暂未记录）",
+                "开奖期号",
+                "判定摘要",
                 "最近操作日志",
                 "创建时间",
                 "更新时间",
@@ -170,10 +182,10 @@ class SettlementLedgerPage(QWidget):
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         header = self._table.horizontalHeader()
-        for col in (0, 2, 3, 4, 5, 6, 7, 9, 10):
+        for col in (0, 1, 3, 4, 5, 6, 7, 8, 9, 11, 12):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(10, QHeaderView.ResizeMode.Stretch)
         return self._table
 
     def _build_pager(self) -> QHBoxLayout:
@@ -203,7 +215,7 @@ class SettlementLedgerPage(QWidget):
             return
         region, keyword, start_dt, end_dt = self._filters()
         try:
-            self._total = self._order_service.count_settlement_ledger(
+            self._total = self._settlement_service.count_settlement_records(
                 region=region,
                 keyword=keyword,
                 start_date=start_dt,
@@ -212,7 +224,7 @@ class SettlementLedgerPage(QWidget):
             max_page = max(1, (self._total + PAGE_SIZE - 1) // PAGE_SIZE)
             if self._page > max_page:
                 self._page = max_page
-            rows = self._order_service.list_settlement_ledger(
+            rows = self._settlement_service.list_settlement_records(
                 region=region,
                 keyword=keyword,
                 start_date=start_dt,
@@ -262,43 +274,38 @@ class SettlementLedgerPage(QWidget):
             return False
         return True
 
-    def _fill_table(self, rows: list[OrderSummary]) -> None:
+    def _fill_table(self, rows: list[SettlementLedgerResult]) -> None:
         self._table.setRowCount(len(rows))
-        for row_idx, order in enumerate(rows):
-            log = self._latest_settlement_log(order)
-            settlement_time = log.created_at if log else order.updated_at
-            log_text = log.description if log else "-"
+        for row_idx, record in enumerate(rows):
+            settlement_time = record.settled_at
+            log_text = record.operation_log_description or "-"
             shown_log = log_text if len(log_text) <= 80 else log_text[:77] + "..."
+            summary = (
+                f"中{record.hit_count} / 未{record.miss_count} / "
+                f"不支持{record.unsupported_count}"
+            )
             values = [
-                str(order.id),
-                order.order_no,
-                _dash(order.customer_name),
-                order.region,
-                order.status,
-                _money(order.total_amount),
+                str(record.id),
+                str(record.order_id),
+                record.order_no,
+                _dash(record.customer_name),
+                record.region,
+                record.order_status,
+                _money(record.total_amount),
                 settlement_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "-",
+                record.issue_number,
+                summary,
                 shown_log,
-                order.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-                order.updated_at.strftime("%Y-%m-%d %H:%M:%S"),
+                record.order_created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                record.order_updated_at.strftime("%Y-%m-%d %H:%M:%S"),
             ]
             for col_idx, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                alignment = Qt.AlignmentFlag.AlignLeft if col_idx == 8 else Qt.AlignmentFlag.AlignCenter
+                alignment = Qt.AlignmentFlag.AlignLeft if col_idx == 10 else Qt.AlignmentFlag.AlignCenter
                 item.setTextAlignment(alignment)
-                if col_idx == 8:
+                if col_idx == 10:
                     item.setToolTip(log_text)
                 self._table.setItem(row_idx, col_idx, item)
-
-    def _latest_settlement_log(self, order: OrderSummary) -> OperationLogResult | None:
-        logs = self._log_service.list_logs(
-            module="settlement",
-            action="commit",
-            related_type="order",
-            keyword=order.order_no,
-            limit=1,
-        )
-        return logs[0] if logs else None
 
     def _update_summary(self, displayed_count: int) -> None:
         if self._total == 0:
@@ -349,6 +356,15 @@ class SettlementLedgerPage(QWidget):
 
         QMessageBox.information(self, "导出 Excel", _export_success_message(result))
         self._lbl_total.setText(f"导出成功：{result.file_name}")
+
+    def _on_snapshot_detail_disabled(self) -> None:
+        self._lbl_total.setText(
+            unavailable_text(
+                "结算快照详情查看",
+                "正式结算已保存快照，当前测试版先提供结算历史列表和 Excel 导出。",
+                "后续版本会增加明细弹窗，不会重新计算历史订单。",
+            )
+        )
 
     def _prev_page(self) -> None:
         if self._page > 1:

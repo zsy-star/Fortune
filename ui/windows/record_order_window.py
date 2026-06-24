@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from services.order_intake_service import OrderIntakeService
 from services.order_parser import format_result, parse_lines
+from ui.unavailable import UNAVAILABLE_TOOLTIP
 
 _TABLE_COLUMNS = [
     "区域",
@@ -62,7 +63,8 @@ _CHECKBOX_LABELS = [
 
 _FOOTER_HINT = (
     "当前测试版重点支持特码类录入和结算；"
-    "其他玩法可能可录入，但暂不保证结算。"
+    "其他玩法可能可录入，但暂不保证结算；"
+    "未开放选项已禁用，不会影响当前录单保存。"
 )
 
 _UNAVAILABLE_CHECKBOXES = {"识别地区", "智能纠错", "特肖模式", "抄写法", "各->各肖"}
@@ -830,7 +832,7 @@ class RecordOrderWindow(QMainWindow):
                 btn.clicked.connect(self._on_replace_presets)
             else:
                 btn.setEnabled(False)
-                btn.setToolTip("暂未开放")
+                btn.setToolTip(UNAVAILABLE_TOOLTIP)
             toolbar.addWidget(btn)
 
         outer.addLayout(toolbar)
@@ -843,7 +845,7 @@ class RecordOrderWindow(QMainWindow):
             if label in _UNAVAILABLE_CHECKBOXES:
                 cb.setChecked(False)
                 cb.setEnabled(False)
-                cb.setToolTip("暂未开放")
+                cb.setToolTip(UNAVAILABLE_TOOLTIP)
             if label == "自动获取":
                 cb.setObjectName("autoFetchCheck")
                 self._chk_auto_fetch = cb

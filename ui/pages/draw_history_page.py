@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 from models import LotteryDraw
 from services.draw_service import DrawService
 from services.draw_sync_service import DrawSyncResult
+from ui.unavailable import mark_unavailable, unavailable_text
 from ui.workers import DrawSyncTask
 
 REGION_LOTTERY_TYPE = {"澳门": 2, "香港": 1}
@@ -104,12 +105,17 @@ class DrawHistoryPage(QWidget):
         row.addStretch(1)
         self._btn_sync_latest = QPushButton("获取最新数据")
         self._btn_sync_history = QPushButton("同步历史数据")
+        self._btn_manual_maintain = QPushButton("手工维护开奖")
         self._btn_sync_latest.setObjectName("fetchButton")
         self._btn_sync_history.setObjectName("fetchButton")
+        self._btn_manual_maintain.setObjectName("fetchButton")
         self._btn_sync_latest.clicked.connect(self._sync_latest)
         self._btn_sync_history.clicked.connect(self._open_history_sync_dialog)
+        self._btn_manual_maintain.clicked.connect(self._on_manual_maintain_disabled)
+        mark_unavailable(self._btn_manual_maintain)
         row.addWidget(self._btn_sync_latest)
         row.addWidget(self._btn_sync_history)
+        row.addWidget(self._btn_manual_maintain)
         return row
 
     def _build_table(self) -> QTableWidget:
@@ -304,6 +310,15 @@ class DrawHistoryPage(QWidget):
 
     def _on_sync_failed(self, message: str) -> None:
         self._status_label.setText(f"同步失败：{self._friendly_error(message)}")
+
+    def _on_manual_maintain_disabled(self) -> None:
+        self._status_label.setText(
+            unavailable_text(
+                "手工新增/修正开奖记录",
+                "开奖数据会影响正式结算，当前测试版仅允许从已验证同步流程写入。",
+                "后续需要权限、校验和操作日志策略后再开放。",
+            )
+        )
 
     def _set_sync_enabled(self, enabled: bool) -> None:
         self._btn_sync_latest.setEnabled(enabled)

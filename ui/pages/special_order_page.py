@@ -5,9 +5,14 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
+from ui.unavailable import mark_unavailable, unavailable_text
+
 UNAVAILABLE_MESSAGE = (
-    "当前测试版暂未开放调单持久化功能。\n"
-    "本页仅为后续连码调单功能预留，不参与正式记账、结算、导出。"
+    unavailable_text(
+        "连码调单持久化",
+        "连码调整、打印和导出需要先完成复杂玩法结算规则与审计权限。",
+        "当前请使用录单、订单详情、结算预览和结算历史完成已开放业务。",
+    )
 )
 
 
@@ -31,8 +36,7 @@ class SpecialOrderPage(QWidget):
         self._btn_adjust = QPushButton("调整")
         self._btn_export = QPushButton("导出")
         for button in (self._btn_filter, self._btn_print, self._btn_adjust, self._btn_export):
-            button.setEnabled(False)
-            button.setToolTip("当前测试版暂未开放")
+            mark_unavailable(button)
 
         root.addWidget(self._title)
         root.addWidget(self._message)

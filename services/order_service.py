@@ -17,6 +17,7 @@ from domain.exceptions import DomainError
 from domain.number_rules import normalize_number
 from models import Order, OrderItem
 from repositories.order_repository import OrderRepository
+from repositories.settlement_record_repository import SettlementRecordRepository
 from schemas.order_schema import (
     OrderAnalysisGroup,
     OrderAnalysisSummary,
@@ -28,6 +29,7 @@ from schemas.order_schema import (
     OrderSummary,
     OrderVoidResult,
 )
+from schemas.settlement_schema import SettlementLedgerResult
 from services.log_service import LogService
 
 _SELECTION_SPLIT = re.compile(r"[,，、\s]+")
@@ -247,12 +249,12 @@ class OrderService:
         end_date: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[OrderSummary]:
+    ) -> list[SettlementLedgerResult]:
         limit, offset = self._validate_limit_offset(limit, offset)
         if region is not None:
             region = normalize_region(region)
         with self._session_factory() as session:
-            orders = OrderRepository(session).list_settlement_ledger(
+            records = SettlementRecordRepository(session).list(
                 region=region,
                 keyword=keyword,
                 start_date=start_date,
@@ -260,7 +262,7 @@ class OrderService:
                 limit=limit,
                 offset=offset,
             )
-            return [self._to_summary(order) for order in orders]
+            return [self._to_settlement_ledger_result(record) for record in records]
 
     def count_settlement_ledger(
         self,
@@ -273,7 +275,7 @@ class OrderService:
         if region is not None:
             region = normalize_region(region)
         with self._session_factory() as session:
-            return OrderRepository(session).count_settlement_ledger(
+            return SettlementRecordRepository(session).count(
                 region=region,
                 keyword=keyword,
                 start_date=start_date,
@@ -470,4 +472,29 @@ class OrderService:
                 )
                 for item in order.items
             ],
+        )
+
+    def _to_settlement_ledger_result(self, record) -> SettlementLedgerResult:
+        order = record.order
+        log = record.operation_log
+        return SettlementLedgerResult(
+            id=record.id,
+            order_id=record.order_id,
+            draw_id=record.draw_id,
+            operation_log_id=record.operation_log_id,
+            order_no=order.order_no,
+            customer_name=order.customer_name,
+            region=record.region,
+            order_status=order.status,
+            total_amount=record.total_amount,
+            settled_at=record.settled_at,
+            issue_number=record.issue_number,
+            total_items=record.total_items,
+            hit_count=record.hit_count,
+            miss_count=record.miss_count,
+            unsupported_count=record.unsupported_count,
+            result_snapshot=record.result_snapshot,
+            order_created_at=order.created_at,
+            order_updated_at=order.updated_at,
+            operation_log_description=log.description if log else None,
         )

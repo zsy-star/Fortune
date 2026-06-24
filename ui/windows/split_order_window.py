@@ -15,6 +15,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ui.unavailable import mark_unavailable, unavailable_text
+
+
+SPLIT_ORDER_UNAVAILABLE_MESSAGE = unavailable_text(
+    "拆单助手",
+    "拆单需要先完成金额拆分规则、保存格式和操作审计，当前测试版仅保留入口。",
+    "当前请在录单窗口保存原始订单，避免产生未审计的拆分结果。",
+)
+
 
 class SplitOrderWindow(QMainWindow):
     """拆单助手 V0.1 — 布局参照业务工具，逻辑后续实现。"""
@@ -31,7 +40,7 @@ class SplitOrderWindow(QMainWindow):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
-        self._scope_hint = QLabel("拆单助手当前测试版暂未开放，仅为后续功能预留。")
+        self._scope_hint = QLabel(SPLIT_ORDER_UNAVAILABLE_MESSAGE)
         self._scope_hint.setObjectName("scopeHint")
         self._scope_hint.setWordWrap(True)
         root.addWidget(self._scope_hint)
@@ -62,8 +71,8 @@ class SplitOrderWindow(QMainWindow):
 
         self._btn_save = QPushButton("保存拆分结果到文件")
         self._btn_save.setObjectName("saveButton")
-        self._btn_save.setEnabled(False)
-        self._btn_save.setToolTip("当前测试版暂未开放")
+        mark_unavailable(self._btn_save)
+        self._btn_save.clicked.connect(self._on_save_results)
         root.addWidget(self._btn_save)
 
         self._apply_stylesheet()
@@ -103,11 +112,12 @@ class SplitOrderWindow(QMainWindow):
         self._btn_style = QPushButton("调整拆分结果样式")
         btn_clear = QPushButton("清空输入")
 
+        self._btn_split.clicked.connect(self._on_start_split)
+        self._btn_style.clicked.connect(self._on_style_disabled)
         btn_clear.clicked.connect(self._on_clear_input)
 
         for btn in (self._btn_split, self._btn_style):
-            btn.setEnabled(False)
-            btn.setToolTip("当前测试版暂未开放")
+            mark_unavailable(btn)
 
         for btn in (self._btn_split, self._btn_style, btn_clear):
             btn.setObjectName("actionButton")
@@ -117,7 +127,15 @@ class SplitOrderWindow(QMainWindow):
 
     def _on_start_split(self) -> None:
         self._recognize_text.setPlainText("")
-        self._result_text.setPlainText("拆单助手当前测试版暂未开放，仅为后续功能预留。")
+        self._result_text.setPlainText(SPLIT_ORDER_UNAVAILABLE_MESSAGE)
+
+    def _on_style_disabled(self) -> None:
+        self._result_text.setPlainText(
+            unavailable_text(
+                "拆分结果样式调整",
+                "样式调整依赖拆单结果，当前测试版未生成可保存的拆分数据。",
+            )
+        )
 
     def _on_clear_input(self) -> None:
         self._input_text.clear()
@@ -125,8 +143,12 @@ class SplitOrderWindow(QMainWindow):
         self._result_text.clear()
 
     def _on_save_results(self) -> None:
-        # 占位：后续接入文件保存
-        pass
+        self._result_text.setPlainText(
+            unavailable_text(
+                "保存拆分结果到文件",
+                "当前没有已审计的拆分结果可保存，保存入口保持禁用。",
+            )
+        )
 
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(

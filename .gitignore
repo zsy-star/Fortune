@@ -209,8 +209,15 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Fortune local database runtime files
+# Fortune local database and runtime files
+data/*.db
+data/*.sqlite
+data/*.sqlite3
 data/*.db-journal
 data/*.db-shm
 data/*.db-wal
 data/backups/
+exports/
+.test_tmp/
+tmp/
+temp/

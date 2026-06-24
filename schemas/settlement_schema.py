@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +49,7 @@ class OrderSettlementPreview:
 class OrderSettlementCommitResult:
     order_id: int
     draw_id: int
+    settlement_record_id: int
     region: str
     issue_number: str
     total_items: int
@@ -60,3 +62,26 @@ class OrderSettlementCommitResult:
     results: list[ItemSettlementResult]
     warnings: list[str]
     operation_log_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class SettlementLedgerResult:
+    id: int
+    order_id: int
+    draw_id: int
+    operation_log_id: int | None
+    order_no: str
+    customer_name: str | None
+    region: str
+    order_status: str
+    total_amount: Decimal
+    settled_at: datetime
+    issue_number: str
+    total_items: int
+    hit_count: int
+    miss_count: int
+    unsupported_count: int
+    result_snapshot: dict[str, Any]
+    order_created_at: datetime
+    order_updated_at: datetime
+    operation_log_description: str | None = None

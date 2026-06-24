@@ -51,6 +51,10 @@ def settlement_log_count(session_factory) -> int:
     return LogService(session_factory).count_logs(module="settlement", action="commit")
 
 
+def settlement_record_count(session_factory) -> int:
+    return SettlementService(session_factory).count_settlement_records()
+
+
 def test_commit_order_missing_order_fails(session_factory) -> None:
     draw = create_draw(DrawService(session_factory))
 
@@ -96,6 +100,7 @@ def test_commit_order_with_unsupported_bet_blocks_persistence(session_factory) -
 
     assert order_service.get_order(order.id).status == "active"
     assert settlement_log_count(session_factory) == 0
+    assert settlement_record_count(session_factory) == 0
 
 
 def test_commit_winning_special_number_updates_status_and_writes_log(session_factory) -> None:
@@ -107,6 +112,7 @@ def test_commit_winning_special_number_updates_status_and_writes_log(session_fac
 
     assert result.order_id == order.id
     assert result.draw_id == draw.id
+    assert result.settlement_record_id > 0
     assert result.region == "澳门"
     assert result.issue_number == "162"
     assert result.total_items == 1
@@ -119,6 +125,23 @@ def test_commit_winning_special_number_updates_status_and_writes_log(session_fac
     assert result.operation_log_id > 0
     assert result.results[0].is_winner is True
     assert order_service.get_order(order.id).status == "settled"
+    record = SettlementService(session_factory).get_settlement_record_by_order_id(order.id)
+    assert record is not None
+    assert record.id == result.settlement_record_id
+    assert record.order_id == order.id
+    assert record.draw_id == draw.id
+    assert record.issue_number == "162"
+    assert record.hit_count == 1
+    assert record.miss_count == 0
+    assert record.unsupported_count == 0
+    assert record.total_amount == order.total_amount
+    assert record.result_snapshot["order"]["order_no"] == order.order_no
+    assert record.result_snapshot["draw"]["issue_number"] == "162"
+    assert record.result_snapshot["settlement"]["hit_count"] == 1
+    assert record.result_snapshot["items"][0]["bet_type"] == "特码"
+    assert record.result_snapshot["items"][0]["selection"] == "01"
+    assert record.result_snapshot["items"][0]["amount"] == "10.00"
+    assert record.result_snapshot["items"][0]["is_winner"] is True
     logs = LogService(session_factory).list_logs(module="settlement", action="commit")
     assert len(logs) == 1
     assert order.order_no in logs[0].description
@@ -175,3 +198,4 @@ def test_settled_order_cannot_commit_twice(session_factory) -> None:
 
     assert order_service.get_order(order.id).status == "settled"
     assert settlement_log_count(session_factory) == 1
+    assert settlement_record_count(session_factory) == 1

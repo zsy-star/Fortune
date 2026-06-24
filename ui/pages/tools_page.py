@@ -211,7 +211,7 @@ class ToolsPage(QWidget):
         box.setObjectName("comingSoonBox")
         box.setPlainText(
             "当前测试版已开放：数据库备份/恢复、计算器。\n"
-            "其他辅助功能暂未开放。"
+            "拆单助手和其他辅助功能暂未开放；未开放入口不会写入订单、结算或文件。"
         )
         box.setMinimumHeight(160)
         return box

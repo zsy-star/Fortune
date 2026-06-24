@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
+from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from core.database import SessionLocal
-from models import LotteryDraw, Order
-from schemas.settlement_schema import OrderSettlementCommitResult, OrderSettlementPreview
+from domain.bet_types import normalize_region
+from models import LotteryDraw, Order, SettlementRecord
+from repositories.settlement_record_repository import SettlementRecordRepository
+from schemas.settlement_schema import (
+    ItemSettlementResult,
+    OrderSettlementCommitResult,
+    OrderSettlementPreview,
+    SettlementLedgerResult,
+)
 from settlement.exceptions import SettlementDataError
 from settlement.settlement_engine import SettlementEngine
 from services.log_service import LogService
@@ -49,6 +59,53 @@ class SettlementService:
 
     def preview_order_data(self, order_result, lottery_draw_result):
         return self._engine.evaluate_order(order_result, lottery_draw_result)
+
+    def list_settlement_records(
+        self,
+        *,
+        region: str | None = None,
+        keyword: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[SettlementLedgerResult]:
+        limit, offset = self._validate_limit_offset(limit, offset)
+        if region is not None:
+            region = normalize_region(region)
+        with self._session_factory() as session:
+            rows = SettlementRecordRepository(session).list(
+                region=region,
+                keyword=keyword,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit,
+                offset=offset,
+            )
+            return [self._to_ledger_result(record) for record in rows]
+
+    def count_settlement_records(
+        self,
+        *,
+        region: str | None = None,
+        keyword: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> int:
+        if region is not None:
+            region = normalize_region(region)
+        with self._session_factory() as session:
+            return SettlementRecordRepository(session).count(
+                region=region,
+                keyword=keyword,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+    def get_settlement_record_by_order_id(self, order_id: int) -> SettlementLedgerResult | None:
+        with self._session_factory() as session:
+            record = SettlementRecordRepository(session).get_by_order_id(order_id)
+            return self._to_ledger_result(record) if record else None
 
     def commit_order_settlement(self, order_id: int, draw_id: int) -> OrderSettlementCommitResult:
         with self._session_factory() as session:
@@ -103,6 +160,10 @@ class SettlementService:
         if order.status == ORDER_STATUS_SETTLED:
             raise SettlementDataError(f"订单已结算，不能重复结算：{order.order_no}")
 
+        record_repo = SettlementRecordRepository(session)
+        if record_repo.get_by_order_id(order.id) is not None:
+            raise SettlementDataError(f"订单已有结算记录，不能重复结算：{order.order_no}")
+
         preview: OrderSettlementPreview = self._engine.evaluate_order(order, draw)
         if preview.unsupported_items:
             unsupported = [
@@ -115,10 +176,28 @@ class SettlementService:
             )
 
         status_before = order.status
+        settled_at = datetime.now()
+        record = SettlementRecord(
+            order_id=order.id,
+            draw_id=draw.id,
+            region=order.region,
+            issue_number=draw.issue_number,
+            settled_at=settled_at,
+            total_items=preview.total_items,
+            hit_count=preview.winning_items,
+            miss_count=preview.losing_items,
+            unsupported_count=preview.unsupported_items,
+            total_amount=Decimal(order.total_amount),
+            result_snapshot=self._build_result_snapshot(order, draw, preview, settled_at),
+        )
+        record_repo.add(record)
+        session.flush()
+
         order.status = ORDER_STATUS_SETTLED
+        order.updated_at = settled_at
         description = (
             f"确认结算订单 {order.order_no}，开奖 {draw.region} {draw.issue_number}，"
-            f"中奖 {preview.winning_items}，未中奖 {preview.losing_items}"
+            f"结算记录 {record.id}，中奖 {preview.winning_items}，未中奖 {preview.losing_items}"
         )
         log = self._log_service.create_log(
             module="settlement",
@@ -129,10 +208,13 @@ class SettlementService:
             session=session,
         )
         session.flush()
+        record.operation_log_id = log.id
+        session.flush()
 
         return OrderSettlementCommitResult(
             order_id=order.id,
             draw_id=draw.id,
+            settlement_record_id=record.id,
             region=order.region,
             issue_number=draw.issue_number,
             total_items=preview.total_items,
@@ -145,4 +227,85 @@ class SettlementService:
             results=preview.results,
             warnings=[],
             operation_log_id=log.id,
+        )
+
+    def _validate_limit_offset(self, limit: int, offset: int) -> tuple[int, int]:
+        if limit < 1:
+            limit = 1
+        if limit > 200:
+            limit = 200
+        if offset < 0:
+            offset = 0
+        return limit, offset
+
+    def _build_result_snapshot(
+        self,
+        order: Order,
+        draw: LotteryDraw,
+        preview: OrderSettlementPreview,
+        settled_at: datetime,
+    ) -> dict[str, Any]:
+        return {
+            "order": {
+                "id": order.id,
+                "order_no": order.order_no,
+                "region": order.region,
+                "total_amount": str(order.total_amount),
+                "status_before": order.status,
+            },
+            "draw": {
+                "id": draw.id,
+                "region": draw.region,
+                "issue_number": draw.issue_number,
+                "draw_date": draw.draw_date.isoformat(),
+                "regular_numbers": list(draw.regular_numbers),
+                "special_number": draw.special_number,
+            },
+            "settlement": {
+                "settled_at": settled_at.isoformat(sep=" "),
+                "total_items": preview.total_items,
+                "supported_items": preview.supported_items,
+                "unsupported_items": preview.unsupported_items,
+                "hit_count": preview.winning_items,
+                "miss_count": preview.losing_items,
+            },
+            "items": [self._snapshot_item(item) for item in preview.results],
+        }
+
+    def _snapshot_item(self, item: ItemSettlementResult) -> dict[str, Any]:
+        return {
+            "order_item_id": item.order_item_id,
+            "bet_type": item.bet_type,
+            "normalized_bet_type": item.normalized_bet_type,
+            "selection": item.selection,
+            "amount": str(item.amount),
+            "is_supported": item.is_supported,
+            "is_winner": item.is_winner,
+            "matched_number": item.matched_number,
+            "reason": item.reason,
+        }
+
+    def _to_ledger_result(self, record: SettlementRecord) -> SettlementLedgerResult:
+        order = record.order
+        log = record.operation_log
+        return SettlementLedgerResult(
+            id=record.id,
+            order_id=record.order_id,
+            draw_id=record.draw_id,
+            operation_log_id=record.operation_log_id,
+            order_no=order.order_no,
+            customer_name=order.customer_name,
+            region=record.region,
+            order_status=order.status,
+            total_amount=record.total_amount,
+            settled_at=record.settled_at,
+            issue_number=record.issue_number,
+            total_items=record.total_items,
+            hit_count=record.hit_count,
+            miss_count=record.miss_count,
+            unsupported_count=record.unsupported_count,
+            result_snapshot=record.result_snapshot,
+            order_created_at=order.created_at,
+            order_updated_at=order.updated_at,
+            operation_log_description=log.description if log else None,
         )

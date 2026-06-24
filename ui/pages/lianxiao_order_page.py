@@ -5,9 +5,14 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
+from ui.unavailable import mark_unavailable, unavailable_text
+
 UNAVAILABLE_MESSAGE = (
-    "当前测试版暂未开放连肖调单持久化功能。\n"
-    "本页仅为后续连肖调单功能预留，不参与正式记账、结算、导出。"
+    unavailable_text(
+        "连肖调单持久化",
+        "连肖调整、打印和自定义复制需要先完成复杂玩法结算规则与审计权限。",
+        "当前请使用录单、订单详情、结算预览和结算历史完成已开放业务。",
+    )
 )
 
 
@@ -30,8 +35,7 @@ class LianxiaoOrderPage(QWidget):
         self._btn_print = QPushButton("打印")
         self._btn_copy = QPushButton("自定义复制")
         for button in (self._btn_adjust, self._btn_print, self._btn_copy):
-            button.setEnabled(False)
-            button.setToolTip("当前测试版暂未开放")
+            mark_unavailable(button)
 
         root.addWidget(self._title)
         root.addWidget(self._message)

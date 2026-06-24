@@ -107,8 +107,12 @@ class OrderDetailPage(QWidget):
     def _build_toolbar(self) -> QHBoxLayout:
         row = QHBoxLayout()
         row.setSpacing(6)
-        hint = QLabel("更多批量处理和兑奖功能暂未开放；当前测试版请使用查询、Excel 导出、结算预览、作废。")
+        hint = QLabel(
+            "批量处理、导入订单和正式兑奖暂未开放；这些功能需要权限、余额和赔付规则支持。"
+            "当前测试版请使用查询、Excel 导出、结算预览、作废。"
+        )
         hint.setObjectName("scopeHint")
+        hint.setWordWrap(True)
         row.addWidget(hint)
         row.addStretch(1)
         return row
@@ -224,7 +228,8 @@ class OrderDetailPage(QWidget):
 
         self._prize_hint = QLabel(
             "结算预览：只读查看当前订单在指定期开奖结果下的命中情况。"
-            "正式确认结算：在预览窗口二次确认后更新订单状态并写入操作日志。"
+            "正式确认结算：在预览窗口二次确认后保存结算记录并写入操作日志。"
+            "赔付、盈亏和余额功能暂未开放。"
         )
         self._prize_hint.setObjectName("prizeHint")
 

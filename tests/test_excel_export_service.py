@@ -7,11 +7,14 @@ from pathlib import Path
 import pytest
 from openpyxl import load_workbook
 
-from models import OperationLog, Order
+from models import OperationLog, Order, SettlementRecord
+from schemas.draw_schema import LotteryDrawCreate
 from schemas.order_schema import OrderCreate, OrderItemCreate
+from services.draw_service import DrawService
 from services.excel_export_service import ExcelExportError, ExcelExportService
 from services.log_service import LogService
 from services.order_service import OrderService
+from services.settlement_service import SettlementService
 
 
 def create_order(
@@ -47,20 +50,25 @@ def create_order(
 
 
 def settle_order(session_factory, order_id: int, order_no: str, settled_at: datetime) -> None:
-    log = LogService(session_factory).create_log(
-        module="settlement",
-        action="commit",
-        description=f"settlement success for {order_no}",
-        operator="system",
-        related_type="order",
-        related_id=order_id,
+    detail = OrderService(session_factory).get_order(order_id)
+    assert detail is not None
+    draw = DrawService(session_factory).create_draw(
+        LotteryDrawCreate(
+            region=detail.region,
+            issue_number=str(200000 + order_id),
+            draw_date=settled_at.date(),
+            regular_numbers=["02", "03", "04", "05", "06", "07"],
+            special_number="01",
+        )
     )
+    SettlementService(session_factory).commit_order_settlement(order_id, draw.id)
     with session_factory() as session:
         order = session.get(Order, order_id)
-        saved_log = session.get(OperationLog, log.id)
+        record = session.query(SettlementRecord).filter_by(order_id=order_id).one()
+        saved_log = session.get(OperationLog, record.operation_log_id)
         assert order is not None
         assert saved_log is not None
-        order.status = "settled"
+        record.settled_at = settled_at
         order.updated_at = settled_at
         saved_log.created_at = settled_at
         session.commit()
@@ -182,6 +190,7 @@ def test_settlement_ledger_exports_only_settled_and_not_voided(session_factory, 
 
     rows = workbook_rows(result.export_path)
     assert rows[0] == (
+        "结算ID",
         "订单ID",
         "订单号",
         "客户",
@@ -190,17 +199,23 @@ def test_settlement_ledger_exports_only_settled_and_not_voided(session_factory, 
         "投注总额",
         "结算时间",
         "开奖期号",
+        "命中数量",
+        "未中数量",
+        "不支持数量",
         "最近操作日志摘要",
         "创建时间",
         "更新时间",
     )
     assert result.row_count == 1
-    assert rows[1][0] == settled.id
-    assert rows[1][4] == "settled"
-    assert rows[1][7] == "-"
-    assert settled.order_no in rows[1][8]
-    assert active.id not in {row[0] for row in rows[1:]}
-    assert voided.id not in {row[0] for row in rows[1:]}
+    assert rows[1][1] == settled.id
+    assert rows[1][5] == "settled"
+    assert rows[1][8] != "-"
+    assert rows[1][9] == 1
+    assert rows[1][10] == 0
+    assert rows[1][11] == 0
+    assert settled.order_no in rows[1][12]
+    assert active.id not in {row[1] for row in rows[1:]}
+    assert voided.id not in {row[1] for row in rows[1:]}
 
 
 def test_operation_logs_export_headers_row_count_and_filters(session_factory, tmp_path) -> None:

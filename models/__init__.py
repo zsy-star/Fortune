@@ -5,6 +5,7 @@ from models.app_meta import AppMeta
 from models.lottery_draw import LotteryDraw
 from models.operation_log import OperationLog
 from models.order import Order, OrderItem
+from models.settlement_record import SettlementRecord
 
 __all__ = [
     "Base",
@@ -13,4 +14,5 @@ __all__ = [
     "OperationLog",
     "Order",
     "OrderItem",
+    "SettlementRecord",
 ]

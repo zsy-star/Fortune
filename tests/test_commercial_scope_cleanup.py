@@ -11,17 +11,21 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QCheckBox, QLabel, QPushButton
 
 from services.log_service import LogService
+from services.draw_service import DrawService
 from services.order_service import OrderService
 from ui.matplotlib_setup import configure_matplotlib
 from ui.pages.lianxiao_order_page import LianxiaoOrderPage
+from ui.pages.draw_history_page import DrawHistoryPage
 from ui.pages.number_catalog_page import NumberCatalogPage
 from ui.pages.operation_log_page import OperationLogPage
 from ui.pages.order_analysis_page import OrderAnalysisPage
 from ui.pages.order_detail_page import OrderDetailPage
 from ui.pages.overview_page import OverviewPage
+from ui.pages.settlement_ledger_page import SettlementLedgerPage
 from ui.pages.special_order_page import SpecialOrderPage
 from ui.windows.record_order_window import RecordOrderWindow
 from ui.windows.split_order_window import SplitOrderWindow
+from ui.unavailable import UNAVAILABLE_TOOLTIP
 
 
 def app() -> QApplication:
@@ -55,11 +59,12 @@ def test_lianxiao_order_page_is_reserved_without_fake_business_data() -> None:
     source = inspect.getsource(LianxiaoOrderPage)
     labels = "\n".join(_texts(page, QLabel))
 
-    assert "当前测试版暂未开放连肖调单持久化功能" in labels
-    assert "不参与正式记账、结算、导出" in labels
+    assert "当前测试版暂未开放：连肖调单持久化" in labels
+    assert "不会写入订单、结算、开奖或操作日志数据" in labels
     assert "猴羊龙" not in labels
     assert "猴羊龙" not in source
     assert all(not button.isEnabled() for button in page.findChildren(QPushButton))
+    assert all(button.toolTip() == UNAVAILABLE_TOOLTIP for button in page.findChildren(QPushButton))
 
 
 def test_special_order_page_is_reserved_without_fake_business_data() -> None:
@@ -67,20 +72,36 @@ def test_special_order_page_is_reserved_without_fake_business_data() -> None:
     page = SpecialOrderPage()
     labels = "\n".join(_texts(page, QLabel))
 
-    assert "当前测试版暂未开放调单持久化功能" in labels
-    assert "本页仅为后续连码调单功能预留" in labels
-    assert "不参与正式记账、结算、导出" in labels
+    assert "当前测试版暂未开放：连码调单持久化" in labels
+    assert "复杂玩法结算规则与审计权限" in labels
+    assert "不会写入订单、结算、开奖或操作日志数据" in labels
     assert all(not button.isEnabled() for button in page.findChildren(QPushButton))
+    assert all(button.toolTip() == UNAVAILABLE_TOOLTIP for button in page.findChildren(QPushButton))
 
 
 def test_split_order_window_marks_feature_unavailable() -> None:
     app()
     window = SplitOrderWindow()
 
-    assert "拆单助手当前测试版暂未开放" in window._scope_hint.text()
+    assert "当前测试版暂未开放：拆单助手" in window._scope_hint.text()
     assert not window._btn_split.isEnabled()
     assert not window._btn_style.isEnabled()
     assert not window._btn_save.isEnabled()
+    assert window._btn_split.toolTip() == UNAVAILABLE_TOOLTIP
+    assert window._btn_style.toolTip() == UNAVAILABLE_TOOLTIP
+    assert window._btn_save.toolTip() == UNAVAILABLE_TOOLTIP
+
+
+def test_split_order_unavailable_handlers_are_not_silent() -> None:
+    app()
+    window = SplitOrderWindow()
+
+    window._on_start_split()
+    assert "当前测试版暂未开放：拆单助手" in window._result_text.toPlainText()
+    window._on_style_disabled()
+    assert "当前测试版暂未开放：拆分结果样式调整" in window._result_text.toPlainText()
+    window._on_save_results()
+    assert "当前测试版暂未开放：保存拆分结果到文件" in window._result_text.toPlainText()
 
 
 def test_order_detail_page_keeps_supported_actions_and_hides_unopened_buttons(session_factory) -> None:
@@ -96,7 +117,8 @@ def test_order_detail_page_keeps_supported_actions_and_hides_unopened_buttons(se
     assert "导出 Excel" in button_texts
     assert page._btn_preview.text() == "结算预览"
     assert page._btn_void.text() == "作废订单"
-    assert "更多批量处理和兑奖功能暂未开放" in label_texts
+    assert "批量处理、导入订单和正式兑奖暂未开放" in label_texts
+    assert "权限、余额和赔付规则" in label_texts
     for unopened in ("清空订单", "删除过滤订单", "导入订单", "过滤兑奖", "综合兑奖", "重置开奖"):
         assert unopened not in button_texts
 
@@ -109,6 +131,32 @@ def test_operation_log_page_does_not_expose_clear_log_button(session_factory) ->
     assert "查询" in button_texts
     assert "导出 Excel" in button_texts
     assert "清空日志" not in button_texts
+    assert "清空日志等高风险维护功能暂未开放" in "\n".join(_texts(page, QLabel))
+
+
+def test_high_risk_and_snapshot_unavailable_handlers_are_explicit(session_factory) -> None:
+    app()
+    log_page = OperationLogPage(log_service=LogService(session_factory))
+    log_page._on_clear_disabled()
+    assert "当前测试版暂未开放：清空操作日志" in log_page._lbl_total.text()
+    assert "审计策略" in log_page._lbl_total.text()
+
+    ledger_page = SettlementLedgerPage(order_service=OrderService(session_factory))
+    assert not ledger_page._btn_snapshot_detail.isEnabled()
+    assert ledger_page._btn_snapshot_detail.toolTip() == UNAVAILABLE_TOOLTIP
+    ledger_page._on_snapshot_detail_disabled()
+    assert "当前测试版暂未开放：结算快照详情查看" in ledger_page._lbl_total.text()
+
+
+def test_draw_history_manual_maintenance_is_disabled(session_factory) -> None:
+    app()
+    page = DrawHistoryPage(draw_service=DrawService(session_factory))
+
+    assert not page._btn_manual_maintain.isEnabled()
+    assert page._btn_manual_maintain.toolTip() == UNAVAILABLE_TOOLTIP
+    page._on_manual_maintain_disabled()
+    assert "当前测试版暂未开放：手工新增/修正开奖记录" in page._status_label.text()
+    assert "权限、校验和操作日志" in page._status_label.text()
 
 
 def test_number_catalog_shows_static_reference_notice() -> None:
@@ -130,8 +178,9 @@ def test_record_order_window_marks_unimplemented_options_and_footer_scope() -> N
     for label in ("识别地区", "智能纠错", "特肖模式", "抄写法", "各->各肖"):
         assert label in checkboxes
         assert not checkboxes[label].isEnabled()
-        assert checkboxes[label].toolTip() == "暂未开放"
+        assert checkboxes[label].toolTip() == UNAVAILABLE_TOOLTIP
     assert "当前测试版重点支持特码类录入和结算" in window.findChild(QLabel, "footerHint").text()
+    assert "未开放选项已禁用" in window.findChild(QLabel, "footerHint").text()
     assert "全面支持" not in window.findChild(QLabel, "footerHint").text()
     assert "三中三" not in window.findChild(QLabel, "footerHint").text()
     window.close()
