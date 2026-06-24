@@ -173,7 +173,7 @@ def test_void_confirm_calls_service_persists_status_log_and_disables_button(sess
     assert "订单作废成功" in info.call_args.args[2]
     assert "操作日志ID" in info.call_args.args[2]
     assert page._order_service.get_order(order.id).status == "voided"
-    assert "状态：voided" in page._detail_info.text()
+    assert "状态：已作废" in page._detail_info.text()
     assert not page._btn_void.isEnabled()
     assert log_service.count_logs(module="order", action="void") == 1
 

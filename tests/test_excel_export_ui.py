@@ -83,7 +83,7 @@ def test_export_buttons_exist_on_target_pages(session_factory) -> None:
         excel_export_service=fake,
     )
 
-    assert order_page._btn_export_excel.text() == "导出 Excel"
+    assert order_page._btn_export_excel.text() == "导出订单"
     assert ledger_page._btn_export_excel.text() == "导出 Excel"
     assert log_page._btn_export_excel.text() == "导出 Excel"
 

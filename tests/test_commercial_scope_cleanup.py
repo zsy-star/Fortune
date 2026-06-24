@@ -104,23 +104,29 @@ def test_split_order_unavailable_handlers_are_not_silent() -> None:
     assert "当前测试版暂未开放：保存拆分结果到文件" in window._result_text.toPlainText()
 
 
-def test_order_detail_page_keeps_supported_actions_and_hides_unopened_buttons(session_factory) -> None:
+def test_order_detail_page_keeps_supported_actions_and_disables_unopened_buttons(session_factory) -> None:
     app()
     page = OrderDetailPage(
         order_service=OrderService(session_factory),
         log_service=LogService(session_factory),
     )
     button_texts = set(_texts(page, QPushButton))
-    label_texts = "\n".join(_texts(page, QLabel))
-
-    assert "查询" in button_texts
-    assert "导出 Excel" in button_texts
+    assert "搜索" in button_texts
+    assert "刷新" in button_texts
+    assert "导出订单" in button_texts
     assert page._btn_preview.text() == "结算预览"
     assert page._btn_void.text() == "作废订单"
-    assert "批量处理、导入订单和正式兑奖暂未开放" in label_texts
-    assert "权限、余额和赔付规则" in label_texts
-    for unopened in ("清空订单", "删除过滤订单", "导入订单", "过滤兑奖", "综合兑奖", "重置开奖"):
-        assert unopened not in button_texts
+    unopened_buttons = (
+        page._btn_clear_orders,
+        page._btn_import_orders,
+        page._btn_filter_prize,
+        page._btn_combined_prize,
+        page._btn_reset_draw,
+        page._btn_expand_prize,
+    )
+    assert all(button.text() in button_texts for button in unopened_buttons)
+    assert all(not button.isEnabled() for button in unopened_buttons)
+    assert all("暂未开放" in button.toolTip() for button in unopened_buttons)
 
 
 def test_operation_log_page_does_not_expose_clear_log_button(session_factory) -> None:

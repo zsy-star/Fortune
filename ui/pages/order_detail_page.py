@@ -1,4 +1,4 @@
-"""订单详情页面：从数据库读取订单与明细。"""
+"""订单详情页面：紧凑业务表格、订单明细与本地开奖信息。"""
 
 from __future__ import annotations
 
@@ -9,8 +9,10 @@ from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDateEdit,
-    QFrame,
     QFileDialog,
+    QFrame,
+    QGridLayout,
+    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -21,10 +23,13 @@ from PySide6.QtWidgets import (
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from domain.color_rules import get_wave_color
+from domain.zodiac_rules import get_zodiac
 from schemas.order_schema import OrderDetailResult, OrderSummary
 from services.draw_service import DrawService
 from services.excel_export_service import ExcelExportService
@@ -37,6 +42,7 @@ PAGE_SIZE = 20
 VOIDABLE_ORDER_STATUSES = {"active", "pending"}
 ORDER_STATUS_SETTLED = "settled"
 ORDER_STATUS_VOIDED = "voided"
+WAVE_COLORS = {"红波": "#e85d5d", "蓝波": "#4f78d8", "绿波": "#2d9d78"}
 
 
 def _money(value: Decimal) -> str:
@@ -45,6 +51,16 @@ def _money(value: Decimal) -> str:
 
 def _dash(value: object | None) -> str:
     return str(value) if value not in (None, "") else "—"
+
+
+def _status_text(status: str) -> str:
+    return {
+        "active": "未结算",
+        "pending": "未结算",
+        "settled": "已结算",
+        "voided": "已作废",
+        "cancelled": "已取消",
+    }.get(status, "不支持")
 
 
 def _format_size(size_bytes: int) -> str:
@@ -85,17 +101,25 @@ class OrderDetailPage(QWidget):
         self._total = 0
         self._selected_order_id: int | None = None
         self._logged_order_id: int | None = None
+        self._row_order_ids: list[int] = []
+        self._row_amounts: list[Decimal] = []
+        self._row_statuses: list[str] = []
+        self._draw_widgets: dict[str, dict[str, object]] = {}
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(10, 8, 10, 8)
-        root.setSpacing(6)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(5)
+        root.addWidget(self._build_toolbar())
+        root.addWidget(self._build_order_table(), stretch=5)
+        root.addWidget(self._build_summary_bar())
+        root.addWidget(self._build_filter_panel())
 
-        root.addLayout(self._build_toolbar())
-        root.addLayout(self._build_filter_row())
-        root.addWidget(self._build_order_table(), stretch=3)
-        root.addLayout(self._build_pager())
-        root.addWidget(self._build_detail_panel(), stretch=3)
-        root.addWidget(self._build_status_panel())
+        self._context_tabs = QTabWidget()
+        self._context_tabs.setObjectName("contextTabs")
+        self._context_tabs.addTab(self._build_draw_section(), "开奖信息")
+        self._context_tabs.addTab(self._build_detail_panel(), "所选订单详情")
+        root.addWidget(self._context_tabs, stretch=3)
+        root.addWidget(self._build_result_section(), stretch=1)
 
         self._apply_stylesheet()
         self.reload_data()
@@ -104,61 +128,176 @@ class OrderDetailPage(QWidget):
         super().showEvent(event)
         self.reload_data()
 
-    def _build_toolbar(self) -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.setSpacing(6)
-        hint = QLabel(
-            "批量处理、导入订单和正式兑奖暂未开放；这些功能需要权限、余额和赔付规则支持。"
-            "当前测试版请使用查询、Excel 导出、结算预览、作废。"
-        )
-        hint.setObjectName("scopeHint")
-        hint.setWordWrap(True)
-        row.addWidget(hint)
-        row.addStretch(1)
-        return row
+    def _build_toolbar(self) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("toolbar")
+        row = QHBoxLayout(frame)
+        row.setContentsMargins(4, 3, 4, 3)
+        row.setSpacing(4)
 
-    def _build_filter_row(self) -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.setSpacing(8)
+        self._btn_clear_orders = self._unavailable_button("清空订单")
+        self._btn_export_excel = QPushButton("导出订单")
+        self._btn_export_excel.setObjectName("primaryAction")
+        self._btn_export_excel.setToolTip("按当前查询条件导出 Excel")
+        self._btn_export_excel.clicked.connect(self._on_export_excel)
+        self._btn_import_orders = self._unavailable_button("导入订单")
+        self._btn_filter_prize = self._unavailable_button("过滤兑奖")
+        self._btn_combined_prize = self._unavailable_button("综合兑奖")
+        self._btn_reset_draw = self._unavailable_button("重置开奖")
+        self._btn_expand_prize = self._unavailable_button("扩大兑奖框")
+
+        for button in (
+            self._btn_clear_orders,
+            self._btn_export_excel,
+            self._btn_import_orders,
+            self._btn_filter_prize,
+            self._btn_combined_prize,
+            self._btn_reset_draw,
+            self._btn_expand_prize,
+        ):
+            row.addWidget(button)
+
+        self._cmb_toolbar_placeholder = QComboBox()
+        self._cmb_toolbar_placeholder.addItem("业务操作（暂未开放）")
+        self._cmb_toolbar_placeholder.setEnabled(False)
+        self._cmb_toolbar_placeholder.setToolTip("当前版本暂未开放")
+        row.addWidget(self._cmb_toolbar_placeholder)
+        row.addStretch(1)
+
+        self._edit_order_no = QLineEdit()
+        self._edit_order_no.setObjectName("orderSearch")
+        self._edit_order_no.setPlaceholderText("搜索订单号关键词")
+        self._edit_order_no.setClearButtonEnabled(True)
+        self._edit_order_no.returnPressed.connect(self._on_query)
+        self._btn_query = QPushButton("搜索")
+        self._btn_query.clicked.connect(self._on_query)
+        self._btn_refresh = QPushButton("刷新")
+        self._btn_refresh.clicked.connect(self.reload_data)
+        row.addWidget(self._edit_order_no, stretch=1)
+        row.addWidget(self._btn_query)
+        row.addWidget(self._btn_refresh)
+        return frame
+
+    def _unavailable_button(self, text: str) -> QPushButton:
+        button = QPushButton(text)
+        button.setObjectName("unavailableAction")
+        button.setEnabled(False)
+        button.setToolTip(f"{text}：当前版本暂未开放")
+        button.setStatusTip(f"{text}：当前版本暂未开放")
+        return button
+
+    def _build_order_table(self) -> QTableWidget:
+        headers = [
+            "订单信息",
+            "复式类型",
+            "计算方式",
+            "金额",
+            "订单总额",
+            "是否自定义",
+            "订单序号",
+            "申报人",
+            "中奖情况",
+            "中奖金额",
+            "备注",
+        ]
+        self._table = QTableWidget(0, len(headers))
+        self._table.setObjectName("orderBusinessTable")
+        self._table.setHorizontalHeaderLabels(headers)
+        self._table.verticalHeader().setVisible(False)
+        self._table.verticalHeader().setDefaultSectionSize(29)
+        self._table.setAlternatingRowColors(True)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.itemSelectionChanged.connect(self._on_selection_changed)
+        self._table.itemDoubleClicked.connect(self._show_selected_detail)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(10, QHeaderView.ResizeMode.Stretch)
+        header.setMinimumSectionSize(72)
+        return self._table
+
+    def _build_summary_bar(self) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("summaryBar")
+        row = QHBoxLayout(frame)
+        row.setContentsMargins(8, 3, 8, 3)
+        row.setSpacing(16)
+        self._lbl_current_total = QLabel("当前订单总额：0.00")
+        self._lbl_selected_total = QLabel("选中总额：0.00")
+        self._lbl_order_state = QLabel("订单状态：未选择")
+        self._status_label = QLabel("")
+        self._status_label.setObjectName("operationStatus")
+        self._btn_prev = QPushButton("上一页")
+        self._btn_next = QPushButton("下一页")
+        self._lbl_page = QLabel()
+        self._btn_prev.clicked.connect(self._prev_page)
+        self._btn_next.clicked.connect(self._next_page)
+
+        row.addWidget(self._lbl_current_total)
+        row.addWidget(self._lbl_selected_total)
+        row.addWidget(self._lbl_order_state)
+        row.addWidget(self._status_label, stretch=1)
+        row.addWidget(self._btn_prev)
+        row.addWidget(self._btn_next)
+        row.addWidget(self._lbl_page)
+        return frame
+
+    def _build_filter_panel(self) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("filterPanel")
+        grid = QGridLayout(frame)
+        grid.setContentsMargins(5, 4, 5, 4)
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(4)
 
         self._cmb_region = QComboBox()
-        self._cmb_region.addItems(["全部", "澳门", "香港"])
-        self._edit_order_no = QLineEdit()
-        self._edit_order_no.setPlaceholderText("订单号关键词")
-        self._edit_customer = QLineEdit()
-        self._edit_customer.setPlaceholderText("客户名称")
+        self._cmb_region.addItems(["全部区域", "澳门", "香港"])
+        self._cmb_bet_type = QComboBox()
+        self._cmb_bet_type.addItem("不限投注类型（暂未开放）")
+        self._cmb_bet_type.setEnabled(False)
+        self._cmb_bet_type.setToolTip("订单汇总暂未提供投注类型筛选")
+        self._cmb_winning = QComboBox()
+        self._cmb_winning.addItem("不限中奖（暂未开放）")
+        self._cmb_winning.setEnabled(False)
+        self._cmb_winning.setToolTip("完整中奖筛选需要兑奖结果数据，当前版本暂未开放")
+        self._cmb_declarer = QComboBox()
+        self._cmb_declarer.setEditable(True)
+        self._cmb_declarer.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self._cmb_declarer.lineEdit().setPlaceholderText("不限申报人")
+        self._edit_customer = self._cmb_declarer.lineEdit()
+
+        grid.addWidget(self._cmb_region, 0, 0)
+        grid.addWidget(self._cmb_bet_type, 0, 1)
+        grid.addWidget(self._cmb_winning, 0, 2)
+        grid.addWidget(self._cmb_declarer, 0, 3)
+
         self._edit_channel = QLineEdit()
         self._edit_channel.setPlaceholderText("渠道")
         self._cmb_status = QComboBox()
-        self._cmb_status.addItems(["全部", "active", "pending", "settled", "voided", "cancelled"])
+        self._cmb_status.addItems(["不限状态", "active", "pending", "settled", "voided", "cancelled"])
         self._start_date = self._make_date_edit()
         self._end_date = self._make_date_edit()
+        self._btn_reset = QPushButton("重置筛选")
+        self._btn_reset.clicked.connect(self._on_reset)
 
+        advanced = QHBoxLayout()
+        advanced.setSpacing(5)
         for label, widget in (
-            ("地区", self._cmb_region),
-            ("订单号", self._edit_order_no),
-            ("客户", self._edit_customer),
             ("渠道", self._edit_channel),
             ("状态", self._cmb_status),
             ("开始", self._start_date),
             ("结束", self._end_date),
         ):
-            row.addWidget(QLabel(label))
-            row.addWidget(widget)
-
-        btn_query = QPushButton("查询")
-        btn_reset = QPushButton("重置")
-        btn_refresh = QPushButton("刷新")
-        self._btn_export_excel = QPushButton("导出 Excel")
-        btn_query.clicked.connect(self._on_query)
-        btn_reset.clicked.connect(self._on_reset)
-        btn_refresh.clicked.connect(self.reload_data)
-        self._btn_export_excel.clicked.connect(self._on_export_excel)
-        row.addWidget(btn_query)
-        row.addWidget(btn_reset)
-        row.addWidget(btn_refresh)
-        row.addWidget(self._btn_export_excel)
-        return row
+            advanced.addWidget(QLabel(label))
+            advanced.addWidget(widget)
+        advanced.addWidget(self._btn_reset)
+        advanced.addStretch(1)
+        grid.addLayout(advanced, 1, 0, 1, 4)
+        for column in range(4):
+            grid.setColumnStretch(column, 1)
+        return frame
 
     def _make_date_edit(self) -> QDateEdit:
         edit = QDateEdit()
@@ -169,84 +308,114 @@ class OrderDetailPage(QWidget):
         edit.setDate(edit.minimumDate())
         return edit
 
-    def _build_order_table(self) -> QTableWidget:
-        self._table = QTableWidget(0, 8)
-        self._table.setHorizontalHeaderLabels(["订单号", "创建时间", "地区", "客户名称", "渠道", "总金额", "状态", "来源"])
-        self._table.verticalHeader().setVisible(False)
-        self._table.setAlternatingRowColors(True)
-        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.itemSelectionChanged.connect(self._on_selection_changed)
-        self._table.itemDoubleClicked.connect(lambda _item: self._on_selection_changed())
-        header = self._table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        header.setStretchLastSection(True)
-        return self._table
+    def _build_draw_section(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(4, 5, 4, 5)
+        layout.setSpacing(4)
+        hint = QLabel("读取本地数据库中的最新一期开奖；此区域不会自动联网或重置开奖。")
+        hint.setObjectName("sectionHint")
+        layout.addWidget(hint)
+        regions = QHBoxLayout()
+        regions.setSpacing(6)
+        for region in ("澳门", "香港"):
+            regions.addWidget(self._build_draw_panel(region), stretch=1)
+        layout.addLayout(regions)
+        return panel
 
-    def _build_pager(self) -> QHBoxLayout:
-        row = QHBoxLayout()
-        self._btn_prev = QPushButton("上一页")
-        self._btn_next = QPushButton("下一页")
-        self._lbl_page = QLabel()
-        self._btn_prev.clicked.connect(self._prev_page)
-        self._btn_next.clicked.connect(self._next_page)
-        row.addWidget(self._btn_prev)
-        row.addWidget(self._btn_next)
-        row.addWidget(self._lbl_page)
-        row.addStretch(1)
-        return row
+    def _build_draw_panel(self, region: str) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("drawPanel")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(7, 5, 7, 5)
+        layout.setSpacing(3)
+        title = QLabel(f"{region}开奖")
+        title.setObjectName("drawTitle")
+        placeholder = QLabel("暂无开奖数据")
+        placeholder.setObjectName("drawPlaceholder")
+        layout.addWidget(title)
+        layout.addWidget(placeholder)
+
+        balls_row = QHBoxLayout()
+        balls_row.setSpacing(4)
+        balls: list[tuple[QFrame, QLabel, QLabel]] = []
+        for index in range(7):
+            cell = QFrame()
+            cell.setObjectName("drawBallCell")
+            cell_layout = QVBoxLayout(cell)
+            cell_layout.setContentsMargins(0, 0, 0, 0)
+            cell_layout.setSpacing(1)
+            number = QLabel("--")
+            number.setObjectName("specialDrawNumber" if index == 6 else "drawNumber")
+            number.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            number.setFixedHeight(30)
+            zodiac = QLabel("")
+            zodiac.setObjectName("drawZodiac")
+            zodiac.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            zodiac.setFixedHeight(20)
+            cell_layout.addWidget(number)
+            cell_layout.addWidget(zodiac)
+            balls_row.addWidget(cell, stretch=1)
+            balls.append((cell, number, zodiac))
+        layout.addLayout(balls_row)
+        self._draw_widgets[region] = {"title": title, "placeholder": placeholder, "balls": balls}
+        return frame
 
     def _build_detail_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setContentsMargins(4, 5, 4, 5)
+        layout.setSpacing(4)
 
+        detail_header = QHBoxLayout()
         self._detail_info = QLabel("请选择订单")
         self._detail_info.setWordWrap(True)
-        self._raw_text = QPlainTextEdit()
-        self._raw_text.setReadOnly(True)
-        self._raw_text.setPlaceholderText("原始文本")
-        self._raw_text.setMaximumHeight(90)
-
-        self._item_table = QTableWidget(0, 5)
-        self._item_table.setHorizontalHeaderLabels(["投注类型", "投注内容", "金额", "赔率", "备注"])
-        self._item_table.verticalHeader().setVisible(False)
-        self._item_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._item_table.horizontalHeader().setStretchLastSection(True)
-
-        preview_row = QHBoxLayout()
         self._btn_preview = QPushButton("结算预览")
         self._btn_preview.setEnabled(False)
         self._btn_preview.clicked.connect(self._on_settlement_preview)
         self._btn_void = QPushButton("作废订单")
         self._btn_void.setEnabled(False)
         self._btn_void.clicked.connect(self._on_void_order)
-        preview_row.addWidget(self._btn_preview)
-        preview_row.addWidget(self._btn_void)
-        preview_row.addStretch(1)
+        detail_header.addWidget(self._detail_info, stretch=1)
+        detail_header.addWidget(self._btn_preview)
+        detail_header.addWidget(self._btn_void)
 
-        self._prize_hint = QLabel(
-            "结算预览：只读查看当前订单在指定期开奖结果下的命中情况。"
-            "正式确认结算：在预览窗口二次确认后保存结算记录并写入操作日志。"
-            "赔付、盈亏和余额功能暂未开放。"
-        )
-        self._prize_hint.setObjectName("prizeHint")
+        self._raw_text = QPlainTextEdit()
+        self._raw_text.setReadOnly(True)
+        self._raw_text.setPlaceholderText("原始订单文本")
+        self._raw_text.setMaximumHeight(54)
+        self._item_table = QTableWidget(0, 5)
+        self._item_table.setHorizontalHeaderLabels(["投注类型", "投注内容", "金额", "赔率", "备注"])
+        self._item_table.verticalHeader().setVisible(False)
+        self._item_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._item_table.horizontalHeader().setStretchLastSection(True)
 
-        layout.addWidget(self._detail_info)
+        layout.addLayout(detail_header)
         layout.addWidget(self._raw_text)
         layout.addWidget(self._item_table, stretch=1)
-        layout.addLayout(preview_row)
-        layout.addWidget(self._prize_hint)
         return panel
 
-    def _build_status_panel(self) -> QFrame:
-        frame = QFrame()
-        frame.setObjectName("resultPanel")
-        layout = QHBoxLayout(frame)
-        self._status_label = QLabel("")
-        layout.addWidget(self._status_label)
-        return frame
+    def _build_result_section(self) -> QWidget:
+        panel = QWidget()
+        row = QHBoxLayout(panel)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(5)
+        self._macau_result = self._result_box(row, "澳门兑奖结果")
+        self._hong_kong_result = self._result_box(row, "香港兑奖结果")
+        self._combined_result = self._result_box(row, "综合结果")
+        self._clear_result_panels()
+        return panel
+
+    def _result_box(self, parent_layout: QHBoxLayout, title: str) -> QPlainTextEdit:
+        group = QGroupBox(title)
+        layout = QVBoxLayout(group)
+        layout.setContentsMargins(5, 5, 5, 5)
+        result = QPlainTextEdit()
+        result.setReadOnly(True)
+        result.setMaximumHeight(82)
+        layout.addWidget(result)
+        parent_layout.addWidget(group, stretch=1)
+        return result
 
     def reload_data(self) -> None:
         if not self._validate_dates():
@@ -277,10 +446,11 @@ class OrderDetailPage(QWidget):
         )
         self._fill_table(rows)
         self._update_pager()
+        self._reload_draws()
 
     def _filters(self):
-        region = None if self._cmb_region.currentText() == "全部" else self._cmb_region.currentText()
-        status = None if self._cmb_status.currentText() == "全部" else self._cmb_status.currentText()
+        region = None if self._cmb_region.currentIndex() == 0 else self._cmb_region.currentText()
+        status = None if self._cmb_status.currentIndex() == 0 else self._cmb_status.currentText()
         return (
             region,
             self._edit_order_no.text().strip() or None,
@@ -314,33 +484,62 @@ class OrderDetailPage(QWidget):
         return True
 
     def _fill_table(self, rows: list[OrderSummary]) -> None:
+        self._table.blockSignals(True)
+        self._table.clearSelection()
         self._table.setRowCount(len(rows))
-        self._row_order_ids: list[int] = []
+        self._row_order_ids = []
+        self._row_amounts = []
+        self._row_statuses = []
         for row_idx, order in enumerate(rows):
             self._row_order_ids.append(order.id)
+            self._row_amounts.append(order.total_amount)
+            self._row_statuses.append(order.status)
+            compact_raw = " ".join(order.raw_text.split()) or order.order_no
+            note_parts = [order.region]
+            if order.channel:
+                note_parts.append(f"渠道：{order.channel}")
+            if order.source:
+                note_parts.append(f"来源：{order.source}")
             values = [
-                order.order_no,
-                order.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-                order.region,
-                _dash(order.customer_name),
-                _dash(order.channel),
+                compact_raw,
+                "—",
+                "—",
+                "—",
                 _money(order.total_amount),
-                order.status,
-                _dash(order.source),
+                "—",
+                order.order_no,
+                _dash(order.customer_name),
+                _status_text(order.status),
+                "—",
+                " / ".join(note_parts),
             ]
             for col_idx, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                item.setTextAlignment(
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                    if col_idx in (0, 10)
+                    else Qt.AlignmentFlag.AlignCenter
+                )
+                if col_idx == 0:
+                    item.setToolTip(order.raw_text)
+                elif col_idx == 8:
+                    item.setToolTip(f"订单原始状态：{order.status}")
                 self._table.setItem(row_idx, col_idx, item)
+        self._table.blockSignals(False)
+
+        current_total = sum(self._row_amounts, Decimal("0"))
+        self._lbl_current_total.setText(f"当前订单总额：{_money(current_total)}")
+        self._lbl_selected_total.setText("选中总额：0.00")
+        self._lbl_order_state.setText("订单状态：未选择")
+        self._clear_detail()
         if not rows:
-            self._status_label.setText("暂无订单数据。订单保存功能接入后，订单会显示在这里。")
-            self._clear_detail()
+            self._status_label.setText("暂无订单数据")
         else:
             self._status_label.setText(f"已加载 {len(rows)} 条订单")
 
     def _update_pager(self) -> None:
         max_page = max(1, (self._total + PAGE_SIZE - 1) // PAGE_SIZE)
-        self._lbl_page.setText(f"第 {self._page} / {max_page} 页    总记录数：{self._total}")
+        self._lbl_page.setText(f"第 {self._page}/{max_page} 页 · 共 {self._total} 条")
         self._btn_prev.setEnabled(self._page > 1)
         self._btn_next.setEnabled(self._page < max_page)
 
@@ -379,11 +578,11 @@ class OrderDetailPage(QWidget):
                 output_dir=output_dir,
             )
         except Exception as exc:
-            QMessageBox.warning(self, "导出 Excel", f"导出失败：{exc}")
+            QMessageBox.warning(self, "导出订单", f"导出失败：{exc}")
             self._status_label.setText(f"导出失败：{exc}")
             return
 
-        QMessageBox.information(self, "导出 Excel", _export_success_message(result))
+        QMessageBox.information(self, "导出订单", _export_success_message(result))
         self._status_label.setText(f"导出成功：{result.file_name}")
 
     def _prev_page(self) -> None:
@@ -397,16 +596,29 @@ class OrderDetailPage(QWidget):
             self._page += 1
             self.reload_data()
 
+    def _show_selected_detail(self, _item=None) -> None:
+        if self._selected_order_id is not None:
+            self._context_tabs.setCurrentIndex(1)
+
     def _on_selection_changed(self) -> None:
-        selected = self._table.selectionModel().selectedRows()
+        selected = sorted({index.row() for index in self._table.selectionModel().selectedRows()})
         if not selected:
+            self._lbl_selected_total.setText("选中总额：0.00")
+            self._lbl_order_state.setText("订单状态：未选择")
             self._clear_detail()
             return
-        row = selected[0].row()
-        if row >= len(self._row_order_ids):
+
+        selected_total = sum((self._row_amounts[row] for row in selected), Decimal("0"))
+        statuses = {_status_text(self._row_statuses[row]) for row in selected}
+        state_text = next(iter(statuses)) if len(statuses) == 1 else "多种状态"
+        self._lbl_selected_total.setText(f"选中总额：{_money(selected_total)}")
+        self._lbl_order_state.setText(f"订单状态：{state_text}")
+
+        first_row = selected[0]
+        if first_row >= len(self._row_order_ids):
             self._clear_detail()
             return
-        self._load_detail(self._row_order_ids[row])
+        self._load_detail(self._row_order_ids[first_row])
 
     def _load_detail(self, order_id: int) -> None:
         detail = self._order_service.get_order(order_id)
@@ -416,6 +628,7 @@ class OrderDetailPage(QWidget):
             return
         self._selected_order_id = order_id
         self._render_detail(detail)
+        self._update_result_panels(detail)
         if self._logged_order_id != order_id:
             self._logged_order_id = order_id
             try:
@@ -433,29 +646,21 @@ class OrderDetailPage(QWidget):
         self._btn_preview.setEnabled(True)
         self._btn_void.setEnabled(detail.status in VOIDABLE_ORDER_STATUSES)
         self._detail_info.setText(
-            "订单号：{no}    客户：{customer}    渠道：{channel}    地区：{region}    "
-            "来源：{source}    创建：{created}    更新：{updated}    状态：{status}    总金额：{total}".format(
+            "订单号：{no}    申报人：{customer}    渠道：{channel}    地区：{region}    "
+            "来源：{source}    状态：{status}    总金额：{total}".format(
                 no=detail.order_no,
                 customer=_dash(detail.customer_name),
                 channel=_dash(detail.channel),
                 region=detail.region,
                 source=_dash(detail.source),
-                created=detail.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-                updated=detail.updated_at.strftime("%Y-%m-%d %H:%M:%S"),
-                status=detail.status,
+                status=_status_text(detail.status),
                 total=_money(detail.total_amount),
             )
         )
         self._raw_text.setPlainText(detail.raw_text)
         self._item_table.setRowCount(len(detail.items))
         for row_idx, item in enumerate(detail.items):
-            values = [
-                item.bet_type,
-                item.selection,
-                _money(item.amount),
-                _dash(item.odds),
-                _dash(item.note),
-            ]
+            values = [item.bet_type, item.selection, _money(item.amount), _dash(item.odds), _dash(item.note)]
             for col_idx, value in enumerate(values):
                 cell = QTableWidgetItem(value)
                 cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -468,6 +673,64 @@ class OrderDetailPage(QWidget):
         self._item_table.setRowCount(0)
         self._btn_preview.setEnabled(False)
         self._btn_void.setEnabled(False)
+        self._clear_result_panels()
+
+    def _reload_draws(self) -> None:
+        for region in ("澳门", "香港"):
+            try:
+                draw = self._draw_service.get_latest_draw(region)
+            except Exception as exc:
+                self._render_draw(region, None, error=str(exc))
+            else:
+                self._render_draw(region, draw)
+
+    def _render_draw(self, region: str, draw, *, error: str | None = None) -> None:
+        widgets = self._draw_widgets[region]
+        title: QLabel = widgets["title"]  # type: ignore[assignment]
+        placeholder: QLabel = widgets["placeholder"]  # type: ignore[assignment]
+        balls: list[tuple[QFrame, QLabel, QLabel]] = widgets["balls"]  # type: ignore[assignment]
+        if draw is None:
+            title.setText(f"{region}开奖")
+            placeholder.setText(f"开奖数据读取失败：{error}" if error else "暂无开奖数据")
+            placeholder.show()
+            for _cell, number, zodiac in balls:
+                number.setText("--")
+                number.setStyleSheet("")
+                zodiac.clear()
+            return
+
+        title.setText(f"{region}开奖 · 第{draw.issue_number}期 · {draw.draw_date.isoformat()}")
+        placeholder.hide()
+        numbers = [*draw.regular_numbers, draw.special_number]
+        for index, ((_cell, number_label, zodiac_label), number) in enumerate(zip(balls, numbers)):
+            color = WAVE_COLORS.get(get_wave_color(number), "#7f8c8d")
+            number_label.setText(str(number))
+            number_label.setStyleSheet(
+                f"background: {color}; color: white; font-weight: 700; "
+                f"border-radius: {4 if index < 6 else 9}px;"
+            )
+            zodiac_label.setText(get_zodiac(number, year=draw.draw_date.year))
+
+    def _clear_result_panels(self) -> None:
+        unavailable = "当前版本暂未开放完整兑奖结果。"
+        self._macau_result.setPlainText(unavailable)
+        self._hong_kong_result.setPlainText(unavailable)
+        self._combined_result.setPlainText(unavailable)
+
+    def _update_result_panels(self, detail: OrderDetailResult) -> None:
+        summary = (
+            f"订单：{detail.order_no}\n"
+            f"结算状态：{_status_text(detail.status)}\n"
+            "完整兑奖结果暂未开放；请使用结算预览查看命中明细。"
+        )
+        other = "所选订单不属于此区域。\n当前版本暂未开放完整兑奖结果。"
+        self._macau_result.setPlainText(summary if detail.region == "澳门" else other)
+        self._hong_kong_result.setPlainText(summary if detail.region == "香港" else other)
+        self._combined_result.setPlainText(
+            f"已选择订单：{detail.order_no}\n"
+            f"订单总额：{_money(detail.total_amount)}\n"
+            "综合兑奖与赔付金额当前版本暂未开放。"
+        )
 
     def _on_settlement_preview(self) -> None:
         if self._selected_order_id is None:
@@ -485,9 +748,10 @@ class OrderDetailPage(QWidget):
             return
         dialog.exec()
         if dialog.settlement_committed():
+            selected_order_id = self._selected_order_id
             self.reload_data()
-            if self._selected_order_id is not None:
-                self._load_detail(self._selected_order_id)
+            if selected_order_id is not None:
+                self._load_detail(selected_order_id)
 
     def _on_void_order(self) -> None:
         if self._selected_order_id is None:
@@ -513,11 +777,7 @@ class OrderDetailPage(QWidget):
             self._btn_void.setEnabled(False)
             return
 
-        reason, ok = QInputDialog.getMultiLineText(
-            self,
-            "作废订单",
-            "请输入作废原因",
-        )
+        reason, ok = QInputDialog.getMultiLineText(self, "作废订单", "请输入作废原因")
         if not ok:
             self._status_label.setText("已取消作废订单")
             return
@@ -569,54 +829,55 @@ class OrderDetailPage(QWidget):
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(
             """
-            QPushButton#toolBtn {
-                padding: 4px 8px;
-                border: none;
-                color: #95a5a6;
-                font-size: 12px;
-            }
-            QLineEdit, QComboBox, QDateEdit {
-                padding: 5px 8px;
-                border: 1px solid #bdc3c7;
-                font-size: 12px;
-            }
-            QPushButton {
-                padding: 5px 10px;
-                border: 1px solid #bdc3c7;
+            QWidget { font-size: 12px; color: #243238; }
+            QFrame#toolbar, QFrame#filterPanel, QFrame#summaryBar {
                 background: #ffffff;
-                font-size: 12px;
+                border: 1px solid #c8d5d8;
             }
-            QPushButton:hover {
-                background: #ebf5fb;
+            QFrame#summaryBar { border-top: 2px solid #7f969b; }
+            QLineEdit, QComboBox, QDateEdit {
+                min-height: 24px;
+                padding: 1px 6px;
+                border: 1px solid #b8c7ca;
+                background: #ffffff;
             }
+            QLineEdit#orderSearch { border: 1px solid #43c7d4; background: #edfcfd; }
+            QPushButton {
+                min-height: 24px;
+                padding: 1px 8px;
+                border: 1px solid #b8c7ca;
+                background: #ffffff;
+            }
+            QPushButton:hover { background: #e8f7f8; border-color: #5fbac2; }
+            QPushButton#primaryAction { color: #146c75; font-weight: 600; }
+            QPushButton#unavailableAction:disabled { color: #8b999c; background: #f3f5f5; }
             QTableWidget {
-                border: 1px solid #bdc3c7;
-                font-size: 12px;
-                gridline-color: #d5d8dc;
+                border: 1px solid #aebfc2;
+                gridline-color: #d5dfe1;
+                background: #ffffff;
+                alternate-background-color: #f7fafb;
+                selection-background-color: #d8eef2;
+                selection-color: #1e2e32;
             }
             QHeaderView::section {
-                background-color: #d6eaf8;
-                padding: 6px 4px;
-                border: 1px solid #aed6f1;
+                background: #dff2f3;
+                padding: 4px;
+                border: none;
+                border-right: 1px solid #afc9cc;
+                border-bottom: 1px solid #8fabad;
                 font-weight: 600;
             }
-            QPlainTextEdit {
-                border: 1px solid #bdc3c7;
-                font-size: 12px;
-            }
-            QFrame#resultPanel {
-                border: 1px solid #bdc3c7;
-                background: #ffffff;
-                min-height: 40px;
-            }
-            QLabel#prizeHint {
-                color: #7f8c8d;
-                font-size: 12px;
-            }
-            QLabel#scopeHint {
-                color: #7f8c8d;
-                font-size: 12px;
-                padding: 2px 0;
-            }
+            QTabWidget#contextTabs::pane { border: 1px solid #b9c8cb; }
+            QTabBar::tab { padding: 4px 14px; background: #edf2f3; border: 1px solid #c5d0d2; }
+            QTabBar::tab:selected { background: #ffffff; border-bottom-color: #ffffff; }
+            QFrame#drawPanel { border: 1px solid #c3d0d2; background: #ffffff; }
+            QLabel#drawTitle { font-weight: 600; color: #176e75; }
+            QLabel#drawPlaceholder, QLabel#sectionHint, QLabel#operationStatus { color: #718085; }
+            QFrame#drawBallCell { border: 1px solid #d1dadd; background: #ffffff; }
+            QLabel#drawNumber, QLabel#specialDrawNumber { color: #627074; font-weight: 600; }
+            QLabel#drawZodiac { border-top: 1px solid #d8e0e2; }
+            QGroupBox { border: 1px solid #b9c8cb; margin-top: 7px; padding-top: 5px; }
+            QGroupBox::title { subcontrol-origin: margin; left: 7px; padding: 0 3px; color: #66777b; }
+            QPlainTextEdit { border: 1px solid #c7d2d4; background: #ffffff; }
             """
         )
