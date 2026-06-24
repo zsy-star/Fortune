@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 from schemas.order_intake_schema import IntakeMetadata, IntakeTableRow
 from services.order_intake_service import OrderIntakeService
 from services.order_parser import format_result, parse_lines
+from services.settings_service import SettingsService
 from ui.unavailable import UNAVAILABLE_TOOLTIP
 
 _TABLE_COLUMNS = [
@@ -77,9 +78,15 @@ _UNAVAILABLE_CHECKBOXES = {"识别地区", "智能纠错", "特肖模式", "抄�
 class RecordOrderWindow(QMainWindow):
     """录单独立窗口。"""
 
-    def __init__(self, parent=None, order_intake_service: OrderIntakeService | None = None):
+    def __init__(
+        self,
+        parent=None,
+        order_intake_service: OrderIntakeService | None = None,
+        settings_service: SettingsService | None = None,
+    ):
         super().__init__(parent)
         self._order_intake_service = order_intake_service or OrderIntakeService()
+        self._settings_service = settings_service or SettingsService()
         self._table_user_adjusted = False
         self._table_loading = False
         self.setWindowTitle("我要录单")
@@ -128,6 +135,7 @@ class RecordOrderWindow(QMainWindow):
 
         self._apply_stylesheet()
         self._apply_font_scale()
+        self.reload_declarers()
 
     # ─────────────────── 窗口缩放 → 字体自适应 ───────────────────
 
@@ -150,6 +158,10 @@ class RecordOrderWindow(QMainWindow):
         super().resizeEvent(event)
         if hasattr(self, "_input_text"):
             self._apply_font_scale()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self.reload_declarers()
 
     # ─────────────────── 剪贴板监控 ───────────────────
 
@@ -189,6 +201,7 @@ class RecordOrderWindow(QMainWindow):
     def changeEvent(self, event) -> None:
         """窗口获得焦点时立刻检查剪贴板（无需等定时器）。"""
         if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            self.reload_declarers()
             self._poll_clipboard()
         super().changeEvent(event)
 
@@ -258,7 +271,7 @@ class RecordOrderWindow(QMainWindow):
             return
 
         region = "澳门" if self._radio_macau.isChecked() else "香港"
-        reporter = self._cmb_channel.currentText()
+        reporter = self._selected_declarer_name() or "未设置"
         calc_method = self._cmb_calc.currentText()
 
         self._table_loading = True
@@ -347,6 +360,7 @@ class RecordOrderWindow(QMainWindow):
         try:
             preview = self._order_intake_service.preview_raw_text(
                 raw,
+                customer_name=self._selected_declarer_name(),
                 channel=self._cmb_channel.currentText(),
                 region=self._current_region(),
                 source="record_window",
@@ -386,6 +400,7 @@ class RecordOrderWindow(QMainWindow):
             preview = self._order_intake_service.preview_table_rows(
                 rows,
                 IntakeMetadata(
+                    customer_name=self._selected_declarer_name(),
                     channel=self._cmb_channel.currentText(),
                     region=self._current_region(),
                     source="record_window_adjusted",
@@ -848,6 +863,10 @@ class RecordOrderWindow(QMainWindow):
         self._cmb_channel.addItems(["个人微信", "个人支付宝", "现金", "其他"])
         self._cmb_channel.setMinimumWidth(120)
 
+        self._cmb_declarer = QComboBox()
+        self._cmb_declarer.setMinimumWidth(130)
+        self._cmb_declarer.setToolTip("申报人来自设置中心；未配置时可保持未设置")
+
         self._radio_macau = QRadioButton("澳门 (ALT+1)")
         self._radio_hk = QRadioButton("香港 (ALT+2)")
         self._radio_macau.setChecked(True)
@@ -856,12 +875,47 @@ class RecordOrderWindow(QMainWindow):
         self._cmb_calc.addItems(["定总", "各数", "包肖"])
         self._cmb_calc.setMinimumWidth(100)
 
+        layout.addWidget(QLabel("渠道"))
         layout.addWidget(self._cmb_channel)
+        layout.addWidget(QLabel("申报人"))
+        layout.addWidget(self._cmb_declarer)
         layout.addWidget(self._radio_macau)
         layout.addWidget(self._radio_hk)
         layout.addWidget(self._cmb_calc)
         layout.addStretch(1)
         return bar
+
+    def reload_declarers(self) -> None:
+        """Read configured declarers through SettingsService with a safe empty fallback."""
+        if not hasattr(self, "_cmb_declarer"):
+            return
+        previous_name = self._selected_declarer_name()
+        self._cmb_declarer.blockSignals(True)
+        self._cmb_declarer.clear()
+        try:
+            declarers = self._settings_service.list_declarers()
+        except Exception as exc:
+            self._cmb_declarer.addItem("未设置（配置读取失败）", None)
+            self._cmb_declarer.setToolTip(f"申报人配置读取失败：{exc}")
+        else:
+            if declarers:
+                for declarer in declarers:
+                    self._cmb_declarer.addItem(declarer.name, declarer.name)
+                previous_index = self._cmb_declarer.findData(previous_name)
+                if previous_index >= 0:
+                    self._cmb_declarer.setCurrentIndex(previous_index)
+                self._cmb_declarer.setToolTip("申报人来自设置中心")
+            else:
+                self._cmb_declarer.addItem("未设置（请在设置中心配置）", None)
+                self._cmb_declarer.setToolTip("设置中心尚未配置申报人；订单仍可保存")
+        self._cmb_declarer.blockSignals(False)
+
+    def _selected_declarer_name(self) -> str | None:
+        if not hasattr(self, "_cmb_declarer"):
+            return None
+        value = self._cmb_declarer.currentData()
+        text = str(value).strip() if value is not None else ""
+        return text or None
 
     def _build_text_section(self) -> QGroupBox:
         group = QGroupBox()

@@ -96,10 +96,13 @@ class OrderService:
                     repo.add_item(item)
 
                 session.flush()
+                log_description = f"Created order {order.order_no}"
+                if order.customer_name:
+                    log_description += f"; declarer={order.customer_name}"
                 self._log_service.create_log(
                     module="order",
                     action="create",
-                    description=f"Created order {order.order_no}",
+                    description=log_description,
                     related_type="order",
                     related_id=order.id,
                     session=session,

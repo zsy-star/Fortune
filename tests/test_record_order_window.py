@@ -21,6 +21,7 @@ OrderService、SQLAlchemy Session 或 49wz777.com。
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -33,6 +34,14 @@ from PySide6.QtWidgets import (
 )
 
 from services.order_parser import ParseResult, parse_order
+
+
+class FakeSettingsService:
+    def __init__(self, names: list[str] | None = None):
+        self._names = names or []
+
+    def list_declarers(self):
+        return [SimpleNamespace(name=name) for name in self._names]
 
 # ── 模块级 QApplication ──
 
@@ -53,7 +62,7 @@ def window(qapp):
     """创建干净窗口，禁用定时器并关闭自动获取，避免真实剪贴板访问。"""
     from ui.windows.record_order_window import RecordOrderWindow
 
-    w = RecordOrderWindow()
+    w = RecordOrderWindow(settings_service=FakeSettingsService())
     w._parse_timer.stop()
     if hasattr(w, "_chk_auto_fetch"):
         w._chk_auto_fetch.setChecked(False)
@@ -68,7 +77,12 @@ def save_window(qapp, session_factory):
     from services.order_intake_service import OrderIntakeService
     from ui.windows.record_order_window import RecordOrderWindow
 
-    w = RecordOrderWindow(order_intake_service=OrderIntakeService(session_factory))
+    from services.settings_service import SettingsService
+
+    w = RecordOrderWindow(
+        order_intake_service=OrderIntakeService(session_factory),
+        settings_service=SettingsService(session_factory),
+    )
     w._parse_timer.stop()
     if hasattr(w, "_chk_auto_fetch"):
         w._chk_auto_fetch.setChecked(False)
@@ -107,7 +121,7 @@ class TestWindowLifecycle:
         """窗口可以正常创建和关闭。"""
         from ui.windows.record_order_window import RecordOrderWindow
 
-        w = RecordOrderWindow()
+        w = RecordOrderWindow(settings_service=FakeSettingsService())
         w._parse_timer.stop()
         assert w.isVisible() is False  # 未 show()
         assert w.windowTitle() == "我要录单"
@@ -882,7 +896,118 @@ class TestReplacePresets:
 
 
 # ══════════════════════════════════════════════════════════════════════
-# 15. 保存订单
+# 15. 申报人配置接入
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestDeclarerIntegration:
+    def test_configured_declarers_are_loaded(self, qapp, session_factory):
+        from services.order_intake_service import OrderIntakeService
+        from services.settings_service import SettingsService
+        from ui.windows.record_order_window import RecordOrderWindow
+
+        settings = SettingsService(session_factory)
+        plan = settings.ensure_default_plan()
+        settings.add_declarer("林林", plan.id)
+        settings.add_declarer("老汪", plan.id)
+        window = RecordOrderWindow(
+            order_intake_service=OrderIntakeService(session_factory),
+            settings_service=settings,
+        )
+        try:
+            assert [window._cmb_declarer.itemText(index) for index in range(2)] == ["林林", "老汪"]
+            assert window._selected_declarer_name() == "林林"
+        finally:
+            window.close()
+            window.deleteLater()
+
+    def test_no_configured_declarer_keeps_window_usable(self, save_window):
+        assert save_window._cmb_declarer.count() == 1
+        assert "未设置" in save_window._cmb_declarer.currentText()
+        assert save_window._selected_declarer_name() is None
+
+    def test_selected_declarer_saves_and_displays_in_order_detail(self, qapp, session_factory):
+        from sqlalchemy import select
+
+        from models import OperationLog, Order
+        from services.log_service import LogService
+        from services.order_intake_service import OrderIntakeService
+        from services.order_service import OrderService
+        from services.settings_service import SettingsService
+        from ui.pages.order_detail_page import OrderDetailPage
+        from ui.windows.record_order_window import RecordOrderWindow
+
+        settings = SettingsService(session_factory)
+        plan = settings.ensure_default_plan()
+        settings.add_declarer("林林", plan.id)
+        window = RecordOrderWindow(
+            order_intake_service=OrderIntakeService(session_factory),
+            settings_service=settings,
+        )
+        try:
+            window._cmb_declarer.setCurrentText("林林")
+            window._input_text.setPlainText("01/10")
+            window._do_parse()
+            with patch("ui.windows.record_order_window.QMessageBox.information"):
+                window._on_save_order()
+        finally:
+            window.close()
+            window.deleteLater()
+
+        with session_factory() as session:
+            order = session.scalars(select(Order)).one()
+            order_log = session.scalars(
+                select(OperationLog).where(
+                    OperationLog.module == "order",
+                    OperationLog.action == "create",
+                )
+            ).one()
+            assert order.customer_name == "林林"
+            assert "declarer=林林" in order_log.description
+
+        page = OrderDetailPage(
+            order_service=OrderService(session_factory),
+            log_service=LogService(session_factory),
+        )
+        assert page._table.rowCount() == 1
+        assert page._table.item(0, 7).text() == "林林"
+
+    def test_adjusted_table_save_preserves_selected_declarer(self, qapp, session_factory):
+        from sqlalchemy import select
+
+        from models import Order
+        from services.order_intake_service import OrderIntakeService
+        from services.settings_service import SettingsService
+        from ui.windows.record_order_window import RecordOrderWindow
+
+        settings = SettingsService(session_factory)
+        plan = settings.ensure_default_plan()
+        settings.add_declarer("老汪", plan.id)
+        window = RecordOrderWindow(
+            order_intake_service=OrderIntakeService(session_factory),
+            settings_service=settings,
+        )
+        try:
+            window._cmb_declarer.setCurrentText("老汪")
+            window._input_text.setPlainText("01/10")
+            window._do_parse()
+            window._on_add_result()
+            assert window._order_table.item(0, 8).text() == "老汪"
+            window._order_table.item(0, 5).setText("25")
+            with patch("ui.windows.record_order_window.QMessageBox.information"):
+                window._on_save_order()
+        finally:
+            window.close()
+            window.deleteLater()
+
+        with session_factory() as session:
+            order = session.scalars(select(Order)).one()
+            assert order.customer_name == "老汪"
+            assert order.source == "record_window_adjusted"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 16. 保存订单
 # ══════════════════════════════════════════════════════════════════════
 
 

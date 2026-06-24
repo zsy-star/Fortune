@@ -128,7 +128,7 @@ class OrderIntakeService:
         preview.invalid_items = sum(1 for item in preview.items if not item.is_valid)
 
         if not preview.customer_name:
-            preview.warnings.append("客户名称为空")
+            preview.warnings.append("申报人未设置")
         if not preview.channel:
             preview.warnings.append("渠道为空")
 
@@ -440,7 +440,7 @@ class OrderIntakeService:
         preview.invalid_items = sum(1 for item in preview.items if not item.is_valid)
 
         if not preview.customer_name:
-            preview.warnings.append("客户名称为空")
+            preview.warnings.append("申报人未设置")
         if not preview.channel:
             preview.warnings.append("渠道为空")
 

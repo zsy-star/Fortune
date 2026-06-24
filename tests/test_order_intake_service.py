@@ -224,6 +224,36 @@ def test_preview_table_rows_recalculates_total_and_expands_numbers() -> None:
     assert [item.amount for item in preview.order_items] == [Decimal("15.00"), Decimal("15.00")]
 
 
+def test_adjusted_table_preview_and_save_preserve_declarer(session_factory) -> None:
+    service = OrderIntakeService(session_factory)
+    preview = service.preview_table_rows(
+        [
+            IntakeTableRow(
+                row_number=1,
+                region="澳门",
+                bet_type="特码",
+                selection="01",
+                total_amount="10",
+            )
+        ],
+        IntakeMetadata(
+            customer_name="林林",
+            channel="个人微信",
+            region="澳门",
+            source="record_window_adjusted",
+            raw_text="01/10",
+        ),
+    )
+
+    assert preview.can_save
+    assert preview.customer_name == "林林"
+    saved = service.save_preview(preview)
+    assert saved.success
+    detail = service._order_service.get_order(saved.order.id)
+    assert detail is not None
+    assert detail.customer_name == "林林"
+
+
 def test_preview_table_rows_rejects_invalid_amount() -> None:
     service = OrderIntakeService()
     preview = service.preview_table_rows(
