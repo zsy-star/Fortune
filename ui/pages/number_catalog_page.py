@@ -174,7 +174,16 @@ _WX_COLORS = {
 
 
 def _build_catalog_html() -> str:
-    parts: list[str] = []
+    parts: list[str] = [
+        _card(
+            '<h2 style="font-size:18px;font-weight:bold;color:#1a5276;'
+            'margin:0 0 6px 0;">静态号码参考表</h2>'
+            '<div style="font-size:14px;color:#5d6d7e;line-height:1.6;">'
+            "当前版本不会自动随年份更新<br>"
+            "请以实际开奖年份配置为准"
+            "</div>"
+        )
+    ]
 
     # ---- 十二生肖 ----
     zx_cells: list[str] = []
