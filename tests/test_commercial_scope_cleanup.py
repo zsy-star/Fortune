@@ -119,14 +119,17 @@ def test_order_detail_page_keeps_supported_actions_and_disables_unopened_buttons
     unopened_buttons = (
         page._btn_clear_orders,
         page._btn_import_orders,
-        page._btn_filter_prize,
-        page._btn_combined_prize,
         page._btn_reset_draw,
-        page._btn_expand_prize,
     )
     assert all(button.text() in button_texts for button in unopened_buttons)
     assert all(not button.isEnabled() for button in unopened_buttons)
     assert all("暂未开放" in button.toolTip() for button in unopened_buttons)
+    assert page._btn_filter_prize.text() == "过滤结算结果"
+    assert page._btn_filter_prize.isEnabled()
+    assert page._btn_combined_prize.text() == "综合结算摘要"
+    assert page._btn_combined_prize.isEnabled()
+    assert page._btn_expand_prize.text() == "扩大兑奖框"
+    assert page._btn_expand_prize.isEnabled()
 
 
 def test_operation_log_page_does_not_expose_clear_log_button(session_factory) -> None:

@@ -8,7 +8,14 @@ from decimal import Decimal
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session, selectinload
 
-from models import Order, OrderItem
+from models import Order, OrderItem, SettlementRecord
+
+WINNING_STATUS_UNSETTLED = "未结算"
+WINNING_STATUS_SETTLED = "已结算"
+WINNING_STATUS_HIT = "命中"
+WINNING_STATUS_MISS = "未中"
+WINNING_STATUS_PARTIAL = "部分命中"
+WINNING_STATUS_UNSUPPORTED = "含不支持"
 
 
 class OrderRepository:
@@ -39,6 +46,8 @@ class OrderRepository:
         customer_name: str | None = None,
         declarer_name: str | None = None,
         channel: str | None = None,
+        bet_type: str | None = None,
+        winning_status: str | None = None,
         status: str | None = None,
         exclude_statuses: tuple[str, ...] | None = None,
         start_date: datetime | None = None,
@@ -54,14 +63,46 @@ class OrderRepository:
             stmt = stmt.where(Order.customer_name == declarer_name)
         if channel:
             stmt = stmt.where(Order.channel.contains(channel))
+        if bet_type:
+            stmt = stmt.where(Order.items.any(OrderItem.bet_type == bet_type))
         if status:
             stmt = stmt.where(Order.status == status)
+        if winning_status:
+            stmt = self._apply_winning_status_filter(stmt, winning_status)
         if exclude_statuses:
             stmt = stmt.where(Order.status.not_in(exclude_statuses))
         if start_date:
             stmt = stmt.where(Order.created_at >= start_date)
         if end_date:
             stmt = stmt.where(Order.created_at <= end_date)
+        return stmt
+
+    def _apply_winning_status_filter(self, stmt, winning_status: str):
+        stmt = stmt.outerjoin(SettlementRecord, SettlementRecord.order_id == Order.id)
+        if winning_status == WINNING_STATUS_UNSETTLED:
+            return stmt.where(Order.status.in_(("active", "pending")))
+        if winning_status == WINNING_STATUS_SETTLED:
+            return stmt.where(Order.status == "settled")
+        if winning_status == WINNING_STATUS_UNSUPPORTED:
+            return stmt.where(SettlementRecord.unsupported_count > 0)
+        if winning_status == WINNING_STATUS_PARTIAL:
+            return stmt.where(
+                SettlementRecord.unsupported_count == 0,
+                SettlementRecord.hit_count > 0,
+                SettlementRecord.miss_count > 0,
+            )
+        if winning_status == WINNING_STATUS_HIT:
+            return stmt.where(
+                SettlementRecord.unsupported_count == 0,
+                SettlementRecord.hit_count > 0,
+                SettlementRecord.miss_count == 0,
+            )
+        if winning_status == WINNING_STATUS_MISS:
+            return stmt.where(
+                SettlementRecord.unsupported_count == 0,
+                SettlementRecord.hit_count == 0,
+                SettlementRecord.miss_count > 0,
+            )
         return stmt
 
     def list(
@@ -72,6 +113,8 @@ class OrderRepository:
         customer_name: str | None = None,
         declarer_name: str | None = None,
         channel: str | None = None,
+        bet_type: str | None = None,
+        winning_status: str | None = None,
         status: str | None = None,
         exclude_statuses: tuple[str, ...] | None = None,
         start_date: datetime | None = None,
@@ -87,11 +130,15 @@ class OrderRepository:
             customer_name=customer_name,
             declarer_name=declarer_name,
             channel=channel,
+            bet_type=bet_type,
+            winning_status=winning_status,
             status=status,
             exclude_statuses=exclude_statuses,
             start_date=start_date,
             end_date=end_date,
         )
+        if winning_status:
+            stmt = stmt.distinct()
         stmt = stmt.order_by(Order.created_at.desc(), Order.id.desc()).limit(limit).offset(offset)
         return list(self.session.scalars(stmt))
 
@@ -166,12 +213,14 @@ class OrderRepository:
         customer_name: str | None = None,
         declarer_name: str | None = None,
         channel: str | None = None,
+        bet_type: str | None = None,
+        winning_status: str | None = None,
         status: str | None = None,
         exclude_statuses: tuple[str, ...] | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
     ) -> int:
-        stmt = select(func.count(Order.id))
+        stmt = select(func.count(func.distinct(Order.id)))
         stmt = self._apply_filters(
             stmt,
             region=region,
@@ -179,6 +228,8 @@ class OrderRepository:
             customer_name=customer_name,
             declarer_name=declarer_name,
             channel=channel,
+            bet_type=bet_type,
+            winning_status=winning_status,
             status=status,
             exclude_statuses=exclude_statuses,
             start_date=start_date,
@@ -194,6 +245,15 @@ class OrderRepository:
             .order_by(Order.customer_name.asc())
         )
         return [str(name).strip() for name in self.session.scalars(stmt) if str(name).strip()]
+
+    def list_bet_types(self) -> list[str]:
+        stmt = (
+            select(OrderItem.bet_type)
+            .where(func.trim(OrderItem.bet_type) != "")
+            .distinct()
+            .order_by(OrderItem.bet_type.asc())
+        )
+        return [str(bet_type).strip() for bet_type in self.session.scalars(stmt) if str(bet_type).strip()]
 
     def sum_amount(
         self,

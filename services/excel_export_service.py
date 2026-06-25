@@ -50,6 +50,8 @@ class ExcelExportService:
         end_date: datetime | None = None,
         keyword: str | None = None,
         declarer_name: str | None = None,
+        bet_type: str | None = None,
+        winning_status: str | None = None,
         include_voided: bool = False,
         output_dir: str | Path | None = None,
     ) -> ExcelExportResult:
@@ -60,6 +62,8 @@ class ExcelExportService:
             "end_date": end_date,
             "keyword": keyword,
             "declarer_name": declarer_name,
+            "bet_type": bet_type,
+            "winning_status": winning_status,
             "include_voided": include_voided,
         }
         orders = self._list_orders_for_export(
@@ -69,6 +73,8 @@ class ExcelExportService:
             end_date=end_date,
             keyword=keyword,
             declarer_name=declarer_name,
+            bet_type=bet_type,
+            winning_status=winning_status,
             include_voided=include_voided,
         )
         headers = [
@@ -254,6 +260,8 @@ class ExcelExportService:
         end_date: datetime | None,
         keyword: str | None,
         declarer_name: str | None,
+        bet_type: str | None,
+        winning_status: str | None,
         include_voided: bool,
     ) -> list[OrderSummary]:
         keyword = keyword.strip() if keyword else None
@@ -286,6 +294,8 @@ class ExcelExportService:
                 start_date=start_date,
                 end_date=end_date,
                 declarer_name=declarer_name,
+                bet_type=bet_type,
+                winning_status=winning_status,
                 include_voided=include_voided,
             ) else []
 
@@ -293,6 +303,8 @@ class ExcelExportService:
             region=region,
             order_no=keyword,
             declarer_name=declarer_name,
+            bet_type=bet_type,
+            winning_status=winning_status,
             status=status,
             start_date=start_date,
             end_date=end_date,
@@ -367,6 +379,8 @@ class ExcelExportService:
         region: str | None,
         order_no: str | None,
         declarer_name: str | None,
+        bet_type: str | None,
+        winning_status: str | None,
         status: str | None,
         start_date: datetime | None,
         end_date: datetime | None,
@@ -379,6 +393,8 @@ class ExcelExportService:
                 region=region,
                 order_no=order_no,
                 declarer_name=declarer_name,
+                bet_type=bet_type,
+                winning_status=winning_status,
                 status=status,
                 start_date=start_date,
                 end_date=end_date,
@@ -419,6 +435,8 @@ class ExcelExportService:
         start_date: datetime | None,
         end_date: datetime | None,
         declarer_name: str | None,
+        bet_type: str | None,
+        winning_status: str | None,
         include_voided: bool,
     ) -> bool:
         if region and order.region != region:
@@ -427,6 +445,17 @@ class ExcelExportService:
             return False
         if declarer_name and order.customer_name != declarer_name:
             return False
+        if bet_type:
+            detail = self._order_service.get_order(order.id)
+            if detail is None or all(item.bet_type != bet_type for item in detail.items):
+                return False
+        if winning_status:
+            matched = self._order_service.count_orders(
+                order_no=order.order_no,
+                winning_status=winning_status,
+            )
+            if matched <= 0:
+                return False
         if not include_voided and order.status == ORDER_STATUS_VOIDED:
             return False
         if start_date and order.created_at < start_date:

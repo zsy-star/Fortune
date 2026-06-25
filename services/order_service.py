@@ -199,6 +199,8 @@ class OrderService:
         customer_name: str | None = None,
         declarer_name: str | None = None,
         channel: str | None = None,
+        bet_type: str | None = None,
+        winning_status: str | None = None,
         status: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
@@ -215,6 +217,8 @@ class OrderService:
                 customer_name=customer_name,
                 declarer_name=declarer_name,
                 channel=channel,
+                bet_type=bet_type,
+                winning_status=winning_status,
                 status=status,
                 start_date=start_date,
                 end_date=end_date,
@@ -231,6 +235,8 @@ class OrderService:
         customer_name: str | None = None,
         declarer_name: str | None = None,
         channel: str | None = None,
+        bet_type: str | None = None,
+        winning_status: str | None = None,
         status: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
@@ -244,6 +250,8 @@ class OrderService:
                 customer_name=customer_name,
                 declarer_name=declarer_name,
                 channel=channel,
+                bet_type=bet_type,
+                winning_status=winning_status,
                 status=status,
                 start_date=start_date,
                 end_date=end_date,
@@ -295,6 +303,11 @@ class OrderService:
         """Return distinct non-empty declarer names found in historical orders."""
         with self._session_factory() as session:
             return OrderRepository(session).list_declarer_names()
+
+    def list_bet_types(self) -> list[str]:
+        """Return distinct non-empty bet types from historical order items."""
+        with self._session_factory() as session:
+            return OrderRepository(session).list_bet_types()
 
     def get_dashboard_summary(
         self,

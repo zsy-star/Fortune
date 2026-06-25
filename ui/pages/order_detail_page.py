@@ -46,6 +46,15 @@ VOIDABLE_ORDER_STATUSES = {"active", "pending"}
 ORDER_STATUS_SETTLED = "settled"
 ORDER_STATUS_VOIDED = "voided"
 WAVE_COLORS = {"红波": "#e85d5d", "蓝波": "#4f78d8", "绿波": "#2d9d78"}
+WINNING_FILTER_OPTIONS = [
+    ("不限中奖", None),
+    ("未结算", "未结算"),
+    ("已结算", "已结算"),
+    ("命中", "命中"),
+    ("未中", "未中"),
+    ("部分命中", "部分命中"),
+    ("含不支持", "含不支持"),
+]
 
 
 def _money(value: Decimal) -> str:
@@ -125,6 +134,7 @@ class OrderDetailPage(QWidget):
         self._row_statuses: list[str] = []
         self._settlement_records: dict[int, SettlementLedgerResult] = {}
         self._draw_widgets: dict[str, dict[str, object]] = {}
+        self._result_expanded = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -139,7 +149,8 @@ class OrderDetailPage(QWidget):
         self._context_tabs.addTab(self._build_draw_section(), "开奖信息")
         self._context_tabs.addTab(self._build_detail_panel(), "所选订单详情")
         root.addWidget(self._context_tabs, stretch=3)
-        root.addWidget(self._build_result_section(), stretch=1)
+        self._result_section = self._build_result_section()
+        root.addWidget(self._result_section, stretch=1)
 
         self._apply_stylesheet()
         app_events.orders_changed.connect(self._on_orders_changed)
@@ -185,10 +196,18 @@ class OrderDetailPage(QWidget):
         self._btn_export_excel.setToolTip("按当前查询条件导出 Excel")
         self._btn_export_excel.clicked.connect(self._on_export_excel)
         self._btn_import_orders = self._unavailable_button("导入订单")
-        self._btn_filter_prize = self._unavailable_button("过滤兑奖")
-        self._btn_combined_prize = self._unavailable_button("综合兑奖")
+        self._btn_filter_prize = QPushButton("过滤结算结果")
+        self._btn_filter_prize.setObjectName("primaryAction")
+        self._btn_filter_prize.setToolTip("只读查看当前筛选结果的命中状态统计，不计算赔付金额")
+        self._btn_filter_prize.clicked.connect(self._on_filter_settlement_results)
+        self._btn_combined_prize = QPushButton("综合结算摘要")
+        self._btn_combined_prize.setObjectName("primaryAction")
+        self._btn_combined_prize.setToolTip("只读汇总当前筛选结果，不计算中奖金额、赔付、余额")
+        self._btn_combined_prize.clicked.connect(self._on_combined_settlement_summary)
         self._btn_reset_draw = self._unavailable_button("重置开奖")
-        self._btn_expand_prize = self._unavailable_button("扩大兑奖框")
+        self._btn_expand_prize = QPushButton("扩大兑奖框")
+        self._btn_expand_prize.setToolTip("扩大或收起底部结算摘要显示区域")
+        self._btn_expand_prize.clicked.connect(self._on_toggle_result_panel_size)
 
         for button in (
             self._btn_clear_orders,
@@ -202,9 +221,12 @@ class OrderDetailPage(QWidget):
             row.addWidget(button)
 
         self._cmb_toolbar_placeholder = QComboBox()
-        self._cmb_toolbar_placeholder.addItem("业务操作（暂未开放）")
-        self._cmb_toolbar_placeholder.setEnabled(False)
-        self._cmb_toolbar_placeholder.setToolTip("当前版本暂未开放")
+        self._cmb_toolbar_placeholder.addItem("选择业务操作", None)
+        self._cmb_toolbar_placeholder.addItem("查看订单详情", "detail")
+        self._cmb_toolbar_placeholder.addItem("结算预览", "preview")
+        self._cmb_toolbar_placeholder.addItem("作废订单", "void")
+        self._cmb_toolbar_placeholder.setToolTip("请选择已开放的订单操作；未选择订单时会给出提示")
+        self._cmb_toolbar_placeholder.activated.connect(self._on_business_action_selected)
         row.addWidget(self._cmb_toolbar_placeholder)
         row.addStretch(1)
 
@@ -299,13 +321,12 @@ class OrderDetailPage(QWidget):
         self._cmb_region = QComboBox()
         self._cmb_region.addItems(["全部区域", "澳门", "香港"])
         self._cmb_bet_type = QComboBox()
-        self._cmb_bet_type.addItem("不限投注类型（暂未开放）")
-        self._cmb_bet_type.setEnabled(False)
-        self._cmb_bet_type.setToolTip("订单汇总暂未提供投注类型筛选")
+        self._cmb_bet_type.addItem("不限投注类型", None)
+        self._cmb_bet_type.setToolTip("投注类型来自历史订单明细")
         self._cmb_winning = QComboBox()
-        self._cmb_winning.addItem("不限中奖（暂未开放）")
-        self._cmb_winning.setEnabled(False)
-        self._cmb_winning.setToolTip("完整中奖筛选需要兑奖结果数据，当前版本暂未开放")
+        for label, value in WINNING_FILTER_OPTIONS:
+            self._cmb_winning.addItem(label, value)
+        self._cmb_winning.setToolTip("基于订单状态和已有结算记录筛选，不重新计算结算")
         self._cmb_declarer = QComboBox()
         self._cmb_declarer.addItem("不限申报人", None)
 
@@ -461,11 +482,14 @@ class OrderDetailPage(QWidget):
     def reload_data(self) -> None:
         if not self._validate_dates():
             return
+        self._reload_bet_type_filter_options()
         self._reload_declarer_filter_options()
-        region, order_no, declarer, channel, status, start_dt, end_dt = self._filters()
+        region, order_no, bet_type, winning_status, declarer, channel, status, start_dt, end_dt = self._filters()
         self._total = self._order_service.count_orders(
             region=region,
             order_no=order_no,
+            bet_type=bet_type,
+            winning_status=winning_status,
             declarer_name=declarer,
             channel=channel,
             status=status,
@@ -478,6 +502,8 @@ class OrderDetailPage(QWidget):
         rows = self._order_service.list_orders(
             region=region,
             order_no=order_no,
+            bet_type=bet_type,
+            winning_status=winning_status,
             declarer_name=declarer,
             channel=channel,
             status=status,
@@ -506,12 +532,32 @@ class OrderDetailPage(QWidget):
         return (
             region,
             self._edit_order_no.text().strip() or None,
+            self._cmb_bet_type.currentData(),
+            self._cmb_winning.currentData(),
             self._cmb_declarer.currentData(),
             self._edit_channel.text().strip() or None,
             status,
             self._start_datetime(),
             self._end_datetime(),
         )
+
+    def _reload_bet_type_filter_options(self) -> None:
+        selected_bet_type = self._cmb_bet_type.currentData()
+        try:
+            bet_types = self._order_service.list_bet_types()
+        except Exception as exc:
+            self._cmb_bet_type.setToolTip(f"投注类型读取失败：{exc}")
+            return
+
+        self._cmb_bet_type.blockSignals(True)
+        self._cmb_bet_type.clear()
+        self._cmb_bet_type.addItem("不限投注类型", None)
+        for bet_type in bet_types:
+            self._cmb_bet_type.addItem(bet_type, bet_type)
+        selected_index = self._cmb_bet_type.findData(selected_bet_type)
+        self._cmb_bet_type.setCurrentIndex(max(0, selected_index))
+        self._cmb_bet_type.blockSignals(False)
+        self._cmb_bet_type.setToolTip("投注类型来自历史订单明细")
 
     def _reload_declarer_filter_options(self) -> None:
         selected_name = self._cmb_declarer.currentData()
@@ -638,6 +684,8 @@ class OrderDetailPage(QWidget):
 
     def _on_reset(self) -> None:
         self._cmb_region.setCurrentIndex(0)
+        self._cmb_bet_type.setCurrentIndex(0)
+        self._cmb_winning.setCurrentIndex(0)
         self._cmb_status.setCurrentIndex(0)
         self._cmb_declarer.setCurrentIndex(0)
         self._edit_order_no.clear()
@@ -655,7 +703,7 @@ class OrderDetailPage(QWidget):
             self._status_label.setText("已取消导出")
             return
 
-        region, order_no, declarer, _channel, status, start_dt, end_dt = self._filters()
+        region, order_no, bet_type, winning_status, declarer, _channel, status, start_dt, end_dt = self._filters()
         try:
             result = self._excel_export_service.export_orders(
                 region=region,
@@ -664,6 +712,8 @@ class OrderDetailPage(QWidget):
                 end_date=end_dt,
                 keyword=order_no,
                 declarer_name=declarer,
+                bet_type=bet_type,
+                winning_status=winning_status,
                 include_voided=False,
                 output_dir=output_dir,
             )
@@ -674,6 +724,113 @@ class OrderDetailPage(QWidget):
 
         QMessageBox.information(self, "导出订单", _export_success_message(result))
         self._status_label.setText(f"导出成功：{result.file_name}")
+
+    def _on_filter_settlement_results(self) -> None:
+        summary = self._build_current_settlement_summary()
+        text = (
+            "过滤结算结果为只读统计功能，不写数据库，不计算赔付金额。\n\n"
+            f"{summary}"
+        )
+        self._combined_result.setPlainText(text)
+        self._status_label.setText("已生成过滤结算结果摘要")
+        QMessageBox.information(self, "过滤结算结果", text)
+
+    def _on_combined_settlement_summary(self) -> None:
+        text = (
+            "综合结算摘要（只读）\n"
+            "中奖金额：—（当前版本不计算赔付金额）\n\n"
+            f"{self._build_current_settlement_summary()}"
+        )
+        self._combined_result.setPlainText(text)
+        self._status_label.setText("已生成综合结算摘要")
+        QMessageBox.information(self, "综合结算摘要", text)
+
+    def _on_toggle_result_panel_size(self) -> None:
+        self._result_expanded = not self._result_expanded
+        max_height = 180 if self._result_expanded else 82
+        min_height = 210 if self._result_expanded else 0
+        for result in (self._macau_result, self._hong_kong_result, self._combined_result):
+            result.setMaximumHeight(max_height)
+        self._result_section.setMinimumHeight(min_height)
+        self._btn_expand_prize.setText("收起兑奖框" if self._result_expanded else "扩大兑奖框")
+        self._status_label.setText("已扩大底部结果区" if self._result_expanded else "已收起底部结果区")
+
+    def _on_business_action_selected(self, index: int) -> None:
+        action = self._cmb_toolbar_placeholder.itemData(index)
+        self._cmb_toolbar_placeholder.setCurrentIndex(0)
+        if action is None:
+            return
+        if action == "detail":
+            if self._selected_order_id is None:
+                self._status_label.setText("请先选择订单再查看详情")
+                return
+            self._context_tabs.setCurrentIndex(1)
+            self._status_label.setText("已切换到所选订单详情")
+            return
+        if action == "preview":
+            self._on_settlement_preview()
+            return
+        if action == "void":
+            self._on_void_order()
+            return
+        self._status_label.setText("该业务操作不可用")
+
+    def _build_current_settlement_summary(self) -> str:
+        orders = self._list_current_filtered_orders()
+        records = self._settlement_service.get_settlement_records_by_order_ids([order.id for order in orders])
+        total_amount = sum((order.total_amount for order in orders), Decimal("0"))
+        status_counts = {
+            "已结算": 0,
+            "未结算": 0,
+            "命中": 0,
+            "未中": 0,
+            "部分命中": 0,
+            "含不支持": 0,
+        }
+        for order in orders:
+            if order.status == ORDER_STATUS_SETTLED:
+                status_counts["已结算"] += 1
+            elif order.status in {"active", "pending"}:
+                status_counts["未结算"] += 1
+            display_status = _settlement_status(records.get(order.id), order.status)
+            if display_status in status_counts:
+                status_counts[display_status] += 1
+
+        return (
+            f"订单数：{len(orders)}\n"
+            f"已结算数：{status_counts['已结算']}    未结算数：{status_counts['未结算']}\n"
+            f"命中订单数：{status_counts['命中']}    未中订单数：{status_counts['未中']}\n"
+            f"部分命中订单数：{status_counts['部分命中']}    含不支持订单数：{status_counts['含不支持']}\n"
+            f"当前订单总额：{_money(total_amount)}\n"
+            "赔付/中奖金额：—（未计算）"
+        )
+
+    def _list_current_filtered_orders(self) -> list[OrderSummary]:
+        if not self._validate_dates():
+            return []
+        region, order_no, bet_type, winning_status, declarer, channel, status, start_dt, end_dt = self._filters()
+        rows: list[OrderSummary] = []
+        offset = 0
+        page_size = 200
+        while True:
+            page = self._order_service.list_orders(
+                region=region,
+                order_no=order_no,
+                bet_type=bet_type,
+                winning_status=winning_status,
+                declarer_name=declarer,
+                channel=channel,
+                status=status,
+                start_date=start_dt,
+                end_date=end_dt,
+                limit=page_size,
+                offset=offset,
+            )
+            rows.extend(page)
+            if len(page) < page_size:
+                break
+            offset += page_size
+        return rows
 
     def _prev_page(self) -> None:
         if self._page > 1:

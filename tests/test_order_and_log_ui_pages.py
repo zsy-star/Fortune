@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 from datetime import date
+from decimal import Decimal
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -56,6 +58,26 @@ def create_single_item_order(
             raw_text=f"特码 {selection} 各10",
             source="test",
             items=[OrderItemCreate(bet_type="特码", selection=selection, amount="10")],
+        )
+    )
+
+
+def create_typed_order(
+    service: OrderService,
+    *,
+    bet_type: str,
+    selection: str,
+    customer: str,
+    region: str = "澳门",
+):
+    return service.create_order(
+        OrderCreate(
+            customer_name=customer,
+            channel="测试渠道",
+            region=region,
+            raw_text=f"{bet_type} {selection} 10",
+            source="test",
+            items=[OrderItemCreate(bet_type=bet_type, selection=selection, amount="10")],
         )
     )
 
@@ -222,7 +244,7 @@ def test_order_detail_business_layout_and_core_entries(session_factory) -> None:
     assert not page._btn_void.isEnabled()
 
 
-def test_order_detail_unavailable_actions_are_explicitly_disabled(session_factory) -> None:
+def test_order_detail_remaining_unavailable_actions_are_explicitly_disabled(session_factory) -> None:
     app()
     page = OrderDetailPage(
         order_service=OrderService(session_factory),
@@ -232,15 +254,41 @@ def test_order_detail_unavailable_actions_are_explicitly_disabled(session_factor
     buttons = [
         page._btn_clear_orders,
         page._btn_import_orders,
-        page._btn_filter_prize,
-        page._btn_combined_prize,
         page._btn_reset_draw,
-        page._btn_expand_prize,
     ]
     assert all(not button.isEnabled() for button in buttons)
     assert all("暂未开放" in button.toolTip() for button in buttons)
-    assert not page._cmb_bet_type.isEnabled()
-    assert not page._cmb_winning.isEnabled()
+    assert page._btn_filter_prize.isEnabled()
+    assert page._btn_filter_prize.text() == "过滤结算结果"
+    assert page._btn_combined_prize.isEnabled()
+    assert page._btn_combined_prize.text() == "综合结算摘要"
+    assert page._btn_expand_prize.isEnabled()
+    assert page._cmb_bet_type.isEnabled()
+    assert page._cmb_winning.isEnabled()
+    assert page._cmb_toolbar_placeholder.isEnabled()
+
+
+def test_order_detail_bet_type_filter_loads_and_filters_real_items(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    special = create_typed_order(service, bet_type="特码", selection="01", customer="特码客户")
+    create_typed_order(service, bet_type="特码波色", selection="红波", customer="波色客户")
+    page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
+
+    options = [page._cmb_bet_type.itemText(index) for index in range(page._cmb_bet_type.count())]
+    assert options[0] == "不限投注类型"
+    assert "特码" in options
+    assert "特码波色" in options
+
+    page._cmb_bet_type.setCurrentText("特码")
+    page._on_query()
+
+    assert page._table.rowCount() == 1
+    assert page._table.item(0, 6).text() == special.order_no
+
+    page._on_reset()
+    assert page._cmb_bet_type.currentText() == "不限投注类型"
+    assert page._table.rowCount() == 2
 
 
 def test_order_detail_selected_and_current_totals(session_factory) -> None:
@@ -353,6 +401,125 @@ def test_order_detail_uses_persisted_counts_for_winning_statuses(session_factory
     assert table_winning_status(page, miss.order_no) == "未中"
     assert table_winning_status(page, partial.order_no) == "部分命中"
     assert table_winning_status(page, unsupported.order_no) == "含不支持"
+
+
+def test_order_detail_winning_filter_uses_persisted_settlement_counts(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    unsettled = create_single_item_order(service, selection="01", customer="未结算")
+    hit = create_single_item_order(service, selection="01", customer="命中")
+    miss = create_single_item_order(service, selection="02", customer="未中")
+    partial = create_order(service, customer="部分命中")
+    unsupported = create_single_item_order(service, selection="01", customer="含不支持")
+    draw = create_settlement_draw(session_factory)
+    settlement_service = SettlementService(session_factory)
+    for order in (hit, miss, partial, unsupported):
+        settlement_service.commit_order_settlement(order.id, draw.id)
+
+    with session_factory() as session:
+        record = session.query(SettlementRecord).filter_by(order_id=unsupported.id).one()
+        record.unsupported_count = 1
+        record.total_items = 2
+        record.result_snapshot = {
+            "items": [
+                {"bet_type": "特码", "selection": "01", "is_supported": True, "is_winner": True},
+                {"bet_type": "连肖", "selection": "马,蛇", "is_supported": False, "is_winner": None},
+            ]
+        }
+        session.commit()
+
+    page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
+    cases = {
+        "未结算": unsettled.order_no,
+        "命中": hit.order_no,
+        "未中": miss.order_no,
+        "部分命中": partial.order_no,
+        "含不支持": unsupported.order_no,
+    }
+    for winning_filter, expected_order_no in cases.items():
+        page._cmb_winning.setCurrentText(winning_filter)
+        page._on_query()
+        assert page._table.rowCount() == 1
+        assert page._table.item(0, 6).text() == expected_order_no
+
+    page._cmb_winning.setCurrentText("已结算")
+    page._on_query()
+    assert page._table.rowCount() == 4
+
+    page._on_reset()
+    assert page._cmb_winning.currentText() == "不限中奖"
+    assert page._table.rowCount() == 5
+
+
+def test_order_detail_winning_filter_does_not_recalculate_settlement(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    create_single_item_order(service, selection="01", customer="未结算")
+    settlement_service = SettlementService(session_factory)
+
+    with patch.object(settlement_service, "preview_order", side_effect=AssertionError("should not recalculate")):
+        page = OrderDetailPage(
+            order_service=service,
+            log_service=LogService(session_factory),
+            settlement_service=settlement_service,
+        )
+        page._cmb_winning.setCurrentText("未结算")
+        page._on_query()
+
+    assert page._table.rowCount() == 1
+
+
+def test_order_detail_filter_and_combined_settlement_summary_are_readonly(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    create_order(service, customer="未结算")
+    hit = create_single_item_order(service, selection="01", customer="命中")
+    draw = create_settlement_draw(session_factory)
+    SettlementService(session_factory).commit_order_settlement(hit.id, draw.id)
+    page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
+    log_count_before = LogService(session_factory).count_logs()
+
+    with patch("ui.pages.order_detail_page.QMessageBox.information") as info:
+        page._on_filter_settlement_results()
+        page._on_combined_settlement_summary()
+
+    assert info.call_count == 2
+    assert "订单数：2" in page._combined_result.toPlainText()
+    assert "中奖金额：—" in page._combined_result.toPlainText()
+    assert LogService(session_factory).count_logs() == log_count_before
+
+
+def test_order_detail_expand_and_collapse_result_panel(session_factory) -> None:
+    app()
+    page = OrderDetailPage(
+        order_service=OrderService(session_factory),
+        log_service=LogService(session_factory),
+    )
+
+    assert page._macau_result.maximumHeight() == 82
+    page._on_toggle_result_panel_size()
+    assert page._btn_expand_prize.text() == "收起兑奖框"
+    assert page._macau_result.maximumHeight() > 82
+    page._on_toggle_result_panel_size()
+    assert page._btn_expand_prize.text() == "扩大兑奖框"
+    assert page._macau_result.maximumHeight() == 82
+
+
+def test_order_detail_business_action_combo_has_no_silent_entries(session_factory) -> None:
+    app()
+    page = OrderDetailPage(
+        order_service=OrderService(session_factory),
+        log_service=LogService(session_factory),
+    )
+
+    actions = [
+        page._cmb_toolbar_placeholder.itemData(index)
+        for index in range(1, page._cmb_toolbar_placeholder.count())
+    ]
+    assert actions == ["detail", "preview", "void"]
+
+    page._on_business_action_selected(page._cmb_toolbar_placeholder.findData("detail"))
+    assert "请先选择订单" in page._status_label.text()
 
 
 def test_order_detail_selected_settlement_summary_uses_snapshot(session_factory) -> None:

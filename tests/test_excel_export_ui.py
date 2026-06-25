@@ -133,6 +133,8 @@ def test_order_export_button_calls_export_orders(session_factory, tmp_path) -> N
                 "end_date": None,
                 "keyword": "ORD-001",
                 "declarer_name": None,
+                "bet_type": None,
+                "winning_status": None,
                 "include_voided": False,
                 "output_dir": str(tmp_path),
             },
