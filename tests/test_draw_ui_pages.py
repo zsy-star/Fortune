@@ -5,12 +5,15 @@ from datetime import date
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from schemas.draw_schema import LotteryDrawCreate
 from services.draw_service import DrawService
+from services.draw_sync_service import DrawSyncResult
 from services.log_service import LogService
 import ui.pages.draw_history_page as draw_history_module
+from ui.app_events import app_events
 from ui.pages.draw_history_page import DrawHistoryPage
 from ui.pages.today_draw_page import TodayDrawPage
 
@@ -108,6 +111,31 @@ def test_draw_history_page_loads_records(session_factory) -> None:
     assert page._table.item(0, 1).text() == "162"
 
 
+def test_today_draw_page_refreshes_on_draws_changed(session_factory) -> None:
+    app()
+    service = DrawService(session_factory)
+    page = TodayDrawPage(draw_service=service)
+    assert page._region_widgets["澳门"]["meta"].text() == "暂无开奖数据"
+
+    add_draw(session_factory)
+    app_events.draws_changed.emit()
+
+    assert "第162期" in page._region_widgets["澳门"]["badge"].text()
+
+
+def test_draw_history_page_refreshes_on_draws_changed(session_factory) -> None:
+    app()
+    service = DrawService(session_factory)
+    page = DrawHistoryPage(draw_service=service)
+    assert page._table.rowCount() == 0
+
+    add_draw(session_factory)
+    app_events.draws_changed.emit()
+
+    assert page._table.rowCount() == 1
+    assert page._table.item(0, 1).text() == "162"
+
+
 def test_draw_history_manual_add_valid_draw_success(session_factory, monkeypatch) -> None:
     app()
     payload = LotteryDrawCreate(
@@ -120,11 +148,15 @@ def test_draw_history_manual_add_valid_draw_success(session_factory, monkeypatch
     _patch_manual_dialog(monkeypatch, payload)
 
     page = DrawHistoryPage(draw_service=DrawService(session_factory))
+    draws_spy = QSignalSpy(app_events.draws_changed)
+    logs_spy = QSignalSpy(app_events.logs_changed)
     page._on_manual_add_draw()
 
     found = DrawService(session_factory).get_draw("澳门", "200")
     assert found is not None
     assert found.source == "manual_ui"
+    assert draws_spy.count() == 1
+    assert logs_spy.count() == 1
     assert page._table.rowCount() == 1
     assert LogService(session_factory).count_logs(module="draw", action="create") == 1
 
@@ -207,6 +239,8 @@ def test_draw_history_manual_edit_existing_draw_success(session_factory, monkeyp
 
     page = DrawHistoryPage(draw_service=service)
     page._table.selectRow(0)
+    draws_spy = QSignalSpy(app_events.draws_changed)
+    logs_spy = QSignalSpy(app_events.logs_changed)
     page._on_manual_edit_draw()
 
     found = service.get_draw("澳门", "202")
@@ -214,6 +248,8 @@ def test_draw_history_manual_edit_existing_draw_success(session_factory, monkeyp
     assert found.draw_date == date(2026, 6, 16)
     assert found.regular_numbers == ["08", "09", "10", "11", "12", "13"]
     assert found.special_number == "14"
+    assert draws_spy.count() == 1
+    assert logs_spy.count() == 1
     logs = LogService(session_factory).list_logs(module="draw", action="manual_update")
     assert len(logs) == 1
     assert "reason=同步源更正" in logs[0].description
@@ -316,3 +352,28 @@ def test_draw_history_manual_buttons_do_not_disable_sync_buttons(session_factory
     assert not page._btn_manual_edit.isEnabled()
     assert page._btn_sync_latest.isEnabled()
     assert page._btn_sync_history.isEnabled()
+
+
+def test_draw_history_sync_success_emits_draw_and_log_events(session_factory) -> None:
+    app()
+    page = DrawHistoryPage(draw_service=DrawService(session_factory))
+    draws_spy = QSignalSpy(app_events.draws_changed)
+    logs_spy = QSignalSpy(app_events.logs_changed)
+
+    page._on_sync_success(DrawSyncResult(created=1))
+
+    assert draws_spy.count() == 1
+    assert logs_spy.count() == 1
+
+
+def test_today_draw_sync_success_emits_draw_and_log_events(session_factory) -> None:
+    app()
+    page = TodayDrawPage(draw_service=DrawService(session_factory))
+    page._sync_totals = DrawSyncResult()
+    draws_spy = QSignalSpy(app_events.draws_changed)
+    logs_spy = QSignalSpy(app_events.logs_changed)
+
+    page._on_sync_success("澳门", DrawSyncResult(created=1))
+
+    assert draws_spy.count() == 1
+    assert logs_spy.count() == 1

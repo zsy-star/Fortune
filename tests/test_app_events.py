@@ -20,6 +20,7 @@ from ui.pages.order_analysis_page import OrderAnalysisPage
 from ui.pages.order_detail_page import OrderDetailPage
 from ui.pages.overview_page import OverviewPage
 from ui.pages.settlement_ledger_page import SettlementLedgerPage
+from ui.main_window import MainWindow
 from ui.windows.record_order_window import RecordOrderWindow
 
 
@@ -138,6 +139,33 @@ def test_log_and_settlement_pages_subscribe_to_change_events(session_factory) ->
 
     reload_logs.assert_called_once_with()
     reload_settlements.assert_called_once_with()
+
+
+def test_database_restore_event_reloads_main_window_pages(monkeypatch) -> None:
+    app()
+    window = MainWindow()
+    calls: list[str] = []
+    try:
+        for index in range(window._stack.count()):
+            page = window._stack.widget(index)
+            if callable(getattr(page, "reload_data", None)):
+                monkeypatch.setattr(
+                    page,
+                    "reload_data",
+                    lambda page=page: calls.append(type(page).__name__),
+                )
+
+        app_events.app_data_reloaded.emit()
+
+        assert "OverviewPage" in calls
+        assert "OrderAnalysisPage" in calls
+        assert "OrderDetailPage" in calls
+        assert "DrawHistoryPage" in calls
+        assert "OperationLogPage" in calls
+        assert "SettlementLedgerPage" in calls
+    finally:
+        window.close()
+        window.deleteLater()
 
 
 def test_page_event_handlers_report_unexpected_refresh_failures(session_factory) -> None:

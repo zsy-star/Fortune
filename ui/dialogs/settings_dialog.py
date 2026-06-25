@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 
 from schemas.settings_schema import OddsRebateItemUpdate, OddsRebatePlanResult
 from services.settings_service import SettingsService
+from ui.app_events import app_events
 
 
 def _decimal_text(value: Decimal) -> str:
@@ -274,6 +275,10 @@ class SettingsDialog(QDialog):
         self._import_key_input.setText(secrets.import_key)
         self._export_key_input.setText(secrets.export_key)
 
+    def _notify_settings_changed(self) -> None:
+        app_events.settings_changed.emit()
+        app_events.logs_changed.emit()
+
     def _reload_plans(self, *, selected_plan_id: int | None = None) -> None:
         if selected_plan_id is None:
             selected_plan_id = self._plan_combo.currentData()
@@ -348,6 +353,7 @@ class SettingsDialog(QDialog):
             plan = self._service.create_plan(name)
             self._reload_plans(selected_plan_id=plan.id)
             self._reload_declarers()
+            self._notify_settings_changed()
         except ValueError as exc:
             self._show_error(str(exc))
 
@@ -368,6 +374,7 @@ class SettingsDialog(QDialog):
         try:
             self._service.delete_plan(plan.id)
             self.reload_data()
+            self._notify_settings_changed()
         except ValueError as exc:
             self._show_error(str(exc))
 
@@ -385,6 +392,7 @@ class SettingsDialog(QDialog):
         try:
             self._service.set_default_plan(plan.id)
             self._reload_plans(selected_plan_id=plan.id)
+            self._notify_settings_changed()
         except ValueError as exc:
             self._show_error(str(exc))
 
@@ -404,6 +412,7 @@ class SettingsDialog(QDialog):
             self._odds_input.clear()
             self._rebate_input.clear()
             self._reload_plans(selected_plan_id=plan.id)
+            self._notify_settings_changed()
         except ValueError as exc:
             self._show_error(str(exc))
 
@@ -417,6 +426,7 @@ class SettingsDialog(QDialog):
         try:
             self._service.delete_item(plan.id, int(item_id))
             self._reload_plans(selected_plan_id=plan.id)
+            self._notify_settings_changed()
         except ValueError as exc:
             self._show_error(str(exc))
 
@@ -437,6 +447,7 @@ class SettingsDialog(QDialog):
         try:
             self._service.update_items(plan.id, updates)
             self._reload_plans(selected_plan_id=plan.id)
+            self._notify_settings_changed()
             QMessageBox.information(self, "保存配置", "赔率/返水配置已保存。")
         except ValueError as exc:
             self._show_error(str(exc))
@@ -451,6 +462,7 @@ class SettingsDialog(QDialog):
             self._service.add_declarer(self._declarer_name_input.text(), plan.id)
             self._declarer_name_input.clear()
             self._reload_declarers()
+            self._notify_settings_changed()
         except ValueError as exc:
             self._show_error(str(exc))
 
@@ -463,6 +475,7 @@ class SettingsDialog(QDialog):
         try:
             self._service.delete_declarer(declarer_id)
             self._reload_declarers()
+            self._notify_settings_changed()
         except ValueError as exc:
             self._show_error(str(exc))
 
@@ -472,6 +485,7 @@ class SettingsDialog(QDialog):
             return
         try:
             self._service.update_declarer_plan(declarer_id, int(plan_id))
+            self._notify_settings_changed()
         except ValueError as exc:
             self._show_error(str(exc))
             self._reload_declarers()
@@ -485,6 +499,7 @@ class SettingsDialog(QDialog):
                 self._import_key_input.text(),
                 self._export_key_input.text(),
             )
+            self._notify_settings_changed()
             QMessageBox.information(self, "保存秘钥", "导入/导出秘钥设置已保存。")
         except ValueError as exc:
             self._show_error(str(exc))

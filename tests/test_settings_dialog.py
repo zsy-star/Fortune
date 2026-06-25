@@ -5,9 +5,11 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QApplication, QDialog, QLineEdit
 
 from services.settings_service import SettingsService
+from ui.app_events import app_events
 from ui.dialogs.settings_dialog import SettingsDialog
 from ui.main_window import MainWindow
 
@@ -67,15 +69,21 @@ def test_dialog_adds_declarer_and_binds_plan(session_factory) -> None:
     default = service.ensure_default_plan()
     custom = service.create_plan("46倍6水")
     dialog = SettingsDialog(settings_service=service)
+    settings_spy = QSignalSpy(app_events.settings_changed)
+    logs_spy = QSignalSpy(app_events.logs_changed)
 
     dialog._declarer_name_input.setText("林林")
     dialog._on_add_declarer()
     assert dialog._declarer_table.rowCount() == 1
     assert service.list_declarers()[0].plan_id == default.id
+    assert settings_spy.count() == 1
+    assert logs_spy.count() == 1
 
     plan_combo = dialog._declarer_table.cellWidget(0, 1)
     plan_combo.setCurrentIndex(plan_combo.findData(custom.id))
     assert SettingsService(session_factory).list_declarers()[0].plan_id == custom.id
+    assert settings_spy.count() == 2
+    assert logs_spy.count() == 2
 
 
 def test_dialog_secret_mask_toggle_save_and_reload(session_factory) -> None:

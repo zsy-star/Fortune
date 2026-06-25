@@ -28,6 +28,7 @@ from models import LotteryDraw
 from schemas.draw_schema import LotteryDrawCreate
 from services.draw_service import DrawService
 from services.draw_sync_service import DrawSyncResult
+from ui.app_events import app_events
 from ui.workers import DrawSyncTask
 
 REGION_LOTTERY_TYPE = {"澳门": 2, "香港": 1}
@@ -54,6 +55,7 @@ class DrawHistoryPage(QWidget):
         root.addWidget(self._build_status_panel())
 
         self._apply_stylesheet()
+        app_events.draws_changed.connect(self._on_draws_changed)
         self.reload_data()
 
     def showEvent(self, event) -> None:  # noqa: N802
@@ -175,6 +177,9 @@ class DrawHistoryPage(QWidget):
             start_date=start_date,
             end_date=end_date,
         )
+        total_pages = max(1, (self._total + PAGE_SIZE - 1) // PAGE_SIZE)
+        if self._page > total_pages:
+            self._page = total_pages
         offset = (self._page - 1) * PAGE_SIZE
         rows = self._draw_service.list_draws(
             region=region,
@@ -186,6 +191,12 @@ class DrawHistoryPage(QWidget):
         )
         self._fill_table(rows)
         self._update_pager()
+
+    def _on_draws_changed(self) -> None:
+        try:
+            self.reload_data()
+        except Exception as exc:
+            self._status_label.setText(f"开奖数据已变更，但自动刷新失败：{exc}")
 
     def _filters(self) -> tuple[str | None, str | None, date | None, date | None]:
         region_text = self._cmb_region.currentText()
@@ -310,7 +321,8 @@ class DrawHistoryPage(QWidget):
         self._status_label.setText(message)
 
     def _on_sync_success(self, result: DrawSyncResult) -> None:
-        self.reload_data()
+        app_events.draws_changed.emit()
+        app_events.logs_changed.emit()
         if result.skipped and not result.created and not result.updated and not result.failed:
             self._status_label.setText("没有新数据，当前已经是最新一期。")
             return
@@ -321,6 +333,7 @@ class DrawHistoryPage(QWidget):
 
     def _on_sync_failed(self, message: str) -> None:
         self._status_label.setText(f"同步失败：{self._friendly_error(message)}")
+        app_events.logs_changed.emit()
 
     def _on_selection_changed(self) -> None:
         self._btn_manual_edit.setEnabled(self._selected_draw_id() is not None)
@@ -343,7 +356,8 @@ class DrawHistoryPage(QWidget):
         except Exception as exc:
             self._show_manual_error("手工新增开奖记录失败", exc)
             return
-        self.reload_data()
+        app_events.draws_changed.emit()
+        app_events.logs_changed.emit()
         self._status_label.setText(f"已手工新增开奖记录：{draw.region} 第{draw.issue_number}期")
         QMessageBox.information(self, "开奖记录", "手工新增开奖记录已保存。")
 
@@ -377,7 +391,8 @@ class DrawHistoryPage(QWidget):
         except Exception as exc:
             self._show_manual_error("修正开奖记录失败", exc)
             return
-        self.reload_data()
+        app_events.draws_changed.emit()
+        app_events.logs_changed.emit()
         self._status_label.setText(f"已修正开奖记录：{updated.region} 第{updated.issue_number}期")
         QMessageBox.information(self, "开奖记录", "开奖记录修正已保存。")
 

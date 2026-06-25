@@ -143,6 +143,8 @@ class OrderDetailPage(QWidget):
 
         self._apply_stylesheet()
         app_events.orders_changed.connect(self._on_orders_changed)
+        app_events.draws_changed.connect(self._on_draws_changed)
+        app_events.settings_changed.connect(self._on_settings_changed)
         self.reload_data()
 
     def showEvent(self, event) -> None:  # noqa: N802
@@ -157,6 +159,18 @@ class OrderDetailPage(QWidget):
                 self._load_detail(selected_order_id)
         except Exception as exc:
             self._status_label.setText(f"订单数据已变更，但自动刷新失败：{exc}")
+
+    def _on_draws_changed(self) -> None:
+        try:
+            self._reload_draws()
+        except Exception as exc:
+            self._status_label.setText(f"开奖数据已变更，但自动刷新失败：{exc}")
+
+    def _on_settings_changed(self) -> None:
+        try:
+            self._reload_declarer_filter_options()
+        except Exception as exc:
+            self._status_label.setText(f"设置数据已变更，但申报人筛选刷新失败：{exc}")
 
     def _build_toolbar(self) -> QFrame:
         frame = QFrame()

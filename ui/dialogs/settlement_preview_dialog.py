@@ -78,6 +78,7 @@ class SettlementPreviewDialog(QDialog):
 
       self._apply_stylesheet()
       self._load_order()
+      app_events.draws_changed.connect(self._on_draws_changed)
       if not self._invalid:
           self._reload_draws()
 
@@ -243,6 +244,8 @@ class SettlementPreviewDialog(QDialog):
   def _reload_draws(self) -> None:
       if not hasattr(self, "_order_detail"):
           return
+      selected_draw_id = self._cmb_draw.currentData()
+      self._clear_preview_results()
       self._draws = self._draw_service.list_draws(region=self._order_detail.region, limit=100)
       self._cmb_draw.blockSignals(True)
       self._cmb_draw.clear()
@@ -260,11 +263,19 @@ class SettlementPreviewDialog(QDialog):
       self._btn_commit.setEnabled(False)
 
       if has_draws:
-          self._cmb_draw.setCurrentIndex(0)
-          self._show_draw_detail(self._draws[0])
+          selected_index = self._cmb_draw.findData(selected_draw_id)
+          self._cmb_draw.setCurrentIndex(selected_index if selected_index >= 0 else 0)
+          self._show_draw_detail(self._draws[self._cmb_draw.currentIndex()])
       else:
           self._clear_draw_detail()
           self._clear_preview_results()
+
+  def _on_draws_changed(self) -> None:
+      try:
+          self._reload_draws()
+      except Exception as exc:
+          self._lbl_no_draws.setVisible(True)
+          self._lbl_no_draws.setText(f"开奖数据已变更，但自动刷新失败：{exc}")
 
   def _on_draw_changed(self, index: int) -> None:
       if index < 0 or index >= len(self._draws):

@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from services.order_parser import ParseResult, parse_order
+from ui.app_events import app_events
 
 
 class FakeSettingsService:
@@ -929,6 +930,33 @@ class TestDeclarerIntegration:
             window._cmb_declarer.setCurrentText("老汪")
             assert window._selected_config_plan_name() == "46倍6水"
             assert window._lbl_declarer_plan.text() == "配置方案：46倍6水"
+        finally:
+            window.close()
+            window.deleteLater()
+
+    def test_settings_changed_refreshes_declarer_options_and_plan_label(self, qapp, session_factory):
+        from services.order_intake_service import OrderIntakeService
+        from services.settings_service import SettingsService
+        from ui.windows.record_order_window import RecordOrderWindow
+
+        settings = SettingsService(session_factory)
+        settings.ensure_default_plan()
+        custom = settings.create_plan("47倍4水")
+        window = RecordOrderWindow(
+            order_intake_service=OrderIntakeService(session_factory),
+            settings_service=settings,
+        )
+        try:
+            assert "未设置" in window._cmb_declarer.currentText()
+
+            settings.add_declarer("事件申报人", custom.id)
+            app_events.settings_changed.emit()
+
+            index = window._cmb_declarer.findData("事件申报人")
+            assert index >= 0
+            window._cmb_declarer.setCurrentIndex(index)
+            assert window._selected_declarer_name() == "事件申报人"
+            assert window._lbl_declarer_plan.text() == "配置方案：47倍4水"
         finally:
             window.close()
             window.deleteLater()

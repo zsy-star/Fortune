@@ -20,6 +20,7 @@ from domain.zodiac_rules import get_zodiac
 from models import LotteryDraw
 from services.draw_service import DrawService
 from services.draw_sync_service import DrawSyncResult
+from ui.app_events import app_events
 from ui.workers import DrawSyncTask
 
 REGION_LOTTERY_TYPE = {"澳门": 2, "香港": 1}
@@ -78,6 +79,7 @@ class TodayDrawPage(QWidget):
         root.addStretch(1)
 
         self._apply_stylesheet()
+        app_events.draws_changed.connect(self._on_draws_changed)
         self.reload_data()
 
     def showEvent(self, event) -> None:  # noqa: N802
@@ -88,6 +90,12 @@ class TodayDrawPage(QWidget):
         for region in REGION_LOTTERY_TYPE:
             draw = self._draw_service.get_latest_draw(region)
             self._render_region(region, draw)
+
+    def _on_draws_changed(self) -> None:
+        try:
+            self.reload_data()
+        except Exception as exc:
+            self._sync_status.setText(f"开奖数据已变更，但自动刷新失败：{exc}")
 
     def _build_draw_block(self, region: str) -> QWidget:
         block = QWidget()
@@ -254,7 +262,6 @@ class TodayDrawPage(QWidget):
 
     def _sync_next_region(self) -> None:
         if not self._pending_regions:
-            self.reload_data()
             self._set_refresh_enabled(True)
             self._sync_status.setText(self._summary_text(self._sync_totals))
             return
@@ -287,11 +294,14 @@ class TodayDrawPage(QWidget):
             self._sync_status.setText(f"{region}没有新数据，当前已经是最新一期。")
         else:
             self._sync_status.setText(f"{region}{self._summary_text(result)}")
+        app_events.draws_changed.emit()
+        app_events.logs_changed.emit()
 
     def _on_sync_failed(self, region: str, message: str) -> None:
         self._sync_totals.failed += 1
         self._sync_totals.errors.append(f"{region}: {message}")
         self._sync_status.setText(f"{region}刷新失败：{self._friendly_error(message)}")
+        app_events.logs_changed.emit()
 
     def _set_refresh_enabled(self, enabled: bool) -> None:
         self._btn_refresh_all.setEnabled(enabled)

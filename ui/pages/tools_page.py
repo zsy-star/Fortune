@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from schemas.database_backup_schema import DatabaseBackupInfo
 from services.database_backup_service import DatabaseBackupService
+from ui.app_events import app_events
 from ui.windows import CalculatorWindow, SplitOrderWindow
 
 
@@ -319,6 +320,7 @@ class ToolsPage(QWidget):
             f"恢复前自动备份路径：{result.pre_restore_backup_path}"
         )
         self._backup_status.setText(message)
+        app_events.app_data_reloaded.emit()
         QMessageBox.information(self, "数据库恢复", message)
 
     def _on_tool_clicked(self, tool_id: str) -> None:

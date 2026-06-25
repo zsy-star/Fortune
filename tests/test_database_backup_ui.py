@@ -10,9 +10,11 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from schemas.database_backup_schema import DatabaseBackupInfo, DatabaseRestoreResult
+from ui.app_events import app_events
 from ui.pages.tools_page import ToolsPage
 
 
@@ -141,6 +143,7 @@ def test_restore_confirm_calls_service_with_confirm_true_and_shows_restart_hint(
     service = FakeBackupService([selected])
     page = make_page(service)
     page._backup_table.selectRow(0)
+    app_data_spy = QSignalSpy(app_events.app_data_reloaded)
 
     with (
         patch(
@@ -154,6 +157,7 @@ def test_restore_confirm_calls_service_with_confirm_true_and_shows_restart_hint(
     question.assert_called_once()
     service.restore_backup.assert_called_once_with(selected.backup_path, confirm=True)
     info.assert_called_once()
+    assert app_data_spy.count() == 1
     assert "恢复成功，建议重启软件后继续使用" in info.call_args.args[2]
     assert "恢复前自动备份路径" in info.call_args.args[2]
 

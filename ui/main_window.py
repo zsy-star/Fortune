@@ -1,5 +1,6 @@
 """主窗口：顶部导航 + 中部堆叠页面。"""
 
+import logging
 
 
 from PySide6.QtWidgets import (
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
 
 
 from core.config import APP_NAME
+from ui.app_events import app_events
 from ui.dialogs.settings_dialog import SettingsDialog
 
 from ui.pages import (
@@ -54,6 +56,9 @@ from ui.pages import (
 from ui.widgets import NavHoverMenuButton
 
 from ui.windows import RecordOrderWindow
+
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -252,6 +257,7 @@ class MainWindow(QMainWindow):
 
 
 
+        app_events.app_data_reloaded.connect(self._on_app_data_reloaded)
         self._apply_stylesheet()
 
 
@@ -331,6 +337,32 @@ class MainWindow(QMainWindow):
             self._settings_dialog.exec()
         finally:
             self._settings_dialog = None
+
+
+
+    def _on_app_data_reloaded(self) -> None:
+        """Reload database-backed UI after a successful database restore."""
+        for index in range(self._stack.count()):
+            page = self._stack.widget(index)
+            reload_data = getattr(page, "reload_data", None)
+            if not callable(reload_data):
+                continue
+            try:
+                reload_data()
+            except Exception:
+                logger.exception("Failed to reload %s after database restore", type(page).__name__)
+
+        if self._record_order_window is not None:
+            try:
+                self._record_order_window.reload_declarers()
+            except Exception:
+                logger.exception("Failed to reload record-order settings after database restore")
+
+        if self._settings_dialog is not None:
+            try:
+                self._settings_dialog.reload_data()
+            except Exception:
+                logger.exception("Failed to reload settings dialog after database restore")
 
 
 

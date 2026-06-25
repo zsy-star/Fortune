@@ -138,6 +138,7 @@ class RecordOrderWindow(QMainWindow):
 
         self._apply_stylesheet()
         self._apply_font_scale()
+        app_events.settings_changed.connect(self._on_settings_changed)
         self.reload_declarers()
 
     # ─────────────────── 窗口缩放 → 字体自适应 ───────────────────
@@ -930,6 +931,14 @@ class RecordOrderWindow(QMainWindow):
                 self._cmb_declarer.setToolTip("设置中心尚未配置申报人；订单仍可保存")
         self._cmb_declarer.blockSignals(False)
         self._update_declarer_plan_label()
+
+    def _on_settings_changed(self) -> None:
+        try:
+            self.reload_declarers()
+        except Exception as exc:
+            self._declarer_config_load_failed = True
+            self._cmb_declarer.setToolTip(f"设置数据已变更，但自动刷新失败：{exc}")
+            self._update_declarer_plan_label()
 
     def _selected_declarer_name(self) -> str | None:
         if not hasattr(self, "_cmb_declarer"):

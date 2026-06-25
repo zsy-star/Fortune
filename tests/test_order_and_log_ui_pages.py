@@ -16,6 +16,7 @@ from services.log_service import LogService
 from services.order_service import OrderService
 from services.settlement_service import SettlementService
 from services.settings_service import SettingsService
+from ui.app_events import app_events
 from ui.pages.operation_log_page import OperationLogPage
 from ui.pages.order_detail_page import OrderDetailPage
 
@@ -149,6 +150,23 @@ def test_order_detail_declarer_filter_empty_sources_is_safe(session_factory) -> 
     assert page._table.rowCount() == 0
 
 
+def test_order_detail_declarer_filter_refreshes_on_settings_changed(session_factory) -> None:
+    app()
+    settings_service = SettingsService(session_factory)
+    plan = settings_service.ensure_default_plan()
+    page = OrderDetailPage(
+        order_service=OrderService(session_factory),
+        log_service=LogService(session_factory),
+        settings_service=settings_service,
+    )
+    assert page._cmb_declarer.findText("新增申报人") < 0
+
+    settings_service.add_declarer("新增申报人", plan.id)
+    app_events.settings_changed.emit()
+
+    assert page._cmb_declarer.findText("新增申报人") >= 0
+
+
 def test_order_detail_filters_exact_declarer_and_combines_conditions(session_factory) -> None:
     app()
     service = OrderService(session_factory)
@@ -254,6 +272,32 @@ def test_order_detail_draw_area_has_empty_placeholders(session_factory) -> None:
     for region in ("澳门", "香港"):
         placeholder = page._draw_widgets[region]["placeholder"]
         assert placeholder.text() == "暂无开奖数据"
+
+
+def test_order_detail_draw_area_refreshes_on_draws_changed(session_factory) -> None:
+    app()
+    draw_service = DrawService(session_factory)
+    page = OrderDetailPage(
+        order_service=OrderService(session_factory),
+        log_service=LogService(session_factory),
+        draw_service=draw_service,
+    )
+    assert page._draw_widgets["澳门"]["placeholder"].text() == "暂无开奖数据"
+
+    draw_service.create_draw(
+        LotteryDrawCreate(
+            region="澳门",
+            issue_number="AUTO-1",
+            draw_date=date(2026, 6, 25),
+            regular_numbers=["01", "02", "03", "04", "05", "06"],
+            special_number="07",
+            source="test",
+        )
+    )
+    app_events.draws_changed.emit()
+
+    assert "AUTO-1" in page._draw_widgets["澳门"]["title"].text()
+    assert page._draw_widgets["澳门"]["placeholder"].isHidden()
 
 
 def test_order_detail_unsettled_order_keeps_amount_unavailable(session_factory) -> None:

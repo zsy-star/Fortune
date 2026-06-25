@@ -181,6 +181,21 @@ def test_refresh_draws_reads_database_only(session_factory) -> None:
     assert dialog._cmb_draw.count() == 1
 
 
+def test_dialog_draw_list_refreshes_on_draws_changed(session_factory) -> None:
+    app()
+    order_service = OrderService(session_factory)
+    draw_service = DrawService(session_factory)
+    order = create_order(order_service)
+    dialog = open_preview_dialog(session_factory, order.id)
+    assert dialog._cmb_draw.count() == 0
+
+    create_draw(draw_service, issue="EVENT-1")
+    app_events.draws_changed.emit()
+
+    assert dialog._cmb_draw.count() == 1
+    assert "EVENT-1" in dialog._cmb_draw.currentText()
+
+
 def test_preview_supported_winning_losing_and_unsupported(session_factory) -> None:
     app()
     order_service = OrderService(session_factory)
