@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import csv
+import re
+import unicodedata
 from dataclasses import replace
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
+from sqlalchemy import select
 
+from models import Order
 from schemas.order_import_schema import (
     ImportSourceResult,
     OrderImportConfirmResult,
@@ -215,25 +219,44 @@ class OrderImportService:
         *,
         region_mode: str | None = None,
         skipped_count: int = 0,
+        history_duplicate_check: bool = False,
+        customer_name: str | None = None,
     ) -> OrderImportPreview:
         rows = [
             self._preview_line(line_number=index, raw_text=line, region_mode=region_mode)
             for index, line in enumerate(lines, start=1)
         ]
         rows = self._mark_duplicate_rows(rows)
-        return OrderImportPreview(rows=rows, skipped_count=skipped_count)
+        history_enabled = False
+        history_error = ""
+        if history_duplicate_check:
+            try:
+                rows = self._mark_history_duplicate_rows(rows, customer_name=customer_name)
+                history_enabled = True
+            except Exception as exc:
+                history_error = f"历史重复检测失败：{exc}"
+        return OrderImportPreview(
+            rows=rows,
+            skipped_count=skipped_count,
+            history_duplicate_check_enabled=history_enabled,
+            history_duplicate_error=history_error,
+        )
 
     def preview_text(
         self,
         content: str,
         *,
         region_mode: str | None = None,
+        history_duplicate_check: bool = False,
+        customer_name: str | None = None,
     ) -> OrderImportPreview:
         source = self.extract_txt_lines(content)
         return self.preview_lines(
             source.lines,
             region_mode=region_mode,
             skipped_count=source.skipped_count,
+            history_duplicate_check=history_duplicate_check,
+            customer_name=customer_name,
         )
 
     def _preview_line(
@@ -323,7 +346,56 @@ class OrderImportService:
         ]
 
     def _duplicate_key(self, text: str) -> str:
-        return " ".join(str(text).strip().split())
+        return self._normalize_duplicate_text(text)
+
+    def _mark_history_duplicate_rows(
+        self,
+        rows: list[OrderImportPreviewRow],
+        *,
+        customer_name: str | None = None,
+    ) -> list[OrderImportPreviewRow]:
+        candidate_rows = [row for row in rows if row.success and row.region in {"澳门", "香港"}]
+        if not candidate_rows:
+            return rows
+
+        wanted_regions = {row.region for row in candidate_rows}
+        with self._order_intake_service._session_factory() as session:
+            stmt = select(Order.id, Order.order_no, Order.raw_text, Order.region, Order.customer_name).where(
+                Order.region.in_(wanted_regions),
+                Order.raw_text.is_not(None),
+            )
+            if customer_name:
+                stmt = stmt.where(Order.customer_name == customer_name)
+            history = list(session.execute(stmt))
+
+        history_map: dict[tuple[str, str], tuple[int, str]] = {}
+        for order_id, order_no, raw_text, region, _customer in history:
+            key = (self._normalize_duplicate_text(raw_text), str(region))
+            history_map.setdefault(key, (int(order_id), str(order_no)))
+
+        marked: list[OrderImportPreviewRow] = []
+        for row in rows:
+            key = (self._normalize_duplicate_text(row.raw_text), row.region)
+            match = history_map.get(key)
+            if match and row.success:
+                order_id, order_no = match
+                marked.append(
+                    replace(
+                        row,
+                        history_duplicate_warning=f"疑似历史重复：订单 {order_no}",
+                        history_duplicate_order_id=order_id,
+                        history_duplicate_order_no=order_no,
+                    )
+                )
+            else:
+                marked.append(row)
+        return marked
+
+    def _normalize_duplicate_text(self, text: str) -> str:
+        normalized = unicodedata.normalize("NFKC", str(text or "")).strip()
+        normalized = normalized.translate(str.maketrans({"，": ",", "、": ",", "；": ";", "：": ":", "　": " "}))
+        normalized = re.sub(r"\s+", " ", normalized)
+        return normalized
 
     def confirm_import(
         self,
@@ -333,6 +405,7 @@ class OrderImportService:
         channel: str = "导入",
         customer_name: str | None = None,
         config_plan_name: str | None = None,
+        skip_history_duplicates: bool = True,
         source: str = "order_import",
     ) -> OrderImportConfirmResult:
         """Save only parse-success rows through OrderIntakeService.
@@ -346,12 +419,23 @@ class OrderImportService:
         imported = 0
         save_failed = 0
         skipped_parse_failed = 0
+        skipped_history_duplicate = 0
 
         for row in preview.rows:
             if not row.success:
                 skipped_parse_failed += 1
                 updated_rows.append(
                     replace(row, import_status="未导入，解析失败", import_error=row.error or "解析失败")
+                )
+                continue
+            if skip_history_duplicates and row.history_duplicate_warning:
+                skipped_history_duplicate += 1
+                updated_rows.append(
+                    replace(
+                        row,
+                        import_status="已跳过，疑似历史重复",
+                        import_error=row.history_duplicate_warning,
+                    )
                 )
                 continue
 
@@ -395,7 +479,12 @@ class OrderImportService:
                     )
                 )
 
-        updated_preview = OrderImportPreview(rows=updated_rows, skipped_count=preview.skipped_count)
+        updated_preview = OrderImportPreview(
+            rows=updated_rows,
+            skipped_count=preview.skipped_count,
+            history_duplicate_check_enabled=preview.history_duplicate_check_enabled,
+            history_duplicate_error=preview.history_duplicate_error,
+        )
         log_id = self._write_import_log(
             file_path=file_path,
             preview=preview,
@@ -406,6 +495,10 @@ class OrderImportService:
                 customer_name=customer_name,
                 channel=channel,
                 config_plan_name=config_plan_name,
+                history_duplicate_check_enabled=preview.history_duplicate_check_enabled,
+                skip_history_duplicates=skip_history_duplicates,
+                history_duplicate_count=preview.history_duplicate_count,
+                skipped_history_duplicate_count=skipped_history_duplicate,
             ),
         )
         return OrderImportConfirmResult(
@@ -414,6 +507,7 @@ class OrderImportService:
             imported_count=imported,
             save_failed_count=save_failed,
             skipped_parse_failed_count=skipped_parse_failed,
+            skipped_history_duplicate_count=skipped_history_duplicate,
             log_id=log_id,
         )
 
@@ -458,6 +552,9 @@ class OrderImportService:
                     f"declarer={context.display_customer_name}; "
                     f"channel={context.channel}; "
                     f"config_plan={context.display_config_plan_name}; "
+                    f"history_duplicate_check={context.history_duplicate_check_enabled}; "
+                    f"history_duplicate_count={context.history_duplicate_count}; "
+                    f"skipped_history_duplicate={context.skipped_history_duplicate_count}; "
                     f"total_rows={preview.total_count}; "
                     f"parse_success={preview.success_count}; "
                     f"parse_failed={preview.failure_count}; "

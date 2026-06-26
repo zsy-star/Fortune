@@ -34,6 +34,22 @@ def count_import_logs(session_factory) -> int:
     return LogService(session_factory).count_logs(action="order/import")
 
 
+def save_order_text(
+    session_factory,
+    text: str,
+    *,
+    region: str = "澳门",
+    customer_name: str | None = None,
+    channel: str = "微信",
+):
+    intake = OrderIntakeService(session_factory)
+    preview = intake.preview_raw_text(text, region=region, customer_name=customer_name, channel=channel)
+    result = intake.save_preview(preview)
+    assert result.success
+    assert result.order is not None
+    return result.order
+
+
 class EmptySettingsService:
     def list_declarers(self):
         return []
@@ -172,6 +188,43 @@ def test_order_import_service_preview_success_and_failure_rows() -> None:
     assert preview.rows[1].error
 
 
+def test_order_import_service_marks_history_duplicate_read_only(session_factory) -> None:
+    existing = save_order_text(session_factory, "01各10", region="澳门", customer_name="林林")
+    service = OrderImportService(order_intake_service=OrderIntakeService(session_factory))
+    before = count_orders(session_factory)
+
+    preview = service.preview_lines(
+        ["０１各10", "02各5"],
+        region_mode="澳门",
+        history_duplicate_check=True,
+        customer_name="林林",
+    )
+
+    assert count_orders(session_factory) == before
+    assert preview.history_duplicate_check_enabled is True
+    assert preview.history_duplicate_count == 1
+    assert preview.rows[0].history_duplicate_warning
+    assert preview.rows[0].history_duplicate_order_id == existing.id
+    assert preview.rows[0].history_duplicate_order_no == existing.order_no
+    assert not preview.rows[1].history_duplicate_warning
+
+
+def test_order_import_history_duplicate_detection_degrades_safely() -> None:
+    class BrokenIntake:
+        _session_factory = None
+
+    class FakeLogService:
+        def create_log(self, **kwargs):
+            return SimpleNamespace(id=1)
+
+    service = OrderImportService(order_intake_service=BrokenIntake(), log_service=FakeLogService())
+
+    preview = service.preview_lines(["01各10"], region_mode="澳门", history_duplicate_check=True)
+
+    assert preview.history_duplicate_check_enabled is False
+    assert "历史重复检测失败" in preview.history_duplicate_error
+
+
 def test_order_import_dialog_initializes_with_confirm_button_disabled() -> None:
     app()
     dialog = OrderImportDialog(import_service=OrderImportService(), settings_service=EmptySettingsService())
@@ -189,6 +242,10 @@ def test_order_import_dialog_initializes_with_confirm_button_disabled() -> None:
     assert dialog._declarer_combo.currentText() == "未设置申报人"
     assert dialog._channel_combo.currentText() == "导入"
     assert dialog._channel_combo.findText("XLSX导入") >= 0
+    assert dialog._chk_history_duplicate.text() == "检查历史重复订单"
+    assert dialog._chk_history_duplicate.isChecked()
+    assert dialog._chk_skip_history_duplicate.text() == "导入时跳过历史疑似重复行"
+    assert dialog._chk_skip_history_duplicate.isChecked()
     assert "当前不会写数据库" in dialog._stats_label.text()
 
 
@@ -624,7 +681,7 @@ def test_order_import_result_report_copy_and_export(session_factory, tmp_path, m
     )
     dialog._on_export_import_result()
     first_line = csv_path.read_text(encoding="utf-8").splitlines()[0]
-    assert "行号,原始文本,解析状态,导入状态,地区,申报人,渠道,配置方案,投注类型,金额,条目数,错误原因" in first_line
+    assert "行号,原始文本,解析状态,导入状态,地区,申报人,渠道,配置方案,投注类型,金额,条目数,历史重复提示,历史订单,是否跳过,错误原因" in first_line
 
 
 def test_order_import_result_copy_before_preview_and_export_cancel_or_failure(tmp_path, monkeypatch) -> None:
@@ -675,6 +732,125 @@ def test_order_import_marks_duplicate_rows_and_confirmation_warns(tmp_path) -> N
         dialog._btn_confirm_import.click()
 
     assert "当前预览中存在疑似重复行" in captured["text"]
+
+
+def test_order_import_dialog_marks_history_duplicate_and_confirmation_warns(
+    session_factory, tmp_path
+) -> None:
+    app()
+    save_order_text(session_factory, "01各10", region="澳门")
+    service = OrderImportService(order_intake_service=OrderIntakeService(session_factory))
+    dialog = OrderImportDialog(import_service=service, settings_service=EmptySettingsService())
+    dialog._region_combo.setCurrentText("澳门")
+    path = tmp_path / "orders.txt"
+    path.write_text("01各10\n02各5\n", encoding="utf-8")
+    dialog.load_file(str(path))
+
+    assert dialog._preview.history_duplicate_count == 1
+    assert "疑似历史重复" in dialog._table.item(0, 7).text()
+    assert dialog._table.item(0, 8).text() == "待跳过，疑似历史重复"
+    assert "历史疑似重复：1" in dialog._stats_label.text()
+
+    captured = {}
+
+    def fake_question(_parent, _title, text, *_args):
+        captured["text"] = text
+        return QMessageBox.StandardButton.No
+
+    with patch("ui.dialogs.order_import_dialog.QMessageBox.question", side_effect=fake_question):
+        dialog._btn_confirm_import.click()
+
+    assert "历史疑似重复行数：1" in captured["text"]
+    assert "导入时跳过历史疑似重复行：是" in captured["text"]
+    assert "当前预览中存在历史疑似重复行" in captured["text"]
+
+
+def test_order_import_skips_history_duplicates_when_checked(session_factory, tmp_path) -> None:
+    app()
+    existing = save_order_text(session_factory, "01各10", region="澳门")
+    service = OrderImportService(order_intake_service=OrderIntakeService(session_factory))
+    dialog = OrderImportDialog(import_service=service, settings_service=EmptySettingsService())
+    dialog._region_combo.setCurrentText("澳门")
+    path = tmp_path / "orders.txt"
+    path.write_text("01各10\n明显无效\n02各5\n", encoding="utf-8")
+    dialog.load_file(str(path))
+    before = count_orders(session_factory)
+
+    with patch(
+        "ui.dialogs.order_import_dialog.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    ), patch("ui.dialogs.order_import_dialog.QMessageBox.information"):
+        dialog._btn_confirm_import.click()
+
+    assert count_orders(session_factory) == before + 1
+    assert dialog._table.item(0, 8).text() == "已跳过，疑似历史重复"
+    assert dialog._table.item(1, 8).text() == "未导入，解析失败"
+    assert dialog._table.item(2, 8).text() == "已导入"
+    assert "跳过历史重复：1" in dialog._stats_label.text()
+
+    description = LogService(session_factory).list_logs(action="order/import")[0].description
+    assert f"history_duplicate_count=1" in description
+    assert "skipped_history_duplicate=1" in description
+    assert dialog._preview.rows[0].history_duplicate_order_no == existing.order_no
+
+
+def test_order_import_allows_history_duplicates_when_skip_unchecked(session_factory, tmp_path) -> None:
+    app()
+    save_order_text(session_factory, "01各10", region="澳门")
+    intake = OrderIntakeService(session_factory)
+    service = OrderImportService(order_intake_service=intake)
+    dialog = OrderImportDialog(import_service=service, settings_service=EmptySettingsService())
+    dialog._region_combo.setCurrentText("澳门")
+    dialog._chk_skip_history_duplicate.setChecked(False)
+    path = tmp_path / "orders.txt"
+    path.write_text("01各10\n", encoding="utf-8")
+    dialog.load_file(str(path))
+    before = count_orders(session_factory)
+
+    with patch.object(intake, "save_preview", wraps=intake.save_preview) as save_preview, patch(
+        "ui.dialogs.order_import_dialog.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    ), patch("ui.dialogs.order_import_dialog.QMessageBox.information"):
+        dialog._btn_confirm_import.click()
+
+    assert save_preview.called
+    assert count_orders(session_factory) == before + 1
+    assert dialog._table.item(0, 8).text() == "已导入"
+    assert "跳过历史重复：0" in dialog._stats_label.text()
+
+
+def test_order_import_report_and_csv_include_history_duplicate_fields(
+    session_factory, tmp_path, monkeypatch
+) -> None:
+    app()
+    save_order_text(session_factory, "01各10", region="澳门")
+    service = OrderImportService(order_intake_service=OrderIntakeService(session_factory))
+    dialog = OrderImportDialog(import_service=service, settings_service=EmptySettingsService())
+    dialog._region_combo.setCurrentText("澳门")
+    path = tmp_path / "orders.txt"
+    path.write_text("01各10\n02各5\n", encoding="utf-8")
+    dialog.load_file(str(path))
+
+    with patch(
+        "ui.dialogs.order_import_dialog.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    ), patch("ui.dialogs.order_import_dialog.QMessageBox.information"):
+        dialog._btn_confirm_import.click()
+
+    report = dialog._build_import_result_report()
+    assert "历史重复检测：已启用" in report
+    assert "历史疑似重复行数：1" in report
+    assert "跳过历史重复行数：1" in report
+    assert "疑似历史重复" in report
+
+    csv_path = tmp_path / "import_report.csv"
+    monkeypatch.setattr(
+        "ui.dialogs.order_import_dialog.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (str(csv_path), "CSV Files (*.csv)"),
+    )
+    dialog._on_export_import_result()
+    first_line = csv_path.read_text(encoding="utf-8").splitlines()[0]
+    assert "历史重复提示,历史订单,是否跳过" in first_line
 
 
 def test_order_import_reselect_file_resets_import_state(session_factory, tmp_path) -> None:

@@ -9,6 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -125,6 +126,14 @@ class OrderImportDialog(QDialog):
         self._region_combo.addItem("香港", "香港")
         self._encoding_combo = QComboBox()
         self._encoding_combo.addItems(["UTF-8", "GBK"])
+        self._chk_history_duplicate = QCheckBox("检查历史重复订单")
+        self._chk_history_duplicate.setChecked(True)
+        self._chk_history_duplicate.setToolTip("只读查询历史订单原文、地区和申报人，发现疑似重复时在预览中提示。")
+        self._chk_history_duplicate.toggled.connect(lambda _checked: self._refresh_preview_if_ready())
+        self._chk_skip_history_duplicate = QCheckBox("导入时跳过历史疑似重复行")
+        self._chk_skip_history_duplicate.setChecked(True)
+        self._chk_skip_history_duplicate.setToolTip("确认导入时跳过已标记为历史疑似重复的成功行；取消勾选则允许导入。")
+        self._chk_skip_history_duplicate.toggled.connect(lambda _checked: self._fill_preview(self._preview))
         self._declarer_combo = QComboBox()
         self._declarer_combo.setMinimumWidth(140)
         self._declarer_combo.currentIndexChanged.connect(self._on_declarer_changed)
@@ -136,6 +145,8 @@ class OrderImportDialog(QDialog):
         row.addWidget(self._region_combo)
         row.addWidget(QLabel("编码"))
         row.addWidget(self._encoding_combo)
+        row.addWidget(self._chk_history_duplicate)
+        row.addWidget(self._chk_skip_history_duplicate)
         row.addWidget(QLabel("申报人"))
         row.addWidget(self._declarer_combo)
         row.addWidget(self._plan_label)
@@ -168,6 +179,7 @@ class OrderImportDialog(QDialog):
             self._plan_label.setText(f"配置方案：{data[1] or '未绑定配置方案'}")
         elif self._plan_label.text() != "配置方案：配置读取失败":
             self._plan_label.setText("配置方案：未绑定配置方案")
+        self._refresh_preview_if_ready()
 
     def _on_channel_changed(self, _index: int) -> None:
         self._channel_manually_changed = True
@@ -186,6 +198,12 @@ class OrderImportDialog(QDialog):
 
     def _selected_channel(self) -> str:
         return self._channel_combo.currentText().strip() or "导入"
+
+    def _refresh_preview_if_ready(self) -> None:
+        if not hasattr(self, "_raw_text") or self._import_completed:
+            return
+        if self._raw_text.toPlainText().strip():
+            self._on_preview()
 
     def _suggest_channel_from_suffix(self, suffix: str) -> None:
         if self._channel_manually_changed:
@@ -314,12 +332,16 @@ class OrderImportDialog(QDialog):
         self._preview = self._import_service.preview_text(
             self._raw_text.toPlainText(),
             region_mode=self._region_combo.currentData(),
+            history_duplicate_check=self._chk_history_duplicate.isChecked(),
+            customer_name=self._selected_customer_name(),
         )
         # 文件读取阶段的空行也要体现在统计里；用户编辑后的空行以 preview_text 结果为准。
         if self._source_skipped_count and self._raw_text.toPlainText().strip():
             self._preview = OrderImportPreview(
                 rows=self._preview.rows,
                 skipped_count=max(self._preview.skipped_count, self._source_skipped_count),
+                history_duplicate_check_enabled=self._preview.history_duplicate_check_enabled,
+                history_duplicate_error=self._preview.history_duplicate_error,
             )
         self._fill_preview(self._preview)
 
@@ -330,6 +352,14 @@ class OrderImportDialog(QDialog):
         self._update_stats(preview)
 
     def _fill_row(self, row_index: int, row: OrderImportPreviewRow) -> None:
+        import_status = row.import_status
+        if (
+            not self._import_completed
+            and row.success
+            and row.history_duplicate_warning
+            and self._chk_skip_history_duplicate.isChecked()
+        ):
+            import_status = "待跳过，疑似历史重复"
         values = [
             str(row.line_number),
             row.raw_text,
@@ -339,7 +369,7 @@ class OrderImportDialog(QDialog):
             f"{row.amount_total:.2f}" if row.success else "0.00",
             str(row.item_count),
             self._row_error_text(row),
-            row.import_status,
+            import_status,
             row.import_error,
         ]
         for column, value in enumerate(values):
@@ -351,19 +381,24 @@ class OrderImportDialog(QDialog):
             )
             if column == 3:
                 item.setForeground(Qt.GlobalColor.darkGreen if row.success else Qt.GlobalColor.red)
-            if column == 8 and row.import_status == "已导入":
+            if column == 8 and import_status == "已导入":
                 item.setForeground(Qt.GlobalColor.darkGreen)
-            if column == 8 and "失败" in row.import_status:
+            if column == 8 and ("失败" in import_status or "跳过" in import_status):
                 item.setForeground(Qt.GlobalColor.red)
             self._table.setItem(row_index, column, item)
 
     def _update_stats(self, preview: OrderImportPreview) -> None:
+        history_text = ""
+        if preview.history_duplicate_error:
+            history_text = f"    {preview.history_duplicate_error}"
+        elif preview.history_duplicate_check_enabled:
+            history_text = f"    历史疑似重复：{preview.history_duplicate_count}"
         self._stats_label.setText(
             f"总行数：{preview.total_count}    "
             f"解析成功：{preview.success_count}    "
             f"解析失败：{preview.failure_count}    "
             f"跳过空行：{preview.skipped_count}    "
-            "当前不会写数据库"
+            f"当前不会写数据库{history_text}"
         )
         self._update_import_button()
 
@@ -381,11 +416,15 @@ class OrderImportDialog(QDialog):
             self._btn_confirm_import.setToolTip("只导入解析成功行；失败行不会导入")
 
     def _row_error_text(self, row: OrderImportPreviewRow) -> str:
-        parts = [part for part in (row.error, row.duplicate_warning) if part]
+        parts = [part for part in (row.error, row.duplicate_warning, row.history_duplicate_warning) if part]
         return "；".join(parts)
 
     def _row_issue_text(self, row: OrderImportPreviewRow) -> str:
-        parts = [part for part in (row.error, row.duplicate_warning, row.import_error) if part]
+        parts = [
+            part
+            for part in (row.error, row.duplicate_warning, row.history_duplicate_warning, row.import_error)
+            if part
+        ]
         return "；".join(parts)
 
     def _has_duplicate_rows(self) -> bool:
@@ -403,6 +442,8 @@ class OrderImportDialog(QDialog):
             f"解析成功行数：{self._preview.success_count}\n"
             f"解析失败行数：{self._preview.failure_count}\n"
             f"跳过空行数：{self._preview.skipped_count}\n\n"
+            f"历史疑似重复行数：{self._preview.history_duplicate_count}\n"
+            f"导入时跳过历史疑似重复行：{'是' if self._chk_skip_history_duplicate.isChecked() else '否'}\n\n"
             "只会导入解析成功行，失败行不会导入。\n"
             f"申报人：{self._selected_customer_name() or '未设置申报人'}\n"
             f"渠道：{self._selected_channel()}\n"
@@ -411,6 +452,8 @@ class OrderImportDialog(QDialog):
         )
         if self._has_duplicate_rows():
             confirm_text += "\n\n当前预览中存在疑似重复行，请确认是否继续导入。"
+        if self._preview.history_duplicate_count:
+            confirm_text += "\n\n当前预览中存在历史疑似重复行，请核对后继续。"
         choice = QMessageBox.question(
             self,
             "确认导入成功行",
@@ -432,6 +475,7 @@ class OrderImportDialog(QDialog):
                 customer_name=customer_name,
                 channel=channel,
                 config_plan_name=config_plan_name,
+                skip_history_duplicates=self._chk_skip_history_duplicate.isChecked(),
             )
         except Exception as exc:
             QMessageBox.warning(self, "订单导入", f"导入失败：{exc}")
@@ -452,6 +496,7 @@ class OrderImportDialog(QDialog):
             f"成功导入：{result.imported_count}    "
             f"保存失败：{result.save_failed_count}    "
             f"跳过失败解析行：{result.skipped_parse_failed_count}    "
+            f"跳过历史重复：{result.skipped_history_duplicate_count}    "
             f"跳过空行：{self._preview.skipped_count}"
         )
         self._update_import_button()
@@ -518,6 +563,7 @@ class OrderImportDialog(QDialog):
         save_failed_count = sum(1 for row in self._preview.rows if row.import_status == "导入失败")
         skipped_parse_failed = sum(1 for row in self._preview.rows if not row.success)
         attempted_count = sum(1 for row in self._preview.rows if row.success)
+        skipped_history_duplicate = sum(1 for row in self._preview.rows if row.import_status == "已跳过，疑似历史重复")
         region_text = self._region_combo.currentText()
         import_time = self._last_import_time or datetime.now()
         customer_name, channel, config_plan_name = self._report_context()
@@ -538,9 +584,12 @@ class OrderImportDialog(QDialog):
             f"成功导入数：{imported_count}",
             f"保存失败数：{save_failed_count}",
             f"跳过解析失败行数：{skipped_parse_failed}",
+            f"历史重复检测：{'已启用' if self._preview.history_duplicate_check_enabled else '未启用'}",
+            f"历史疑似重复行数：{self._preview.history_duplicate_count}",
+            f"跳过历史重复行数：{skipped_history_duplicate}",
             "",
             "每行明细",
-            "行号\t原始文本\t解析状态\t导入状态\t地区\t申报人\t渠道\t配置方案\t投注类型\t金额\t条目数\t错误原因\t订单ID",
+            "行号\t原始文本\t解析状态\t导入状态\t地区\t申报人\t渠道\t配置方案\t投注类型\t金额\t条目数\t历史重复提示\t历史订单\t是否跳过\t错误原因\t订单ID",
         ]
         for row in self._preview.rows:
             lines.append(
@@ -557,6 +606,9 @@ class OrderImportDialog(QDialog):
                         row.bet_type_summary,
                         f"{row.amount_total:.2f}" if row.success else "0.00",
                         str(row.item_count),
+                        row.history_duplicate_warning,
+                        row.history_duplicate_order_no or str(row.history_duplicate_order_id or ""),
+                        "是" if row.import_status == "已跳过，疑似历史重复" else "否",
                         self._row_issue_text(row),
                         str(row.order_id or ""),
                     ]
@@ -591,6 +643,9 @@ class OrderImportDialog(QDialog):
                     "投注类型",
                     "金额",
                     "条目数",
+                    "历史重复提示",
+                    "历史订单",
+                    "是否跳过",
                     "错误原因",
                 ]
             )
@@ -608,6 +663,9 @@ class OrderImportDialog(QDialog):
                         row.bet_type_summary,
                         f"{row.amount_total:.2f}" if row.success else "0.00",
                         row.item_count,
+                        row.history_duplicate_warning,
+                        row.history_duplicate_order_no or str(row.history_duplicate_order_id or ""),
+                        "是" if row.import_status == "已跳过，疑似历史重复" else "否",
                         self._row_issue_text(row),
                     ]
                 )

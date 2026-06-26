@@ -21,6 +21,10 @@ class OrderImportContext:
     customer_name: str | None = None
     channel: str = "导入"
     config_plan_name: str | None = None
+    history_duplicate_check_enabled: bool = False
+    skip_history_duplicates: bool = True
+    history_duplicate_count: int = 0
+    skipped_history_duplicate_count: int = 0
 
     @property
     def display_customer_name(self) -> str:
@@ -45,6 +49,9 @@ class OrderImportPreviewRow:
     selection_summary: str = ""
     error: str = ""
     duplicate_warning: str = ""
+    history_duplicate_warning: str = ""
+    history_duplicate_order_id: int | None = None
+    history_duplicate_order_no: str | None = None
     import_status: str = "未导入"
     import_error: str = ""
     order_id: int | None = None
@@ -57,6 +64,8 @@ class OrderImportPreview:
 
     rows: list[OrderImportPreviewRow] = field(default_factory=list)
     skipped_count: int = 0
+    history_duplicate_check_enabled: bool = False
+    history_duplicate_error: str = ""
 
     @property
     def total_count(self) -> int:
@@ -70,6 +79,10 @@ class OrderImportPreview:
     def failure_count(self) -> int:
         return sum(1 for row in self.rows if not row.success)
 
+    @property
+    def history_duplicate_count(self) -> int:
+        return sum(1 for row in self.rows if row.history_duplicate_warning)
+
 
 @dataclass(frozen=True, slots=True)
 class OrderImportConfirmResult:
@@ -80,4 +93,5 @@ class OrderImportConfirmResult:
     imported_count: int
     save_failed_count: int
     skipped_parse_failed_count: int
+    skipped_history_duplicate_count: int = 0
     log_id: int | None = None
