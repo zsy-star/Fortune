@@ -1,0 +1,266 @@
+"""订单导入预览弹窗：第一阶段只解析预览，不保存订单。"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QPlainTextEdit,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from schemas.order_import_schema import OrderImportPreview, OrderImportPreviewRow
+from services.order_import_service import OrderImportService
+
+
+class OrderImportDialog(QDialog):
+    """订单导入预览对话框。
+
+    本阶段不提供确认导入/保存按钮，所有结果仅用于人工检查。
+    """
+
+    def __init__(
+        self,
+        parent=None,
+        import_service: OrderImportService | None = None,
+    ):
+        super().__init__(parent)
+        self._import_service = import_service or OrderImportService()
+        self._source_skipped_count = 0
+        self._preview = OrderImportPreview()
+
+        self.setWindowTitle("订单导入预览")
+        self.resize(1080, 720)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        title = QLabel("订单导入预览")
+        title.setObjectName("dialogTitle")
+        hint = QLabel("当前仅解析预览，不写数据库，不保存订单；导入保存后续阶段开放。")
+        hint.setObjectName("safeHint")
+        hint.setWordWrap(True)
+        root.addWidget(title)
+        root.addWidget(hint)
+        root.addLayout(self._build_file_row())
+        root.addLayout(self._build_option_row())
+
+        self._raw_text = QPlainTextEdit()
+        self._raw_text.setPlaceholderText("文件内容会显示在这里，可编辑后点击“重新解析”。")
+        self._raw_text.setMinimumHeight(110)
+        root.addWidget(self._raw_text)
+
+        self._table = QTableWidget(0, 8)
+        self._table.setHorizontalHeaderLabels(["行号", "原始文本", "地区", "解析状态", "投注类型", "金额", "条目数", "错误原因"])
+        self._table.verticalHeader().setVisible(False)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setAlternatingRowColors(True)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
+        root.addWidget(self._table, stretch=1)
+
+        self._stats_label = QLabel("总行数：0    解析成功：0    解析失败：0    跳过空行：0    当前不会写数据库")
+        self._stats_label.setObjectName("safeHint")
+        root.addWidget(self._stats_label)
+        root.addLayout(self._build_bottom_row())
+        self._apply_stylesheet()
+
+    def _build_file_row(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        self._path_edit = QLineEdit()
+        self._path_edit.setReadOnly(True)
+        self._path_edit.setPlaceholderText("请选择 .txt 或 .csv 文件")
+        self._btn_select_file = QPushButton("选择文件")
+        self._btn_select_file.clicked.connect(self._on_select_file)
+        row.addWidget(QLabel("文件"))
+        row.addWidget(self._path_edit, stretch=1)
+        row.addWidget(self._btn_select_file)
+        return row
+
+    def _build_option_row(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        self._region_combo = QComboBox()
+        self._region_combo.addItem("自动识别", None)
+        self._region_combo.addItem("澳门", "澳门")
+        self._region_combo.addItem("香港", "香港")
+        self._encoding_combo = QComboBox()
+        self._encoding_combo.addItems(["UTF-8", "GBK"])
+        row.addWidget(QLabel("地区默认值"))
+        row.addWidget(self._region_combo)
+        row.addWidget(QLabel("编码"))
+        row.addWidget(self._encoding_combo)
+        row.addStretch(1)
+        return row
+
+    def _build_bottom_row(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self._btn_preview = QPushButton("重新解析")
+        self._btn_copy_errors = QPushButton("复制错误报告")
+        self._btn_close = QPushButton("关闭")
+        self._btn_preview.clicked.connect(self._on_preview)
+        self._btn_copy_errors.clicked.connect(self._on_copy_error_report)
+        self._btn_close.clicked.connect(self.reject)
+        row.addWidget(self._btn_preview)
+        row.addWidget(self._btn_copy_errors)
+        row.addWidget(self._btn_close)
+        return row
+
+    def _on_select_file(self) -> None:
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "选择订单导入文件",
+            "",
+            "订单文本 (*.txt *.csv);;Text Files (*.txt);;CSV Files (*.csv);;All Files (*)",
+        )
+        if not path:
+            self._stats_label.setText("已取消选择文件；当前不会写数据库")
+            return
+        self.load_file(path)
+
+    def load_file(self, path: str) -> None:
+        suffix = Path(path).suffix.lower()
+        if suffix not in {".txt", ".csv"}:
+            message = "当前仅支持 txt/csv，xlsx 后续开放"
+            self._path_edit.setText(path)
+            self._raw_text.clear()
+            self._table.setRowCount(0)
+            self._stats_label.setText(f"{message}；当前不会写数据库")
+            QMessageBox.warning(self, "订单导入预览", message)
+            return
+
+        encoding = "gbk" if self._encoding_combo.currentText().lower() == "gbk" else "utf-8"
+        result = self._import_service.read_file(path, encoding=encoding)
+        self._path_edit.setText(path)
+        if result.error:
+            self._raw_text.clear()
+            self._source_skipped_count = 0
+            self._preview = OrderImportPreview()
+            self._fill_preview(self._preview)
+            self._stats_label.setText(f"{result.error}；当前不会写数据库")
+            QMessageBox.warning(self, "订单导入预览", result.error)
+            return
+
+        self._source_skipped_count = result.skipped_count
+        self._raw_text.setPlainText("\n".join(result.lines))
+        self._on_preview()
+
+    def _on_preview(self) -> None:
+        self._preview = self._import_service.preview_text(
+            self._raw_text.toPlainText(),
+            region_mode=self._region_combo.currentData(),
+        )
+        # 文件读取阶段的空行也要体现在统计里；用户编辑后的空行以 preview_text 结果为准。
+        if self._source_skipped_count and self._raw_text.toPlainText().strip():
+            self._preview = OrderImportPreview(
+                rows=self._preview.rows,
+                skipped_count=max(self._preview.skipped_count, self._source_skipped_count),
+            )
+        self._fill_preview(self._preview)
+
+    def _fill_preview(self, preview: OrderImportPreview) -> None:
+        self._table.setRowCount(len(preview.rows))
+        for row_index, row in enumerate(preview.rows):
+            self._fill_row(row_index, row)
+        self._update_stats(preview)
+
+    def _fill_row(self, row_index: int, row: OrderImportPreviewRow) -> None:
+        values = [
+            str(row.line_number),
+            row.raw_text,
+            row.region,
+            "成功" if row.success else "失败",
+            row.bet_type_summary,
+            f"{row.amount_total:.2f}" if row.success else "0.00",
+            str(row.item_count),
+            row.error,
+        ]
+        for column, value in enumerate(values):
+            item = QTableWidgetItem(value)
+            item.setTextAlignment(
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                if column in (1, 7)
+                else Qt.AlignmentFlag.AlignCenter
+            )
+            if column == 3:
+                item.setForeground(Qt.GlobalColor.darkGreen if row.success else Qt.GlobalColor.red)
+            self._table.setItem(row_index, column, item)
+
+    def _update_stats(self, preview: OrderImportPreview) -> None:
+        self._stats_label.setText(
+            f"总行数：{preview.total_count}    "
+            f"解析成功：{preview.success_count}    "
+            f"解析失败：{preview.failure_count}    "
+            f"跳过空行：{preview.skipped_count}    "
+            "当前不会写数据库"
+        )
+
+    def _on_copy_error_report(self) -> None:
+        QApplication.clipboard().setText(self._build_error_report())
+        self._stats_label.setText("已复制错误报告；当前不会写数据库")
+
+    def _build_error_report(self) -> str:
+        failed_rows = [row for row in self._preview.rows if not row.success]
+        if not failed_rows:
+            return "当前没有解析失败行"
+        lines = ["订单导入预览错误报告", "行号\t原始文本\t错误原因"]
+        for row in failed_rows:
+            lines.append(f"{row.line_number}\t{row.raw_text}\t{row.error or '解析失败'}")
+        return "\n".join(lines)
+
+    def _apply_stylesheet(self) -> None:
+        self.setStyleSheet(
+            """
+            QLabel#dialogTitle {
+                font-size: 16px;
+                font-weight: 700;
+                color: #244357;
+            }
+            QLabel#safeHint {
+                color: #6c7a80;
+            }
+            QLineEdit, QComboBox, QPlainTextEdit {
+                border: 1px solid #b8c7ca;
+                background: #ffffff;
+                min-height: 24px;
+            }
+            QPushButton {
+                min-height: 26px;
+                padding: 2px 10px;
+                border: 1px solid #b8c7ca;
+                background: #ffffff;
+            }
+            QPushButton:hover {
+                background: #e8f7f8;
+                border-color: #5fbac2;
+            }
+            QTableWidget {
+                border: 1px solid #aebfc2;
+                gridline-color: #d5dfe1;
+                alternate-background-color: #f7fafb;
+            }
+            QHeaderView::section {
+                background: #dff2f3;
+                padding: 4px;
+                border: 1px solid #afc9cc;
+                font-weight: 600;
+            }
+            """
+        )
+

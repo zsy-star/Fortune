@@ -38,6 +38,7 @@ from services.log_service import LogService
 from services.order_service import OrderService
 from services.settlement_service import SettlementService
 from services.settings_service import SettingsService
+from ui.dialogs.order_import_dialog import OrderImportDialog
 from ui.dialogs.settlement_preview_dialog import SettlementPreviewDialog
 from ui.app_events import app_events
 
@@ -195,7 +196,10 @@ class OrderDetailPage(QWidget):
         self._btn_export_excel.setObjectName("primaryAction")
         self._btn_export_excel.setToolTip("按当前查询条件导出 Excel")
         self._btn_export_excel.clicked.connect(self._on_export_excel)
-        self._btn_import_orders = self._unavailable_button("导入订单")
+        self._btn_import_orders = QPushButton("导入订单")
+        self._btn_import_orders.setObjectName("primaryAction")
+        self._btn_import_orders.setToolTip("打开订单导入预览；当前仅解析预览，不写数据库")
+        self._btn_import_orders.clicked.connect(self._on_import_orders)
         self._btn_filter_prize = QPushButton("过滤结算结果")
         self._btn_filter_prize.setObjectName("primaryAction")
         self._btn_filter_prize.setToolTip("只读查看当前筛选结果的命中状态统计，不计算赔付金额")
@@ -724,6 +728,11 @@ class OrderDetailPage(QWidget):
 
         QMessageBox.information(self, "导出订单", _export_success_message(result))
         self._status_label.setText(f"导出成功：{result.file_name}")
+
+    def _on_import_orders(self) -> None:
+        dialog = OrderImportDialog(self)
+        dialog.exec()
+        self._status_label.setText("订单导入预览已关闭；当前阶段未写数据库、未保存订单")
 
     def _on_filter_settlement_results(self) -> None:
         summary = self._build_current_settlement_summary()

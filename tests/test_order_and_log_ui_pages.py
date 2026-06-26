@@ -253,11 +253,13 @@ def test_order_detail_remaining_unavailable_actions_are_explicitly_disabled(sess
 
     buttons = [
         page._btn_clear_orders,
-        page._btn_import_orders,
         page._btn_reset_draw,
     ]
     assert all(not button.isEnabled() for button in buttons)
     assert all("暂未开放" in button.toolTip() for button in buttons)
+    assert page._btn_import_orders.isEnabled()
+    assert page._btn_import_orders.text() == "导入订单"
+    assert "预览" in page._btn_import_orders.toolTip()
     assert page._btn_filter_prize.isEnabled()
     assert page._btn_filter_prize.text() == "过滤结算结果"
     assert page._btn_combined_prize.isEnabled()

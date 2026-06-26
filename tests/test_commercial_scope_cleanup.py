@@ -175,12 +175,14 @@ def test_order_detail_page_keeps_supported_actions_and_disables_unopened_buttons
     assert page._btn_void.text() == "作废订单"
     unopened_buttons = (
         page._btn_clear_orders,
-        page._btn_import_orders,
         page._btn_reset_draw,
     )
     assert all(button.text() in button_texts for button in unopened_buttons)
     assert all(not button.isEnabled() for button in unopened_buttons)
     assert all("暂未开放" in button.toolTip() for button in unopened_buttons)
+    assert page._btn_import_orders.text() == "导入订单"
+    assert page._btn_import_orders.isEnabled()
+    assert "预览" in page._btn_import_orders.toolTip()
     assert page._btn_filter_prize.text() == "过滤结算结果"
     assert page._btn_filter_prize.isEnabled()
     assert page._btn_combined_prize.text() == "综合结算摘要"
