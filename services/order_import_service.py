@@ -9,6 +9,7 @@ from pathlib import Path
 from schemas.order_import_schema import (
     ImportSourceResult,
     OrderImportConfirmResult,
+    OrderImportContext,
     OrderImportPreview,
     OrderImportPreviewRow,
 )
@@ -232,7 +233,9 @@ class OrderImportService:
         preview: OrderImportPreview,
         *,
         file_path: str = "",
-        channel: str = "import",
+        channel: str = "导入",
+        customer_name: str | None = None,
+        config_plan_name: str | None = None,
         source: str = "order_import",
     ) -> OrderImportConfirmResult:
         """Save only parse-success rows through OrderIntakeService.
@@ -257,7 +260,13 @@ class OrderImportService:
 
             attempted += 1
             try:
-                save_result = self._save_row(row, channel=channel, source=source)
+                save_result = self._save_row(
+                    row,
+                    channel=channel,
+                    customer_name=customer_name,
+                    config_plan_name=config_plan_name,
+                    source=source,
+                )
             except Exception as exc:
                 save_failed += 1
                 updated_rows.append(
@@ -296,6 +305,11 @@ class OrderImportService:
             imported_count=imported,
             save_failed_count=save_failed,
             skipped_parse_failed_count=skipped_parse_failed,
+            context=OrderImportContext(
+                customer_name=customer_name,
+                channel=channel,
+                config_plan_name=config_plan_name,
+            ),
         )
         return OrderImportConfirmResult(
             preview=updated_preview,
@@ -306,10 +320,20 @@ class OrderImportService:
             log_id=log_id,
         )
 
-    def _save_row(self, row: OrderImportPreviewRow, *, channel: str, source: str):
+    def _save_row(
+        self,
+        row: OrderImportPreviewRow,
+        *,
+        channel: str,
+        customer_name: str | None,
+        config_plan_name: str | None,
+        source: str,
+    ):
         region = row.region if row.region in {"澳门", "香港"} else None
         preview = self._order_intake_service.preview_raw_text(
             row.raw_text,
+            customer_name=customer_name,
+            config_plan_name=config_plan_name,
             channel=channel,
             region=region,
             source=source,
@@ -324,7 +348,9 @@ class OrderImportService:
         imported_count: int,
         save_failed_count: int,
         skipped_parse_failed_count: int,
+        context: OrderImportContext | None = None,
     ) -> int | None:
+        context = context or OrderImportContext()
         try:
             log = self._log_service.create_log(
                 module="order",
@@ -332,6 +358,9 @@ class OrderImportService:
                 description=(
                     "订单导入汇总；"
                     f"file={Path(file_path).name if file_path else '未选择文件'}; "
+                    f"declarer={context.display_customer_name}; "
+                    f"channel={context.channel}; "
+                    f"config_plan={context.display_config_plan_name}; "
                     f"total_rows={preview.total_count}; "
                     f"parse_success={preview.success_count}; "
                     f"parse_failed={preview.failure_count}; "

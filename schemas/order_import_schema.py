@@ -15,6 +15,23 @@ class ImportSourceResult:
 
 
 @dataclass(frozen=True, slots=True)
+class OrderImportContext:
+    """确认导入时随订单一起传递的业务归属信息。"""
+
+    customer_name: str | None = None
+    channel: str = "导入"
+    config_plan_name: str | None = None
+
+    @property
+    def display_customer_name(self) -> str:
+        return self.customer_name or "未设置申报人"
+
+    @property
+    def display_config_plan_name(self) -> str:
+        return self.config_plan_name or "未绑定配置方案"
+
+
+@dataclass(frozen=True, slots=True)
 class OrderImportPreviewRow:
     """导入预览中的单行结果。"""
 

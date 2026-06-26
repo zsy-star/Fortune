@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from schemas.order_import_schema import OrderImportPreview, OrderImportPreviewRow
 from services.order_import_service import OrderImportService
+from services.settings_service import SettingsService
 from ui.app_events import app_events
 
 
@@ -40,13 +41,20 @@ class OrderImportDialog(QDialog):
         self,
         parent=None,
         import_service: OrderImportService | None = None,
+        settings_service: SettingsService | None = None,
     ):
         super().__init__(parent)
         self._import_service = import_service or OrderImportService()
+        session_factory = getattr(getattr(self._import_service, "_order_intake_service", None), "_session_factory", None)
+        self._settings_service = settings_service or (
+            SettingsService(session_factory) if session_factory is not None else SettingsService()
+        )
         self._source_skipped_count = 0
         self._preview = OrderImportPreview()
         self._import_completed = False
         self._last_import_time: datetime | None = None
+        self._last_import_context: tuple[str, str, str] | None = None
+        self._channel_manually_changed = False
 
         self.setWindowTitle("订单导入预览")
         self.resize(1080, 720)
@@ -57,7 +65,10 @@ class OrderImportDialog(QDialog):
 
         title = QLabel("订单导入预览")
         title.setObjectName("dialogTitle")
-        hint = QLabel("当前仅解析预览，不写数据库，不保存订单；导入保存后续阶段开放。")
+        hint = QLabel(
+            "导入前会先预览；确认导入后仅保存解析成功行。申报人和渠道会写入成功导入订单；"
+            "失败行不会保存申报人/渠道。本功能不结算、不计算赔付、不改余额。"
+        )
         hint.setObjectName("safeHint")
         hint.setWordWrap(True)
         root.addWidget(title)
@@ -88,6 +99,7 @@ class OrderImportDialog(QDialog):
         root.addWidget(self._stats_label)
         root.addLayout(self._build_bottom_row())
         self._apply_stylesheet()
+        self._reload_declarers()
         self._update_import_button()
 
     def _build_file_row(self) -> QHBoxLayout:
@@ -110,12 +122,80 @@ class OrderImportDialog(QDialog):
         self._region_combo.addItem("香港", "香港")
         self._encoding_combo = QComboBox()
         self._encoding_combo.addItems(["UTF-8", "GBK"])
+        self._declarer_combo = QComboBox()
+        self._declarer_combo.setMinimumWidth(140)
+        self._declarer_combo.currentIndexChanged.connect(self._on_declarer_changed)
+        self._plan_label = QLabel("配置方案：未绑定配置方案")
+        self._channel_combo = QComboBox()
+        self._channel_combo.addItems(["导入", "TXT导入", "CSV导入", "手工整理导入"])
+        self._channel_combo.currentIndexChanged.connect(self._on_channel_changed)
         row.addWidget(QLabel("地区默认值"))
         row.addWidget(self._region_combo)
         row.addWidget(QLabel("编码"))
         row.addWidget(self._encoding_combo)
+        row.addWidget(QLabel("申报人"))
+        row.addWidget(self._declarer_combo)
+        row.addWidget(self._plan_label)
+        row.addWidget(QLabel("渠道"))
+        row.addWidget(self._channel_combo)
         row.addStretch(1)
         return row
+
+    def _reload_declarers(self) -> None:
+        self._declarer_combo.blockSignals(True)
+        self._declarer_combo.clear()
+        self._declarer_combo.addItem("未设置申报人", None)
+        try:
+            declarers = self._settings_service.list_declarers()
+        except Exception:
+            declarers = []
+            self._plan_label.setText("配置方案：配置读取失败")
+            if hasattr(self, "_stats_label"):
+                self._stats_label.setText("申报人配置读取失败，已降级为未设置；当前不会写数据库")
+        else:
+            self._plan_label.setText("配置方案：未绑定配置方案")
+        for declarer in declarers:
+            self._declarer_combo.addItem(declarer.name, (declarer.name, declarer.plan_name))
+        self._declarer_combo.blockSignals(False)
+        self._on_declarer_changed(self._declarer_combo.currentIndex())
+
+    def _on_declarer_changed(self, _index: int) -> None:
+        data = self._declarer_combo.currentData()
+        if isinstance(data, tuple) and len(data) >= 2:
+            self._plan_label.setText(f"配置方案：{data[1] or '未绑定配置方案'}")
+        elif self._plan_label.text() != "配置方案：配置读取失败":
+            self._plan_label.setText("配置方案：未绑定配置方案")
+
+    def _on_channel_changed(self, _index: int) -> None:
+        self._channel_manually_changed = True
+
+    def _selected_customer_name(self) -> str | None:
+        data = self._declarer_combo.currentData()
+        if isinstance(data, tuple) and data:
+            return str(data[0]).strip() or None
+        return None
+
+    def _selected_config_plan_name(self) -> str | None:
+        data = self._declarer_combo.currentData()
+        if isinstance(data, tuple) and len(data) >= 2:
+            return str(data[1]).strip() or None
+        return None
+
+    def _selected_channel(self) -> str:
+        return self._channel_combo.currentText().strip() or "导入"
+
+    def _suggest_channel_from_suffix(self, suffix: str) -> None:
+        if self._channel_manually_changed:
+            return
+        mapping = {".txt": "TXT导入", ".csv": "CSV导入"}
+        suggestion = mapping.get(suffix)
+        if not suggestion:
+            return
+        index = self._channel_combo.findText(suggestion)
+        if index >= 0:
+            self._channel_combo.blockSignals(True)
+            self._channel_combo.setCurrentIndex(index)
+            self._channel_combo.blockSignals(False)
 
     def _build_bottom_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -162,6 +242,7 @@ class OrderImportDialog(QDialog):
             self._preview = OrderImportPreview()
             self._import_completed = False
             self._last_import_time = None
+            self._last_import_context = None
             self._update_import_button()
             self._stats_label.setText(f"{message}；当前不会写数据库")
             QMessageBox.warning(self, "订单导入预览", message)
@@ -170,12 +251,14 @@ class OrderImportDialog(QDialog):
         encoding = "gbk" if self._encoding_combo.currentText().lower() == "gbk" else "utf-8"
         result = self._import_service.read_file(path, encoding=encoding)
         self._path_edit.setText(path)
+        self._suggest_channel_from_suffix(suffix)
         if result.error:
             self._raw_text.clear()
             self._source_skipped_count = 0
             self._preview = OrderImportPreview()
             self._import_completed = False
             self._last_import_time = None
+            self._last_import_context = None
             self._fill_preview(self._preview)
             self._stats_label.setText(f"{result.error}；当前不会写数据库")
             QMessageBox.warning(self, "订单导入预览", result.error)
@@ -188,6 +271,7 @@ class OrderImportDialog(QDialog):
     def _on_preview(self) -> None:
         self._import_completed = False
         self._last_import_time = None
+        self._last_import_context = None
         self._preview = self._import_service.preview_text(
             self._raw_text.toPlainText(),
             region_mode=self._region_combo.currentData(),
@@ -281,6 +365,9 @@ class OrderImportDialog(QDialog):
             f"解析失败行数：{self._preview.failure_count}\n"
             f"跳过空行数：{self._preview.skipped_count}\n\n"
             "只会导入解析成功行，失败行不会导入。\n"
+            f"申报人：{self._selected_customer_name() or '未设置申报人'}\n"
+            f"渠道：{self._selected_channel()}\n"
+            f"配置方案：{self._selected_config_plan_name() or '未绑定配置方案'}\n"
             "导入会写入订单和操作日志，但不会结算、不会计算赔付或余额。"
         )
         if self._has_duplicate_rows():
@@ -297,9 +384,15 @@ class OrderImportDialog(QDialog):
             return
 
         try:
+            customer_name = self._selected_customer_name()
+            channel = self._selected_channel()
+            config_plan_name = self._selected_config_plan_name()
             result = self._import_service.confirm_import(
                 self._preview,
                 file_path=self._path_edit.text(),
+                customer_name=customer_name,
+                channel=channel,
+                config_plan_name=config_plan_name,
             )
         except Exception as exc:
             QMessageBox.warning(self, "订单导入", f"导入失败：{exc}")
@@ -309,6 +402,11 @@ class OrderImportDialog(QDialog):
         self._preview = result.preview
         self._import_completed = True
         self._last_import_time = datetime.now()
+        self._last_import_context = (
+            customer_name or "未设置申报人",
+            channel,
+            config_plan_name or "未绑定配置方案",
+        )
         self._fill_preview(self._preview)
         self._stats_label.setText(
             f"本次应导入：{result.attempted_count}    "
@@ -383,12 +481,16 @@ class OrderImportDialog(QDialog):
         attempted_count = sum(1 for row in self._preview.rows if row.success)
         region_text = self._region_combo.currentText()
         import_time = self._last_import_time or datetime.now()
+        customer_name, channel, config_plan_name = self._report_context()
         lines = [
             "订单导入结果报告",
             f"文件路径：{self._path_edit.text() or '未选择文件'}",
             f"文件名：{Path(self._path_edit.text()).name if self._path_edit.text() else '未选择文件'}",
             f"导入时间：{import_time.strftime('%Y-%m-%d %H:%M:%S')}",
             f"地区选择：{region_text}",
+            f"申报人：{customer_name}",
+            f"渠道：{channel}",
+            f"配置方案：{config_plan_name}",
             f"总行数：{self._preview.total_count}",
             f"跳过空行数：{self._preview.skipped_count}",
             f"解析成功数：{self._preview.success_count}",
@@ -399,7 +501,7 @@ class OrderImportDialog(QDialog):
             f"跳过解析失败行数：{skipped_parse_failed}",
             "",
             "每行明细",
-            "行号\t原始文本\t解析状态\t导入状态\t地区\t投注类型\t金额\t条目数\t错误原因\t订单ID",
+            "行号\t原始文本\t解析状态\t导入状态\t地区\t申报人\t渠道\t配置方案\t投注类型\t金额\t条目数\t错误原因\t订单ID",
         ]
         for row in self._preview.rows:
             lines.append(
@@ -410,6 +512,9 @@ class OrderImportDialog(QDialog):
                         "成功" if row.success else "失败",
                         row.import_status,
                         row.region,
+                        customer_name,
+                        channel,
+                        config_plan_name,
                         row.bet_type_summary,
                         f"{row.amount_total:.2f}" if row.success else "0.00",
                         str(row.item_count),
@@ -433,7 +538,23 @@ class OrderImportDialog(QDialog):
     def _write_result_csv(self, path: str) -> None:
         with open(path, "w", encoding="utf-8", newline="") as file:
             writer = csv.writer(file)
-            writer.writerow(["行号", "原始文本", "解析状态", "导入状态", "地区", "投注类型", "金额", "条目数", "错误原因"])
+            customer_name, channel, config_plan_name = self._report_context()
+            writer.writerow(
+                [
+                    "行号",
+                    "原始文本",
+                    "解析状态",
+                    "导入状态",
+                    "地区",
+                    "申报人",
+                    "渠道",
+                    "配置方案",
+                    "投注类型",
+                    "金额",
+                    "条目数",
+                    "错误原因",
+                ]
+            )
             for row in self._preview.rows:
                 writer.writerow(
                     [
@@ -442,12 +563,24 @@ class OrderImportDialog(QDialog):
                         "成功" if row.success else "失败",
                         row.import_status,
                         row.region,
+                        customer_name,
+                        channel,
+                        config_plan_name,
                         row.bet_type_summary,
                         f"{row.amount_total:.2f}" if row.success else "0.00",
                         row.item_count,
                         self._row_issue_text(row),
                     ]
                 )
+
+    def _report_context(self) -> tuple[str, str, str]:
+        if self._last_import_context is not None:
+            return self._last_import_context
+        return (
+            self._selected_customer_name() or "未设置申报人",
+            self._selected_channel(),
+            self._selected_config_plan_name() or "未绑定配置方案",
+        )
 
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(

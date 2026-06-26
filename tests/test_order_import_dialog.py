@@ -14,6 +14,7 @@ from services.log_service import LogService
 from services.order_import_service import OrderImportService
 from services.order_intake_service import OrderIntakeService
 from services.order_service import OrderService
+from services.settings_service import SettingsService
 from ui.app_events import app_events
 from ui.dialogs.order_import_dialog import OrderImportDialog
 from ui.pages.order_detail_page import OrderDetailPage
@@ -30,6 +31,16 @@ def count_orders(session_factory) -> int:
 
 def count_import_logs(session_factory) -> int:
     return LogService(session_factory).count_logs(action="order/import")
+
+
+class EmptySettingsService:
+    def list_declarers(self):
+        return []
+
+
+class BrokenSettingsService:
+    def list_declarers(self):
+        raise RuntimeError("settings failed")
 
 
 def test_order_import_service_txt_reads_non_empty_lines() -> None:
@@ -87,7 +98,7 @@ def test_order_import_service_preview_success_and_failure_rows() -> None:
 
 def test_order_import_dialog_initializes_with_confirm_button_disabled() -> None:
     app()
-    dialog = OrderImportDialog(import_service=OrderImportService())
+    dialog = OrderImportDialog(import_service=OrderImportService(), settings_service=EmptySettingsService())
 
     assert dialog.windowTitle() == "订单导入预览"
     assert dialog._btn_select_file.text() == "选择文件"
@@ -98,7 +109,38 @@ def test_order_import_dialog_initializes_with_confirm_button_disabled() -> None:
     assert dialog._btn_copy_result.text() == "复制导入结果"
     assert dialog._btn_export_result.text() == "导出导入结果"
     assert dialog._btn_close.text() == "关闭"
+    assert dialog._declarer_combo.currentText() == "未设置申报人"
+    assert dialog._channel_combo.currentText() == "导入"
     assert "当前不会写数据库" in dialog._stats_label.text()
+
+
+def test_order_import_dialog_loads_declarers_and_plan_from_settings(session_factory) -> None:
+    app()
+    settings = SettingsService(session_factory)
+    plan = settings.create_plan("47倍4水")
+    settings.add_declarer("林林", plan.id)
+
+    dialog = OrderImportDialog(
+        import_service=OrderImportService(order_intake_service=OrderIntakeService(session_factory)),
+        settings_service=settings,
+    )
+    index = dialog._declarer_combo.findText("林林")
+
+    assert index >= 0
+    dialog._declarer_combo.setCurrentIndex(index)
+    assert dialog._selected_customer_name() == "林林"
+    assert dialog._selected_config_plan_name() == "47倍4水"
+    assert dialog._plan_label.text() == "配置方案：47倍4水"
+
+
+def test_order_import_dialog_declarer_settings_failure_falls_back() -> None:
+    app()
+    dialog = OrderImportDialog(import_service=OrderImportService(), settings_service=BrokenSettingsService())
+
+    assert dialog._declarer_combo.currentText() == "未设置申报人"
+    assert dialog._selected_customer_name() is None
+    assert dialog._plan_label.text() == "配置方案：配置读取失败"
+    assert "申报人配置读取失败" in dialog._stats_label.text()
 
 
 def test_order_import_dialog_loads_txt_and_updates_preview_table(tmp_path) -> None:
@@ -259,6 +301,55 @@ def test_order_import_confirm_saves_only_success_rows_and_writes_log(
     assert "skipped_empty=1" in description
 
 
+def test_order_import_confirm_passes_declarer_channel_and_plan_to_save_log_and_report(
+    session_factory, tmp_path, monkeypatch
+) -> None:
+    app()
+    settings = SettingsService(session_factory)
+    plan = settings.create_plan("46倍6水")
+    settings.add_declarer("老汪", plan.id)
+    service = OrderImportService(order_intake_service=OrderIntakeService(session_factory))
+    dialog = OrderImportDialog(import_service=service, settings_service=settings)
+    dialog._region_combo.setCurrentText("澳门")
+    dialog._declarer_combo.setCurrentIndex(dialog._declarer_combo.findText("老汪"))
+    dialog._channel_combo.setCurrentText("手工整理导入")
+    path = tmp_path / "orders.txt"
+    path.write_text("01各10\n", encoding="utf-8")
+    dialog.load_file(str(path))
+
+    with patch(
+        "ui.dialogs.order_import_dialog.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    ), patch("ui.dialogs.order_import_dialog.QMessageBox.information"):
+        dialog._btn_confirm_import.click()
+
+    with session_factory() as session:
+        order = session.scalar(select(Order))
+        assert order is not None
+        assert order.customer_name == "老汪"
+        assert order.channel == "手工整理导入"
+
+    description = LogService(session_factory).list_logs(action="order/import")[0].description
+    assert "declarer=老汪" in description
+    assert "channel=手工整理导入" in description
+    assert "config_plan=46倍6水" in description
+
+    report = dialog._build_import_result_report()
+    assert "申报人：老汪" in report
+    assert "渠道：手工整理导入" in report
+    assert "配置方案：46倍6水" in report
+
+    csv_path = tmp_path / "import_report.csv"
+    monkeypatch.setattr(
+        "ui.dialogs.order_import_dialog.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (str(csv_path), "CSV Files (*.csv)"),
+    )
+    dialog._on_export_import_result()
+    lines = csv_path.read_text(encoding="utf-8").splitlines()
+    assert "申报人,渠道,配置方案" in lines[0]
+    assert "老汪,手工整理导入,46倍6水" in lines[1]
+
+
 def test_order_import_result_report_copy_and_export(session_factory, tmp_path, monkeypatch) -> None:
     app()
     service = OrderImportService(order_intake_service=OrderIntakeService(session_factory))
@@ -304,7 +395,7 @@ def test_order_import_result_report_copy_and_export(session_factory, tmp_path, m
     )
     dialog._on_export_import_result()
     first_line = csv_path.read_text(encoding="utf-8").splitlines()[0]
-    assert "行号,原始文本,解析状态,导入状态,地区,投注类型,金额,条目数,错误原因" in first_line
+    assert "行号,原始文本,解析状态,导入状态,地区,申报人,渠道,配置方案,投注类型,金额,条目数,错误原因" in first_line
 
 
 def test_order_import_result_copy_before_preview_and_export_cancel_or_failure(tmp_path, monkeypatch) -> None:
@@ -380,6 +471,34 @@ def test_order_import_reselect_file_resets_import_state(session_factory, tmp_pat
     assert dialog._table.item(0, 8).text() == "未导入"
 
 
+def test_order_import_reparse_and_reselect_keep_declarer_and_channel(session_factory, tmp_path) -> None:
+    app()
+    settings = SettingsService(session_factory)
+    plan = settings.create_plan("47倍4水")
+    settings.add_declarer("林林", plan.id)
+    dialog = OrderImportDialog(
+        import_service=OrderImportService(order_intake_service=OrderIntakeService(session_factory)),
+        settings_service=settings,
+    )
+    dialog._declarer_combo.setCurrentIndex(dialog._declarer_combo.findText("林林"))
+    dialog._channel_combo.setCurrentText("手工整理导入")
+    first = tmp_path / "first.txt"
+    first.write_text("01各10\n", encoding="utf-8")
+    second = tmp_path / "second.csv"
+    second.write_text("order_text\n02各5\n", encoding="utf-8")
+
+    dialog.load_file(str(first))
+    dialog._raw_text.setPlainText("03各5")
+    dialog._on_preview()
+    assert dialog._declarer_combo.currentText() == "林林"
+    assert dialog._channel_combo.currentText() == "手工整理导入"
+
+    dialog.load_file(str(second))
+    assert dialog._declarer_combo.currentText() == "林林"
+    assert dialog._channel_combo.currentText() == "手工整理导入"
+    assert dialog._selected_config_plan_name() == "47倍4水"
+
+
 def test_order_import_confirm_all_success_and_prevents_duplicate_click(
     session_factory, tmp_path
 ) -> None:
@@ -397,6 +516,7 @@ def test_order_import_confirm_all_success_and_prevents_duplicate_click(
     ), patch("ui.dialogs.order_import_dialog.QMessageBox.information"):
         dialog._btn_confirm_import.click()
         after_first = count_orders(session_factory)
+        dialog._channel_combo.setCurrentText("CSV导入")
         dialog._btn_confirm_import.click()
 
     assert count_orders(session_factory) == after_first
