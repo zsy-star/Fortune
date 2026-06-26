@@ -6,7 +6,7 @@ import csv
 from dataclasses import replace
 from pathlib import Path
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 from schemas.order_import_schema import (
     ImportSourceResult,
@@ -30,6 +30,7 @@ TEXT_COLUMN_NAMES = {
     "投注内容",
 }
 SUPPORTED_SUFFIXES = {".txt", ".csv", ".xlsx"}
+TEMPLATE_EXAMPLES = ("01各10", "02各5")
 
 
 class OrderImportService:
@@ -68,6 +69,36 @@ class OrderImportService:
         if suffix == ".txt":
             return self.extract_txt_lines(content)
         return self.extract_csv_lines(content)
+
+    def create_template(self, path: str | Path, *, file_type: str | None = None) -> Path:
+        """Create a minimal import template that can be read by the current importer."""
+
+        target = Path(path)
+        suffix = (file_type or target.suffix).lower().lstrip(".")
+        if suffix not in {"txt", "csv", "xlsx"}:
+            raise ValueError("导入模板仅支持 txt/csv/xlsx")
+
+        if suffix == "txt":
+            target.write_text("\n".join(TEMPLATE_EXAMPLES) + "\n", encoding="utf-8")
+            return target
+
+        if suffix == "csv":
+            with open(target, "w", encoding="utf-8", newline="") as file:
+                writer = csv.writer(file)
+                writer.writerow(["订单文本"])
+                for example in TEMPLATE_EXAMPLES:
+                    writer.writerow([example])
+            return target
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "订单导入模板"
+        sheet.append(["订单文本"])
+        for example in TEMPLATE_EXAMPLES:
+            sheet.append([example])
+        workbook.save(target)
+        workbook.close()
+        return target
 
     def _read_text(self, path: Path, *, encoding: str) -> str:
         encodings = [encoding]

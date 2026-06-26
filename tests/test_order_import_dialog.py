@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from PySide6.QtWidgets import QApplication, QMessageBox
 from sqlalchemy import func, select
 
@@ -66,6 +66,29 @@ def test_order_import_service_csv_without_header_uses_first_column() -> None:
 
     result = service.extract_csv_lines("01各10,备注\n02各5,备注\n")
 
+    assert result.lines == ["01各10", "02各5"]
+
+
+def test_order_import_service_creates_txt_csv_and_xlsx_templates(tmp_path) -> None:
+    service = OrderImportService()
+    txt_path = tmp_path / "template.txt"
+    csv_path = tmp_path / "template.csv"
+    xlsx_path = tmp_path / "template.xlsx"
+
+    service.create_template(txt_path)
+    service.create_template(csv_path)
+    service.create_template(xlsx_path)
+
+    assert txt_path.read_text(encoding="utf-8") == "01各10\n02各5\n"
+    csv_lines = csv_path.read_text(encoding="utf-8").splitlines()
+    assert csv_lines[0] == "订单文本"
+    assert "01各10" in csv_lines[1]
+
+    workbook = load_workbook(xlsx_path, data_only=True)
+    assert workbook.active.title == "订单导入模板"
+    assert workbook.active["A1"].value == "订单文本"
+    workbook.close()
+    result = service.extract_xlsx_lines(xlsx_path)
     assert result.lines == ["01各10", "02各5"]
 
 
@@ -155,6 +178,7 @@ def test_order_import_dialog_initializes_with_confirm_button_disabled() -> None:
 
     assert dialog.windowTitle() == "订单导入预览"
     assert dialog._btn_select_file.text() == "选择文件"
+    assert dialog._btn_download_template.text() == "下载导入模板"
     assert dialog._btn_preview.text() == "重新解析"
     assert dialog._btn_confirm_import.text() == "确认导入成功行"
     assert not dialog._btn_confirm_import.isEnabled()
@@ -185,6 +209,65 @@ def test_order_import_dialog_file_picker_supports_xlsx(monkeypatch) -> None:
     dialog._on_select_file()
 
     assert "*.xlsx" in captured["filter"]
+
+
+def test_order_import_dialog_template_button_cancel_success_and_failure(
+    session_factory, tmp_path, monkeypatch
+) -> None:
+    app()
+    dialog = OrderImportDialog(import_service=OrderImportService(), settings_service=EmptySettingsService())
+    before = count_orders(session_factory)
+
+    monkeypatch.setattr(
+        "ui.dialogs.order_import_dialog.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: ("", ""),
+    )
+    dialog._btn_download_template.click()
+    assert "已取消生成导入模板" in dialog._stats_label.text()
+
+    txt_path = tmp_path / "manual_template.txt"
+    monkeypatch.setattr(
+        "ui.dialogs.order_import_dialog.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (str(txt_path), "Text Files (*.txt)"),
+    )
+    with patch("ui.dialogs.order_import_dialog.QMessageBox.information") as info:
+        dialog._btn_download_template.click()
+    assert info.called
+    assert txt_path.read_text(encoding="utf-8") == "01各10\n02各5\n"
+    assert "已生成导入模板" in dialog._stats_label.text()
+    assert count_orders(session_factory) == before
+
+    monkeypatch.setattr(
+        "ui.dialogs.order_import_dialog.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (str(tmp_path / "missing" / "template.txt"), "Text Files (*.txt)"),
+    )
+    with patch("ui.dialogs.order_import_dialog.QMessageBox.warning") as warning:
+        dialog._btn_download_template.click()
+    assert warning.called
+    assert "生成导入模板失败" in dialog._stats_label.text()
+
+
+def test_order_import_dialog_generates_csv_and_xlsx_templates(tmp_path, monkeypatch) -> None:
+    app()
+    dialog = OrderImportDialog(import_service=OrderImportService(), settings_service=EmptySettingsService())
+    csv_path = tmp_path / "template.csv"
+    xlsx_path = tmp_path / "template.xlsx"
+
+    monkeypatch.setattr(
+        "ui.dialogs.order_import_dialog.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (str(csv_path), "CSV Files (*.csv)"),
+    )
+    with patch("ui.dialogs.order_import_dialog.QMessageBox.information"):
+        dialog._on_download_template()
+    assert csv_path.read_text(encoding="utf-8").splitlines()[0] == "订单文本"
+
+    monkeypatch.setattr(
+        "ui.dialogs.order_import_dialog.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (str(xlsx_path), "Excel Files (*.xlsx)"),
+    )
+    with patch("ui.dialogs.order_import_dialog.QMessageBox.information"):
+        dialog._on_download_template()
+    assert dialog._import_service.extract_xlsx_lines(xlsx_path).lines == ["01各10", "02各5"]
 
 
 def test_order_import_dialog_loads_declarers_and_plan_from_settings(session_factory) -> None:

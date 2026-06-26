@@ -109,9 +109,12 @@ class OrderImportDialog(QDialog):
         self._path_edit.setPlaceholderText("请选择 .txt / .csv / .xlsx 文件")
         self._btn_select_file = QPushButton("选择文件")
         self._btn_select_file.clicked.connect(self._on_select_file)
+        self._btn_download_template = QPushButton("下载导入模板")
+        self._btn_download_template.clicked.connect(self._on_download_template)
         row.addWidget(QLabel("文件"))
         row.addWidget(self._path_edit, stretch=1)
         row.addWidget(self._btn_select_file)
+        row.addWidget(self._btn_download_template)
         return row
 
     def _build_option_row(self) -> QHBoxLayout:
@@ -231,6 +234,42 @@ class OrderImportDialog(QDialog):
             self._stats_label.setText("已取消选择文件；当前不会写数据库")
             return
         self.load_file(path)
+
+    def _on_download_template(self) -> None:
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "下载导入模板",
+            "订单导入模板.xlsx",
+            "Excel Files (*.xlsx);;CSV Files (*.csv);;Text Files (*.txt);;All Files (*)",
+        )
+        if not path:
+            self._stats_label.setText("已取消生成导入模板")
+            return
+
+        target = Path(path)
+        file_type = self._template_type_from_selection(target, selected_filter)
+        if target.suffix.lower() not in {".txt", ".csv", ".xlsx"}:
+            target = target.with_suffix(f".{file_type}")
+
+        try:
+            self._import_service.create_template(target, file_type=file_type)
+        except Exception as exc:
+            self._stats_label.setText(f"生成导入模板失败：{exc}")
+            QMessageBox.warning(self, "下载导入模板", f"生成导入模板失败：{exc}")
+            return
+
+        self._stats_label.setText(f"已生成导入模板：{target}")
+        QMessageBox.information(self, "下载导入模板", f"导入模板已保存：{target}")
+
+    def _template_type_from_selection(self, path: Path, selected_filter: str) -> str:
+        suffix = path.suffix.lower().lstrip(".")
+        if suffix in {"txt", "csv", "xlsx"}:
+            return suffix
+        if "CSV" in selected_filter:
+            return "csv"
+        if "Text" in selected_filter:
+            return "txt"
+        return "xlsx"
 
     def load_file(self, path: str) -> None:
         suffix = Path(path).suffix.lower()
