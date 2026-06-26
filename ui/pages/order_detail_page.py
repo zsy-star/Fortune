@@ -732,7 +732,7 @@ class OrderDetailPage(QWidget):
     def _on_import_orders(self) -> None:
         dialog = OrderImportDialog(self)
         dialog.exec()
-        self._status_label.setText("订单导入预览已关闭；当前阶段未写数据库、未保存订单")
+        self._status_label.setText("订单导入窗口已关闭；请查看导入预览结果和操作日志")
 
     def _on_filter_settlement_results(self) -> None:
         summary = self._build_current_settlement_summary()

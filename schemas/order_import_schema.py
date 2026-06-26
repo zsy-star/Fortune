@@ -27,6 +27,10 @@ class OrderImportPreviewRow:
     item_count: int = 0
     selection_summary: str = ""
     error: str = ""
+    import_status: str = "未导入"
+    import_error: str = ""
+    order_id: int | None = None
+    order_no: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,4 +51,16 @@ class OrderImportPreview:
     @property
     def failure_count(self) -> int:
         return sum(1 for row in self.rows if not row.success)
+
+
+@dataclass(frozen=True, slots=True)
+class OrderImportConfirmResult:
+    """确认导入后的逐行保存结果。"""
+
+    preview: OrderImportPreview
+    attempted_count: int
+    imported_count: int
+    save_failed_count: int
+    skipped_parse_failed_count: int
+    log_id: int | None = None
 

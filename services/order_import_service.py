@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 from pathlib import Path
 
 from schemas.order_import_schema import (
     ImportSourceResult,
+    OrderImportConfirmResult,
     OrderImportPreview,
     OrderImportPreviewRow,
 )
+from services.log_service import LogService
+from services.order_intake_service import OrderIntakeService
 from services.order_parser import ParseResult, parse_lines
 
 TEXT_COLUMN_NAMES = {"text", "order_text", "content", "原文", "原始文本", "订单内容"}
@@ -19,8 +23,16 @@ SUPPORTED_SUFFIXES = {".txt", ".csv"}
 class OrderImportService:
     """只读导入预览服务。
 
-    本服务只负责读取文本和调用现有解析器生成预览，不创建订单、不写数据库。
+    文件读取和解析预览只读；确认导入时只通过 OrderIntakeService 保存成功行。
     """
+
+    def __init__(
+        self,
+        order_intake_service: OrderIntakeService | None = None,
+        log_service: LogService | None = None,
+    ):
+        self._order_intake_service = order_intake_service or OrderIntakeService()
+        self._log_service = log_service or LogService(self._order_intake_service._session_factory)
 
     def read_file(self, path: str | Path, *, encoding: str = "utf-8") -> ImportSourceResult:
         file_path = Path(path)
@@ -200,3 +212,123 @@ class OrderImportService:
             if len(parts) >= 3:
                 break
         return "；".join(parts)
+
+    def confirm_import(
+        self,
+        preview: OrderImportPreview,
+        *,
+        file_path: str = "",
+        channel: str = "import",
+        source: str = "order_import",
+    ) -> OrderImportConfirmResult:
+        """Save only parse-success rows through OrderIntakeService.
+
+        Rows are saved independently. Parse-failed rows are skipped; save-failed rows keep
+        their error in the returned preview.
+        """
+
+        updated_rows: list[OrderImportPreviewRow] = []
+        attempted = 0
+        imported = 0
+        save_failed = 0
+        skipped_parse_failed = 0
+
+        for row in preview.rows:
+            if not row.success:
+                skipped_parse_failed += 1
+                updated_rows.append(
+                    replace(row, import_status="未导入，解析失败", import_error=row.error or "解析失败")
+                )
+                continue
+
+            attempted += 1
+            try:
+                save_result = self._save_row(row, channel=channel, source=source)
+            except Exception as exc:
+                save_failed += 1
+                updated_rows.append(
+                    replace(
+                        row,
+                        import_status="导入失败",
+                        import_error=f"保存失败：{exc}",
+                    )
+                )
+                continue
+            if save_result.success and save_result.order is not None:
+                imported += 1
+                updated_rows.append(
+                    replace(
+                        row,
+                        import_status="已导入",
+                        import_error="",
+                        order_id=save_result.order.id,
+                        order_no=save_result.order.order_no,
+                    )
+                )
+            else:
+                save_failed += 1
+                updated_rows.append(
+                    replace(
+                        row,
+                        import_status="导入失败",
+                        import_error=save_result.error or "保存失败",
+                    )
+                )
+
+        updated_preview = OrderImportPreview(rows=updated_rows, skipped_count=preview.skipped_count)
+        log_id = self._write_import_log(
+            file_path=file_path,
+            preview=preview,
+            imported_count=imported,
+            save_failed_count=save_failed,
+            skipped_parse_failed_count=skipped_parse_failed,
+        )
+        return OrderImportConfirmResult(
+            preview=updated_preview,
+            attempted_count=attempted,
+            imported_count=imported,
+            save_failed_count=save_failed,
+            skipped_parse_failed_count=skipped_parse_failed,
+            log_id=log_id,
+        )
+
+    def _save_row(self, row: OrderImportPreviewRow, *, channel: str, source: str):
+        region = row.region if row.region in {"澳门", "香港"} else None
+        preview = self._order_intake_service.preview_raw_text(
+            row.raw_text,
+            channel=channel,
+            region=region,
+            source=source,
+        )
+        return self._order_intake_service.save_preview(preview)
+
+    def _write_import_log(
+        self,
+        *,
+        file_path: str,
+        preview: OrderImportPreview,
+        imported_count: int,
+        save_failed_count: int,
+        skipped_parse_failed_count: int,
+    ) -> int | None:
+        try:
+            log = self._log_service.create_log(
+                module="order",
+                action="order/import",
+                description=(
+                    "订单导入汇总；"
+                    f"file={Path(file_path).name if file_path else '未选择文件'}; "
+                    f"total_rows={preview.total_count}; "
+                    f"parse_success={preview.success_count}; "
+                    f"parse_failed={preview.failure_count}; "
+                    f"imported={imported_count}; "
+                    f"save_failed={save_failed_count}; "
+                    f"skipped_empty={preview.skipped_count}; "
+                    f"skipped_parse_failed={skipped_parse_failed_count}"
+                ),
+                operator="system",
+                related_type="order_import",
+            )
+            return log.id
+        except Exception:
+            return None

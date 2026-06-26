@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from schemas.order_import_schema import OrderImportPreview, OrderImportPreviewRow
 from services.order_import_service import OrderImportService
+from ui.app_events import app_events
 
 
 class OrderImportDialog(QDialog):
@@ -42,6 +43,7 @@ class OrderImportDialog(QDialog):
         self._import_service = import_service or OrderImportService()
         self._source_skipped_count = 0
         self._preview = OrderImportPreview()
+        self._import_completed = False
 
         self.setWindowTitle("订单导入预览")
         self.resize(1080, 720)
@@ -65,14 +67,17 @@ class OrderImportDialog(QDialog):
         self._raw_text.setMinimumHeight(110)
         root.addWidget(self._raw_text)
 
-        self._table = QTableWidget(0, 8)
-        self._table.setHorizontalHeaderLabels(["行号", "原始文本", "地区", "解析状态", "投注类型", "金额", "条目数", "错误原因"])
+        self._table = QTableWidget(0, 10)
+        self._table.setHorizontalHeaderLabels(
+            ["行号", "原始文本", "地区", "解析状态", "投注类型", "金额", "条目数", "错误原因", "导入结果", "保存错误"]
+        )
         self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self._table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(9, QHeaderView.ResizeMode.Stretch)
         root.addWidget(self._table, stretch=1)
 
         self._stats_label = QLabel("总行数：0    解析成功：0    解析失败：0    跳过空行：0    当前不会写数据库")
@@ -80,6 +85,7 @@ class OrderImportDialog(QDialog):
         root.addWidget(self._stats_label)
         root.addLayout(self._build_bottom_row())
         self._apply_stylesheet()
+        self._update_import_button()
 
     def _build_file_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -112,12 +118,15 @@ class OrderImportDialog(QDialog):
         row = QHBoxLayout()
         row.addStretch(1)
         self._btn_preview = QPushButton("重新解析")
+        self._btn_confirm_import = QPushButton("确认导入成功行")
         self._btn_copy_errors = QPushButton("复制错误报告")
         self._btn_close = QPushButton("关闭")
         self._btn_preview.clicked.connect(self._on_preview)
+        self._btn_confirm_import.clicked.connect(self._on_confirm_import)
         self._btn_copy_errors.clicked.connect(self._on_copy_error_report)
         self._btn_close.clicked.connect(self.reject)
         row.addWidget(self._btn_preview)
+        row.addWidget(self._btn_confirm_import)
         row.addWidget(self._btn_copy_errors)
         row.addWidget(self._btn_close)
         return row
@@ -141,6 +150,9 @@ class OrderImportDialog(QDialog):
             self._path_edit.setText(path)
             self._raw_text.clear()
             self._table.setRowCount(0)
+            self._preview = OrderImportPreview()
+            self._import_completed = False
+            self._update_import_button()
             self._stats_label.setText(f"{message}；当前不会写数据库")
             QMessageBox.warning(self, "订单导入预览", message)
             return
@@ -152,6 +164,7 @@ class OrderImportDialog(QDialog):
             self._raw_text.clear()
             self._source_skipped_count = 0
             self._preview = OrderImportPreview()
+            self._import_completed = False
             self._fill_preview(self._preview)
             self._stats_label.setText(f"{result.error}；当前不会写数据库")
             QMessageBox.warning(self, "订单导入预览", result.error)
@@ -162,6 +175,7 @@ class OrderImportDialog(QDialog):
         self._on_preview()
 
     def _on_preview(self) -> None:
+        self._import_completed = False
         self._preview = self._import_service.preview_text(
             self._raw_text.toPlainText(),
             region_mode=self._region_combo.currentData(),
@@ -190,6 +204,8 @@ class OrderImportDialog(QDialog):
             f"{row.amount_total:.2f}" if row.success else "0.00",
             str(row.item_count),
             row.error,
+            row.import_status,
+            row.import_error,
         ]
         for column, value in enumerate(values):
             item = QTableWidgetItem(value)
@@ -200,6 +216,10 @@ class OrderImportDialog(QDialog):
             )
             if column == 3:
                 item.setForeground(Qt.GlobalColor.darkGreen if row.success else Qt.GlobalColor.red)
+            if column == 8 and row.import_status == "已导入":
+                item.setForeground(Qt.GlobalColor.darkGreen)
+            if column == 8 and "失败" in row.import_status:
+                item.setForeground(Qt.GlobalColor.red)
             self._table.setItem(row_index, column, item)
 
     def _update_stats(self, preview: OrderImportPreview) -> None:
@@ -210,6 +230,78 @@ class OrderImportDialog(QDialog):
             f"跳过空行：{preview.skipped_count}    "
             "当前不会写数据库"
         )
+        self._update_import_button()
+
+    def _update_import_button(self) -> None:
+        if not hasattr(self, "_btn_confirm_import"):
+            return
+        self._btn_confirm_import.setEnabled(
+            not self._import_completed and self._preview.success_count > 0
+        )
+        if self._import_completed:
+            self._btn_confirm_import.setToolTip("本次导入已完成；请重新解析或重新选择文件后再次导入")
+        elif self._preview.success_count <= 0:
+            self._btn_confirm_import.setToolTip("没有解析成功行，不能导入")
+        else:
+            self._btn_confirm_import.setToolTip("只导入解析成功行；失败行不会导入")
+
+    def _on_confirm_import(self) -> None:
+        if self._preview.success_count <= 0:
+            self._stats_label.setText("没有解析成功行，不能导入")
+            self._update_import_button()
+            return
+
+        confirm_text = (
+            "确认导入当前预览中的成功行？\n\n"
+            f"总行数：{self._preview.total_count}\n"
+            f"解析成功行数：{self._preview.success_count}\n"
+            f"解析失败行数：{self._preview.failure_count}\n"
+            f"跳过空行数：{self._preview.skipped_count}\n\n"
+            "只会导入解析成功行，失败行不会导入。\n"
+            "导入会写入订单和操作日志，但不会结算、不会计算赔付或余额。"
+        )
+        choice = QMessageBox.question(
+            self,
+            "确认导入成功行",
+            confirm_text,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if choice != QMessageBox.StandardButton.Yes:
+            self._stats_label.setText("已取消确认导入；未写数据库")
+            return
+
+        try:
+            result = self._import_service.confirm_import(
+                self._preview,
+                file_path=self._path_edit.text(),
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "订单导入", f"导入失败：{exc}")
+            self._stats_label.setText(f"导入失败：{exc}")
+            return
+
+        self._preview = result.preview
+        self._import_completed = True
+        self._fill_preview(self._preview)
+        self._stats_label.setText(
+            f"本次应导入：{result.attempted_count}    "
+            f"成功导入：{result.imported_count}    "
+            f"保存失败：{result.save_failed_count}    "
+            f"跳过失败解析行：{result.skipped_parse_failed_count}    "
+            f"跳过空行：{self._preview.skipped_count}"
+        )
+        self._update_import_button()
+        if result.imported_count > 0:
+            app_events.orders_changed.emit()
+        if result.log_id is not None:
+            app_events.logs_changed.emit()
+        if result.imported_count and result.save_failed_count:
+            QMessageBox.information(self, "订单导入", "导入部分成功，请查看预览表中的导入结果。")
+        elif result.imported_count:
+            QMessageBox.information(self, "订单导入", f"成功导入 {result.imported_count} 条订单。")
+        elif result.save_failed_count:
+            QMessageBox.warning(self, "订单导入", "解析成功行均保存失败，请查看保存错误。")
 
     def _on_copy_error_report(self) -> None:
         QApplication.clipboard().setText(self._build_error_report())
@@ -263,4 +355,3 @@ class OrderImportDialog(QDialog):
             }
             """
         )
-
