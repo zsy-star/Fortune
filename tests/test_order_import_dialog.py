@@ -95,6 +95,8 @@ def test_order_import_dialog_initializes_with_confirm_button_disabled() -> None:
     assert dialog._btn_confirm_import.text() == "确认导入成功行"
     assert not dialog._btn_confirm_import.isEnabled()
     assert dialog._btn_copy_errors.text() == "复制错误报告"
+    assert dialog._btn_copy_result.text() == "复制导入结果"
+    assert dialog._btn_export_result.text() == "导出导入结果"
     assert dialog._btn_close.text() == "关闭"
     assert "当前不会写数据库" in dialog._stats_label.text()
 
@@ -255,6 +257,127 @@ def test_order_import_confirm_saves_only_success_rows_and_writes_log(
     assert "imported=2" in description
     assert "save_failed=0" in description
     assert "skipped_empty=1" in description
+
+
+def test_order_import_result_report_copy_and_export(session_factory, tmp_path, monkeypatch) -> None:
+    app()
+    service = OrderImportService(order_intake_service=OrderIntakeService(session_factory))
+    dialog = OrderImportDialog(import_service=service)
+    dialog._region_combo.setCurrentText("澳门")
+    path = tmp_path / "orders.txt"
+    path.write_text("01各10\n明显无效\n", encoding="utf-8")
+    dialog.load_file(str(path))
+
+    with patch(
+        "ui.dialogs.order_import_dialog.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    ), patch("ui.dialogs.order_import_dialog.QMessageBox.information"):
+        dialog._btn_confirm_import.click()
+
+    report = dialog._build_import_result_report()
+    assert "订单导入结果报告" in report
+    assert "总行数：2" in report
+    assert "解析成功数：1" in report
+    assert "解析失败数：1" in report
+    assert "成功导入数：1" in report
+    assert "保存失败数：0" in report
+    assert "失败行未导入" in report
+    assert "本次未执行结算" in report
+    assert "本次未计算赔付、余额、返水" in report
+
+    dialog._btn_copy_result.click()
+    assert "订单导入结果报告" in QApplication.clipboard().text()
+    assert "已复制导入结果报告到剪贴板" in dialog._stats_label.text()
+
+    txt_path = tmp_path / "import_report.txt"
+    monkeypatch.setattr(
+        "ui.dialogs.order_import_dialog.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (str(txt_path), "Text Files (*.txt)"),
+    )
+    dialog._on_export_import_result()
+    assert txt_path.read_text(encoding="utf-8").startswith("订单导入结果报告")
+
+    csv_path = tmp_path / "import_report.csv"
+    monkeypatch.setattr(
+        "ui.dialogs.order_import_dialog.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (str(csv_path), "CSV Files (*.csv)"),
+    )
+    dialog._on_export_import_result()
+    first_line = csv_path.read_text(encoding="utf-8").splitlines()[0]
+    assert "行号,原始文本,解析状态,导入状态,地区,投注类型,金额,条目数,错误原因" in first_line
+
+
+def test_order_import_result_copy_before_preview_and_export_cancel_or_failure(tmp_path, monkeypatch) -> None:
+    app()
+    dialog = OrderImportDialog(import_service=OrderImportService())
+
+    dialog._btn_copy_result.click()
+    assert "当前暂无导入结果" in dialog._stats_label.text()
+
+    path = tmp_path / "orders.txt"
+    path.write_text("01各10\n", encoding="utf-8")
+    dialog.load_file(str(path))
+
+    monkeypatch.setattr(
+        "ui.dialogs.order_import_dialog.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: ("", ""),
+    )
+    dialog._on_export_import_result()
+    assert "已取消导出导入结果" in dialog._stats_label.text()
+
+    monkeypatch.setattr(
+        "ui.dialogs.order_import_dialog.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (str(tmp_path), "Text Files (*.txt)"),
+    )
+    dialog._on_export_import_result()
+    assert "导出导入结果失败" in dialog._stats_label.text()
+
+
+def test_order_import_marks_duplicate_rows_and_confirmation_warns(tmp_path) -> None:
+    app()
+    dialog = OrderImportDialog(import_service=OrderImportService())
+    dialog._region_combo.setCurrentText("澳门")
+    path = tmp_path / "orders.txt"
+    path.write_text("01各10\n 01各10 \n02各5\n", encoding="utf-8")
+    dialog.load_file(str(path))
+
+    assert dialog._preview.rows[0].duplicate_warning == "疑似重复行"
+    assert dialog._preview.rows[1].duplicate_warning == "疑似重复行"
+    assert "疑似重复行" in dialog._table.item(0, 7).text()
+
+    captured = {}
+
+    def fake_question(_parent, _title, text, *_args):
+        captured["text"] = text
+        return QMessageBox.StandardButton.No
+
+    with patch("ui.dialogs.order_import_dialog.QMessageBox.question", side_effect=fake_question):
+        dialog._btn_confirm_import.click()
+
+    assert "当前预览中存在疑似重复行" in captured["text"]
+
+
+def test_order_import_reselect_file_resets_import_state(session_factory, tmp_path) -> None:
+    app()
+    service = OrderImportService(order_intake_service=OrderIntakeService(session_factory))
+    dialog = OrderImportDialog(import_service=service)
+    dialog._region_combo.setCurrentText("澳门")
+    first = tmp_path / "first.txt"
+    first.write_text("01各10\n", encoding="utf-8")
+    second = tmp_path / "second.txt"
+    second.write_text("02各5\n", encoding="utf-8")
+    dialog.load_file(str(first))
+
+    with patch(
+        "ui.dialogs.order_import_dialog.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    ), patch("ui.dialogs.order_import_dialog.QMessageBox.information"):
+        dialog._btn_confirm_import.click()
+
+    assert not dialog._btn_confirm_import.isEnabled()
+    dialog.load_file(str(second))
+    assert dialog._btn_confirm_import.isEnabled()
+    assert dialog._table.item(0, 8).text() == "未导入"
 
 
 def test_order_import_confirm_all_success_and_prevents_duplicate_click(

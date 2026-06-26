@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -44,6 +46,7 @@ class OrderImportDialog(QDialog):
         self._source_skipped_count = 0
         self._preview = OrderImportPreview()
         self._import_completed = False
+        self._last_import_time: datetime | None = None
 
         self.setWindowTitle("订单导入预览")
         self.resize(1080, 720)
@@ -120,14 +123,20 @@ class OrderImportDialog(QDialog):
         self._btn_preview = QPushButton("重新解析")
         self._btn_confirm_import = QPushButton("确认导入成功行")
         self._btn_copy_errors = QPushButton("复制错误报告")
+        self._btn_copy_result = QPushButton("复制导入结果")
+        self._btn_export_result = QPushButton("导出导入结果")
         self._btn_close = QPushButton("关闭")
         self._btn_preview.clicked.connect(self._on_preview)
         self._btn_confirm_import.clicked.connect(self._on_confirm_import)
         self._btn_copy_errors.clicked.connect(self._on_copy_error_report)
+        self._btn_copy_result.clicked.connect(self._on_copy_import_result)
+        self._btn_export_result.clicked.connect(self._on_export_import_result)
         self._btn_close.clicked.connect(self.reject)
         row.addWidget(self._btn_preview)
         row.addWidget(self._btn_confirm_import)
         row.addWidget(self._btn_copy_errors)
+        row.addWidget(self._btn_copy_result)
+        row.addWidget(self._btn_export_result)
         row.addWidget(self._btn_close)
         return row
 
@@ -152,6 +161,7 @@ class OrderImportDialog(QDialog):
             self._table.setRowCount(0)
             self._preview = OrderImportPreview()
             self._import_completed = False
+            self._last_import_time = None
             self._update_import_button()
             self._stats_label.setText(f"{message}；当前不会写数据库")
             QMessageBox.warning(self, "订单导入预览", message)
@@ -165,6 +175,7 @@ class OrderImportDialog(QDialog):
             self._source_skipped_count = 0
             self._preview = OrderImportPreview()
             self._import_completed = False
+            self._last_import_time = None
             self._fill_preview(self._preview)
             self._stats_label.setText(f"{result.error}；当前不会写数据库")
             QMessageBox.warning(self, "订单导入预览", result.error)
@@ -176,6 +187,7 @@ class OrderImportDialog(QDialog):
 
     def _on_preview(self) -> None:
         self._import_completed = False
+        self._last_import_time = None
         self._preview = self._import_service.preview_text(
             self._raw_text.toPlainText(),
             region_mode=self._region_combo.currentData(),
@@ -203,7 +215,7 @@ class OrderImportDialog(QDialog):
             row.bet_type_summary,
             f"{row.amount_total:.2f}" if row.success else "0.00",
             str(row.item_count),
-            row.error,
+            self._row_error_text(row),
             row.import_status,
             row.import_error,
         ]
@@ -245,6 +257,17 @@ class OrderImportDialog(QDialog):
         else:
             self._btn_confirm_import.setToolTip("只导入解析成功行；失败行不会导入")
 
+    def _row_error_text(self, row: OrderImportPreviewRow) -> str:
+        parts = [part for part in (row.error, row.duplicate_warning) if part]
+        return "；".join(parts)
+
+    def _row_issue_text(self, row: OrderImportPreviewRow) -> str:
+        parts = [part for part in (row.error, row.duplicate_warning, row.import_error) if part]
+        return "；".join(parts)
+
+    def _has_duplicate_rows(self) -> bool:
+        return any(row.duplicate_warning for row in self._preview.rows)
+
     def _on_confirm_import(self) -> None:
         if self._preview.success_count <= 0:
             self._stats_label.setText("没有解析成功行，不能导入")
@@ -260,6 +283,8 @@ class OrderImportDialog(QDialog):
             "只会导入解析成功行，失败行不会导入。\n"
             "导入会写入订单和操作日志，但不会结算、不会计算赔付或余额。"
         )
+        if self._has_duplicate_rows():
+            confirm_text += "\n\n当前预览中存在疑似重复行，请确认是否继续导入。"
         choice = QMessageBox.question(
             self,
             "确认导入成功行",
@@ -283,6 +308,7 @@ class OrderImportDialog(QDialog):
 
         self._preview = result.preview
         self._import_completed = True
+        self._last_import_time = datetime.now()
         self._fill_preview(self._preview)
         self._stats_label.setText(
             f"本次应导入：{result.attempted_count}    "
@@ -307,14 +333,121 @@ class OrderImportDialog(QDialog):
         QApplication.clipboard().setText(self._build_error_report())
         self._stats_label.setText("已复制错误报告；当前不会写数据库")
 
+    def _on_copy_import_result(self) -> None:
+        report = self._build_import_result_report()
+        if report == "当前暂无导入结果":
+            self._stats_label.setText("当前暂无导入结果")
+            return
+        QApplication.clipboard().setText(report)
+        self._stats_label.setText("已复制导入结果报告到剪贴板")
+
+    def _on_export_import_result(self) -> None:
+        report = self._build_import_result_report()
+        if report == "当前暂无导入结果":
+            self._stats_label.setText("当前暂无导入结果")
+            return
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "导出导入结果",
+            "订单导入结果报告.txt",
+            "Text Files (*.txt);;CSV Files (*.csv);;All Files (*)",
+        )
+        if not path:
+            self._stats_label.setText("已取消导出导入结果")
+            return
+        try:
+            if Path(path).suffix.lower() == ".csv" or "CSV" in selected_filter:
+                self._write_result_csv(path)
+            else:
+                Path(path).write_text(report, encoding="utf-8")
+        except OSError as exc:
+            self._stats_label.setText(f"导出导入结果失败：{exc}")
+            return
+        self._stats_label.setText(f"已导出导入结果：{path}")
+
     def _build_error_report(self) -> str:
         failed_rows = [row for row in self._preview.rows if not row.success]
         if not failed_rows:
             return "当前没有解析失败行"
         lines = ["订单导入预览错误报告", "行号\t原始文本\t错误原因"]
         for row in failed_rows:
-            lines.append(f"{row.line_number}\t{row.raw_text}\t{row.error or '解析失败'}")
+            lines.append(f"{row.line_number}\t{row.raw_text}\t{self._row_error_text(row) or '解析失败'}")
         return "\n".join(lines)
+
+    def _build_import_result_report(self) -> str:
+        if not self._preview.rows:
+            return "当前暂无导入结果"
+        imported_count = sum(1 for row in self._preview.rows if row.import_status == "已导入")
+        save_failed_count = sum(1 for row in self._preview.rows if row.import_status == "导入失败")
+        skipped_parse_failed = sum(1 for row in self._preview.rows if not row.success)
+        attempted_count = sum(1 for row in self._preview.rows if row.success)
+        region_text = self._region_combo.currentText()
+        import_time = self._last_import_time or datetime.now()
+        lines = [
+            "订单导入结果报告",
+            f"文件路径：{self._path_edit.text() or '未选择文件'}",
+            f"文件名：{Path(self._path_edit.text()).name if self._path_edit.text() else '未选择文件'}",
+            f"导入时间：{import_time.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"地区选择：{region_text}",
+            f"总行数：{self._preview.total_count}",
+            f"跳过空行数：{self._preview.skipped_count}",
+            f"解析成功数：{self._preview.success_count}",
+            f"解析失败数：{self._preview.failure_count}",
+            f"本次应导入数：{attempted_count}",
+            f"成功导入数：{imported_count}",
+            f"保存失败数：{save_failed_count}",
+            f"跳过解析失败行数：{skipped_parse_failed}",
+            "",
+            "每行明细",
+            "行号\t原始文本\t解析状态\t导入状态\t地区\t投注类型\t金额\t条目数\t错误原因\t订单ID",
+        ]
+        for row in self._preview.rows:
+            lines.append(
+                "\t".join(
+                    [
+                        str(row.line_number),
+                        row.raw_text,
+                        "成功" if row.success else "失败",
+                        row.import_status,
+                        row.region,
+                        row.bet_type_summary,
+                        f"{row.amount_total:.2f}" if row.success else "0.00",
+                        str(row.item_count),
+                        self._row_issue_text(row),
+                        str(row.order_id or ""),
+                    ]
+                )
+            )
+        lines.extend(
+            [
+                "",
+                "安全说明",
+                "本报告仅用于核对",
+                "失败行未导入",
+                "本次未执行结算",
+                "本次未计算赔付、余额、返水",
+            ]
+        )
+        return "\n".join(lines)
+
+    def _write_result_csv(self, path: str) -> None:
+        with open(path, "w", encoding="utf-8", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(["行号", "原始文本", "解析状态", "导入状态", "地区", "投注类型", "金额", "条目数", "错误原因"])
+            for row in self._preview.rows:
+                writer.writerow(
+                    [
+                        row.line_number,
+                        row.raw_text,
+                        "成功" if row.success else "失败",
+                        row.import_status,
+                        row.region,
+                        row.bet_type_summary,
+                        f"{row.amount_total:.2f}" if row.success else "0.00",
+                        row.item_count,
+                        self._row_issue_text(row),
+                    ]
+                )
 
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(

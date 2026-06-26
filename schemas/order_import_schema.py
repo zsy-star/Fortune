@@ -27,6 +27,7 @@ class OrderImportPreviewRow:
     item_count: int = 0
     selection_summary: str = ""
     error: str = ""
+    duplicate_warning: str = ""
     import_status: str = "未导入"
     import_error: str = ""
     order_id: int | None = None
@@ -63,4 +64,3 @@ class OrderImportConfirmResult:
     save_failed_count: int
     skipped_parse_failed_count: int
     log_id: int | None = None
-

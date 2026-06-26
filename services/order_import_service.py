@@ -122,6 +122,7 @@ class OrderImportService:
             self._preview_line(line_number=index, raw_text=line, region_mode=region_mode)
             for index, line in enumerate(lines, start=1)
         ]
+        rows = self._mark_duplicate_rows(rows)
         return OrderImportPreview(rows=rows, skipped_count=skipped_count)
 
     def preview_text(
@@ -212,6 +213,19 @@ class OrderImportService:
             if len(parts) >= 3:
                 break
         return "；".join(parts)
+
+    def _mark_duplicate_rows(self, rows: list[OrderImportPreviewRow]) -> list[OrderImportPreviewRow]:
+        counts: dict[str, int] = {}
+        for row in rows:
+            key = self._duplicate_key(row.raw_text)
+            counts[key] = counts.get(key, 0) + 1
+        return [
+            replace(row, duplicate_warning="疑似重复行") if counts[self._duplicate_key(row.raw_text)] > 1 else row
+            for row in rows
+        ]
+
+    def _duplicate_key(self, text: str) -> str:
+        return " ".join(str(text).strip().split())
 
     def confirm_import(
         self,
