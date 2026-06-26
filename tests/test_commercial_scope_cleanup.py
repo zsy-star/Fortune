@@ -8,11 +8,12 @@ import matplotlib
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QCheckBox, QLabel, QPushButton
+from PySide6.QtWidgets import QApplication, QCheckBox, QLabel, QLineEdit, QPushButton
 
 from services.log_service import LogService
 from services.draw_service import DrawService
 from services.order_service import OrderService
+from ui.main_window import MainWindow
 from ui.matplotlib_setup import configure_matplotlib
 from ui.pages.lianxiao_order_page import LianxiaoOrderPage
 from ui.pages.draw_history_page import DrawHistoryPage
@@ -23,6 +24,7 @@ from ui.pages.order_detail_page import OrderDetailPage
 from ui.pages.overview_page import OverviewPage
 from ui.pages.settlement_ledger_page import SettlementLedgerPage
 from ui.pages.special_order_page import SpecialOrderPage
+from ui.widgets.nav_hover_menu import NavHoverMenuButton
 from ui.windows.record_order_window import RecordOrderWindow
 from ui.windows.split_order_window import SplitOrderWindow
 from ui.unavailable import UNAVAILABLE_TOOLTIP
@@ -53,30 +55,83 @@ def test_overview_and_order_analysis_pages_create_offscreen(session_factory) -> 
     assert analysis._report_view.toPlainText()
 
 
-def test_lianxiao_order_page_is_reserved_without_fake_business_data() -> None:
+def test_lianxiao_order_page_first_stage_is_readonly(session_factory) -> None:
     app()
-    page = LianxiaoOrderPage()
-    source = inspect.getsource(LianxiaoOrderPage)
+    page = LianxiaoOrderPage(order_service=OrderService(session_factory))
+
+    labels = "\n".join(_texts(page, QLabel))
+    assert "原金额" not in labels
+    assert "总计" not in labels
+    assert "原连肖数据" in labels
+    assert "调整后数据" in labels
+    assert page._summary_table.rowCount() == 1
+    assert len(page._tables) == 4
+    assert not page.findChildren(QLineEdit)
+    assert "暂无数据" in page._output.toPlainText()
+    button_texts = {button.text() for button in page.findChildren(QPushButton)}
+    assert "保存本次调整" not in button_texts
+    assert "调整成为 10 的倍数" not in button_texts
+    assert "清空当前调整" not in button_texts
+    assert "连肖兑奖" not in button_texts
+    assert page._btn_print.isEnabled()
+    assert page._btn_reset.isEnabled()
+    assert page._btn_clear_output.isEnabled()
+    page._on_print_adjustment()
+    page._on_reset_adjustment()
+    assert "请先复制或导出当前汇总后打印" in page._output.toPlainText()
+    assert "数据库订单未被修改" in page._output.toPlainText()
+
+
+def test_special_order_page_is_tema_readonly_first_stage(session_factory) -> None:
+    app()
+    page = SpecialOrderPage(order_service=OrderService(session_factory))
     labels = "\n".join(_texts(page, QLabel))
 
-    assert "当前测试版暂未开放：连肖调单持久化" in labels
-    assert "不会写入订单、结算、开奖或操作日志数据" in labels
-    assert "猴羊龙" not in labels
-    assert "猴羊龙" not in source
-    assert all(not button.isEnabled() for button in page.findChildren(QPushButton))
-    assert all(button.toolTip() == UNAVAILABLE_TOOLTIP for button in page.findChildren(QPushButton))
+    assert "特码调单" in labels
+    assert "第一阶段只读汇总" in labels
+    assert "连码调单" not in labels
+    assert page._summary_table.rowCount() == 49
+    assert len(page._adjust_edits) == 49
+    assert page._btn_open_extension.isEnabled()
+    assert page._btn_adjust_records.isEnabled()
+    assert "暂无数据" in page._output.toPlainText()
+    page._on_save_adjustment()
+    page._on_reset_all_data()
+    page._on_special_settlement()
+    output = page._output.toPlainText()
+    assert "调整保存功能后续开放" in output
+    assert "高风险功能暂未开放" in output
+    assert "不计算赔付" in output
 
 
-def test_special_order_page_is_reserved_without_fake_business_data() -> None:
+def test_main_window_tema_nav_direct_and_hover_only_lianxiao() -> None:
     app()
-    page = SpecialOrderPage()
-    labels = "\n".join(_texts(page, QLabel))
+    window = MainWindow()
+    try:
+        all_text = "\n".join(_texts(window, QPushButton))
+        assert "连码调单" not in all_text
+        assert window._adjust_nav is not None
+        assert window._adjust_nav.main_button().text() == "特码调单"
+        assert window._adjust_nav.menu_button().text() == "▾"
+        assert [button.text() for button in window._adjust_nav._option_buttons] == ["连肖调单"]
 
-    assert "当前测试版暂未开放：连码调单持久化" in labels
-    assert "复杂玩法结算规则与审计权限" in labels
-    assert "不会写入订单、结算、开奖或操作日志数据" in labels
-    assert all(not button.isEnabled() for button in page.findChildren(QPushButton))
-    assert all(button.toolTip() == UNAVAILABLE_TOOLTIP for button in page.findChildren(QPushButton))
+        window._adjust_nav.main_button().click()
+        assert isinstance(window._stack.currentWidget(), SpecialOrderPage)
+
+        window._adjust_nav._option_buttons[0].click()
+        assert isinstance(window._stack.currentWidget(), LianxiaoOrderPage)
+    finally:
+        window.close()
+        window.deleteLater()
+
+
+def test_tema_hover_menu_uses_delayed_stable_hide_instead_of_immediate_hide() -> None:
+    source = inspect.getsource(NavHoverMenuButton)
+
+    assert "_hide_popup_if_cursor_left" in source
+    assert "Qt.WindowType.ToolTip" in source
+    assert "Qt.WindowType.Popup" not in source
+    assert "self._hide_timer.timeout.connect(self._popup.hide)" not in source
 
 
 def test_split_order_window_opens_first_stage_text_tools() -> None:

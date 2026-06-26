@@ -272,8 +272,6 @@ class MainWindow(QMainWindow):
 
             [
 
-                ("连码调单", _SPECIAL_ORDER_STACK),
-
                 ("连肖调单", _LIANXIAO_ORDER_STACK),
 
             ],
@@ -407,6 +405,28 @@ class MainWindow(QMainWindow):
                 background-color: #3498db;
 
                 color: #ffffff;
+
+            }
+
+            QPushButton#navMenuArrow {
+
+                color: #ecf0f1;
+
+                background-color: transparent;
+
+                border: none;
+
+                border-radius: 4px;
+
+                padding: 8px 3px;
+
+                font-size: 12px;
+
+            }
+
+            QPushButton#navMenuArrow:hover {
+
+                background-color: #34495e;
 
             }
 
