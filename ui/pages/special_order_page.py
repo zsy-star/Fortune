@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -237,6 +240,8 @@ class SpecialOrderPage(QWidget):
             ("调整成为 10 的倍数", self._on_round_to_tens),
             ("清空当前调整", self._on_clear_adjustments),
             ("清空输出框", self._on_clear_output),
+            ("复制当前汇总", self._on_copy_summary),
+            ("导出当前汇总", self._on_export_summary),
             ("重置所有数据", self._on_reset_all_data),
             ("特码兑奖", self._on_special_settlement),
         ]
@@ -246,6 +251,10 @@ class SpecialOrderPage(QWidget):
             row.addWidget(button)
             if text == "保存本次调整":
                 self._btn_save_adjustment = button
+            elif text == "复制当前汇总":
+                self._btn_copy_summary = button
+            elif text == "导出当前汇总":
+                self._btn_export_summary = button
             elif text == "重置所有数据":
                 self._btn_reset_all = button
             elif text == "特码兑奖":
@@ -360,6 +369,86 @@ class SpecialOrderPage(QWidget):
     def _append_output(self, message: str) -> None:
         current = self._output.toPlainText().strip()
         self._output.setPlainText(f"{current}\n{message}".strip())
+
+    def _selected_region_label(self) -> str:
+        return self._selected_region() or "全部"
+
+    def _build_export_text(self) -> str:
+        lines = [
+            "特码调单汇总",
+            f"当前筛选区域：{self._selected_region_label()}",
+            f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "",
+            "左侧号码汇总表",
+            "号码\t下注数\t盈亏\tID",
+        ]
+        for row in range(self._summary_table.rowCount()):
+            values = [
+                self._summary_table.item(row, column).text()
+                if self._summary_table.item(row, column) is not None
+                else ""
+                for column in range(4)
+            ]
+            lines.append("\t".join(values))
+
+        lines.extend(["", "右侧 01-49 调整区", "号码\t原金额\t调整\t总计"])
+        for number in range(1, 50):
+            key = f"{number:02d}"
+            lines.append(
+                "\t".join(
+                    [
+                        key,
+                        self._original_edits[key].text().strip() or "0.00",
+                        self._adjust_edits[key].text().strip() or "0.00",
+                        self._total_edits[key].text().strip() or "0.00",
+                    ]
+                )
+            )
+
+        lines.extend(
+            [
+                "",
+                "原特码数据统计",
+                self._lbl_special_total.text(),
+                self._lbl_max_profit.text(),
+                self._lbl_max_loss.text(),
+                self._lbl_profit_count.text(),
+                self._lbl_loss_count.text(),
+                "",
+                "调整后数据统计",
+                self._lbl_adjusted_total.text(),
+                self._lbl_adjustment_total.text(),
+                "",
+                "安全说明",
+                "当前为页面临时汇总",
+                "未写数据库",
+                "未保存正式调整",
+                "未计算真实赔付",
+            ]
+        )
+        return "\n".join(lines)
+
+    def _on_copy_summary(self) -> None:
+        QApplication.clipboard().setText(self._build_export_text())
+        self._append_output("已复制特码调单汇总到剪贴板。")
+
+    def _on_export_summary(self) -> None:
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "导出特码调单汇总",
+            "特码调单汇总.txt",
+            "Text Files (*.txt);;CSV Files (*.csv);;All Files (*)",
+        )
+        if not path:
+            self._append_output("已取消导出。")
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as file:
+                file.write(self._build_export_text())
+        except OSError as exc:
+            self._append_output(f"导出特码调单汇总失败：{exc}")
+            return
+        self._append_output(f"已导出特码调单汇总：{path}")
 
     def _on_save_adjustment(self) -> None:
         self._append_output("调整保存功能后续开放：当前仅支持页面内临时调整，不写数据库。")

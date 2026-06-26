@@ -74,11 +74,13 @@ def test_lianxiao_order_page_first_stage_is_readonly(session_factory) -> None:
     assert "清空当前调整" not in button_texts
     assert "连肖兑奖" not in button_texts
     assert page._btn_print.isEnabled()
+    assert page._btn_copy_summary.isEnabled()
+    assert page._btn_export_summary.isEnabled()
     assert page._btn_reset.isEnabled()
     assert page._btn_clear_output.isEnabled()
     page._on_print_adjustment()
     page._on_reset_adjustment()
-    assert "请先复制或导出当前汇总后打印" in page._output.toPlainText()
+    assert "当前版本未调用打印机" in page._output.toPlainText()
     assert "数据库订单未被修改" in page._output.toPlainText()
 
 
@@ -94,6 +96,8 @@ def test_special_order_page_is_tema_readonly_first_stage(session_factory) -> Non
     assert len(page._adjust_edits) == 49
     assert page._btn_open_extension.isEnabled()
     assert page._btn_adjust_records.isEnabled()
+    assert page._btn_copy_summary.isEnabled()
+    assert page._btn_export_summary.isEnabled()
     assert "暂无数据" in page._output.toPlainText()
     page._on_save_adjustment()
     page._on_reset_all_data()

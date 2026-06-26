@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -186,6 +189,8 @@ class LianxiaoOrderPage(QWidget):
         row.setSpacing(0)
         actions = [
             ("打印连肖调整", self._on_print_adjustment),
+            ("复制当前汇总", self._on_copy_summary),
+            ("导出当前汇总", self._on_export_summary),
             ("清空输出框", self._on_clear_output),
             ("重置调整", self._on_reset_adjustment),
         ]
@@ -195,6 +200,10 @@ class LianxiaoOrderPage(QWidget):
             row.addWidget(button, stretch=1)
             if text == "打印连肖调整":
                 self._btn_print = button
+            elif text == "复制当前汇总":
+                self._btn_copy_summary = button
+            elif text == "导出当前汇总":
+                self._btn_export_summary = button
             elif text == "清空输出框":
                 self._btn_clear_output = button
             elif text == "重置调整":
@@ -302,8 +311,84 @@ class LianxiaoOrderPage(QWidget):
         current = self._output.toPlainText().strip()
         self._output.setPlainText(f"{current}\n{message}".strip())
 
+    def _selected_region_label(self) -> str:
+        return self._selected_region() or "全部"
+
+    def _table_rows_text(self, table: QTableWidget) -> list[str]:
+        rows: list[str] = []
+        for row in range(table.rowCount()):
+            values = [
+                table.item(row, column).text() if table.item(row, column) is not None else ""
+                for column in range(table.columnCount())
+            ]
+            rows.append("\t".join(values))
+        return rows
+
+    def _build_export_text(self) -> str:
+        lines = [
+            "连肖调单汇总",
+            f"当前筛选区域：{self._selected_region_label()}",
+            f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "",
+            "左侧总表",
+            "生肖组\t下注数\t盈亏",
+        ]
+        lines.extend(self._table_rows_text(self._summary_table))
+
+        for index, table in enumerate(self._tables, start=1):
+            lines.extend(["", f"第 {index} 列表", "生肖组\t下注数\t盈亏"])
+            lines.extend(self._table_rows_text(table))
+
+        lines.extend(
+            [
+                "",
+                "原连肖数据统计",
+                self._lbl_lianxiao_total.text(),
+                self._lbl_max_profit.text(),
+                self._lbl_max_loss.text(),
+                "",
+                "调整后数据统计",
+                self._lbl_eat_total.text(),
+                self._lbl_adjustment_total.text(),
+                self._lbl_adjusted_max_profit.text(),
+                self._lbl_adjusted_max_loss.text(),
+                "",
+                "安全说明",
+                "当前为只读汇总",
+                "未写数据库",
+                "未保存正式调整",
+                "未计算真实赔付",
+            ]
+        )
+        return "\n".join(lines)
+
     def _on_print_adjustment(self) -> None:
-        self._append_output("打印功能第一阶段不直接调用打印机；请先复制或导出当前汇总后打印。")
+        self._output.setPlainText(
+            self._build_export_text()
+            + "\n\n当前版本未调用打印机，请使用“复制当前汇总”或“导出当前汇总”后打印。"
+        )
+
+    def _on_copy_summary(self) -> None:
+        QApplication.clipboard().setText(self._build_export_text())
+        self._append_output("已复制连肖调单汇总到剪贴板。")
+
+    def _on_export_summary(self) -> None:
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "导出连肖调单汇总",
+            "连肖调单汇总.txt",
+            "Text Files (*.txt);;CSV Files (*.csv);;All Files (*)",
+        )
+        if not path:
+            self._append_output("已取消导出。")
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as file:
+                file.write(self._build_export_text())
+        except OSError as exc:
+            self._append_output(f"导出连肖调单汇总失败：{exc}")
+            return
+        self._append_output(f"已导出连肖调单汇总：{path}")
 
     def _on_clear_output(self) -> None:
         self._output.clear()
