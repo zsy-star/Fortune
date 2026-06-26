@@ -106,7 +106,7 @@ class OrderImportDialog(QDialog):
         row = QHBoxLayout()
         self._path_edit = QLineEdit()
         self._path_edit.setReadOnly(True)
-        self._path_edit.setPlaceholderText("请选择 .txt 或 .csv 文件")
+        self._path_edit.setPlaceholderText("请选择 .txt / .csv / .xlsx 文件")
         self._btn_select_file = QPushButton("选择文件")
         self._btn_select_file.clicked.connect(self._on_select_file)
         row.addWidget(QLabel("文件"))
@@ -127,7 +127,7 @@ class OrderImportDialog(QDialog):
         self._declarer_combo.currentIndexChanged.connect(self._on_declarer_changed)
         self._plan_label = QLabel("配置方案：未绑定配置方案")
         self._channel_combo = QComboBox()
-        self._channel_combo.addItems(["导入", "TXT导入", "CSV导入", "手工整理导入"])
+        self._channel_combo.addItems(["导入", "TXT导入", "CSV导入", "XLSX导入", "手工整理导入"])
         self._channel_combo.currentIndexChanged.connect(self._on_channel_changed)
         row.addWidget(QLabel("地区默认值"))
         row.addWidget(self._region_combo)
@@ -187,7 +187,7 @@ class OrderImportDialog(QDialog):
     def _suggest_channel_from_suffix(self, suffix: str) -> None:
         if self._channel_manually_changed:
             return
-        mapping = {".txt": "TXT导入", ".csv": "CSV导入"}
+        mapping = {".txt": "TXT导入", ".csv": "CSV导入", ".xlsx": "XLSX导入"}
         suggestion = mapping.get(suffix)
         if not suggestion:
             return
@@ -225,7 +225,7 @@ class OrderImportDialog(QDialog):
             self,
             "选择订单导入文件",
             "",
-            "订单文本 (*.txt *.csv);;Text Files (*.txt);;CSV Files (*.csv);;All Files (*)",
+            "订单文件 (*.txt *.csv *.xlsx);;Text Files (*.txt);;CSV Files (*.csv);;Excel Files (*.xlsx);;All Files (*)",
         )
         if not path:
             self._stats_label.setText("已取消选择文件；当前不会写数据库")
@@ -234,8 +234,8 @@ class OrderImportDialog(QDialog):
 
     def load_file(self, path: str) -> None:
         suffix = Path(path).suffix.lower()
-        if suffix not in {".txt", ".csv"}:
-            message = "当前仅支持 txt/csv，xlsx 后续开放"
+        if suffix not in {".txt", ".csv", ".xlsx"}:
+            message = "当前仅支持 txt/csv/xlsx"
             self._path_edit.setText(path)
             self._raw_text.clear()
             self._table.setRowCount(0)

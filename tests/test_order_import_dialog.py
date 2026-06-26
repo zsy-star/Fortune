@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from openpyxl import Workbook
 from PySide6.QtWidgets import QApplication, QMessageBox
 from sqlalchemy import func, select
 
@@ -68,15 +69,67 @@ def test_order_import_service_csv_without_header_uses_first_column() -> None:
     assert result.lines == ["01各10", "02各5"]
 
 
-def test_order_import_service_rejects_unsupported_file_type(tmp_path) -> None:
+def write_xlsx(path, rows) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    for row in rows:
+        sheet.append(row)
+    workbook.save(path)
+    workbook.close()
+
+
+def test_order_import_service_xlsx_with_header_reads_order_text_column(tmp_path) -> None:
     service = OrderImportService()
     path = tmp_path / "orders.xlsx"
+    write_xlsx(path, [["备注", "订单文本"], ["A", "01各10"], ["B", "02各5"]])
+
+    result = service.read_file(path)
+
+    assert result.error == ""
+    assert result.lines == ["01各10", "02各5"]
+
+
+def test_order_import_service_xlsx_without_header_uses_first_column(tmp_path) -> None:
+    service = OrderImportService()
+    path = tmp_path / "orders.xlsx"
+    write_xlsx(path, [["01各10", "备注"], ["02各5", "备注"]])
+
+    result = service.read_file(path)
+
+    assert result.lines == ["01各10", "02各5"]
+
+
+def test_order_import_service_xlsx_skips_empty_rows(tmp_path) -> None:
+    service = OrderImportService()
+    path = tmp_path / "orders.xlsx"
+    write_xlsx(path, [["订单内容"], [None], ["01各10"], ["", ""], ["02各5"]])
+
+    result = service.read_file(path)
+
+    assert result.lines == ["01各10", "02各5"]
+    assert result.skipped_count == 2
+
+
+def test_order_import_service_xlsx_read_failure_returns_clear_error(tmp_path) -> None:
+    service = OrderImportService()
+    path = tmp_path / "broken.xlsx"
+    path.write_text("not a real xlsx", encoding="utf-8")
+
+    result = service.read_file(path)
+
+    assert result.lines == []
+    assert "xlsx 文件读取失败" in result.error
+
+
+def test_order_import_service_rejects_unsupported_file_type(tmp_path) -> None:
+    service = OrderImportService()
+    path = tmp_path / "orders.docx"
     path.write_text("01各10", encoding="utf-8")
 
     result = service.read_file(path)
 
     assert result.lines == []
-    assert "当前仅支持 txt/csv" in result.error
+    assert "当前仅支持 txt/csv/xlsx" in result.error
 
 
 def test_order_import_service_preview_success_and_failure_rows() -> None:
@@ -111,7 +164,27 @@ def test_order_import_dialog_initializes_with_confirm_button_disabled() -> None:
     assert dialog._btn_close.text() == "关闭"
     assert dialog._declarer_combo.currentText() == "未设置申报人"
     assert dialog._channel_combo.currentText() == "导入"
+    assert dialog._channel_combo.findText("XLSX导入") >= 0
     assert "当前不会写数据库" in dialog._stats_label.text()
+
+
+def test_order_import_dialog_file_picker_supports_xlsx(monkeypatch) -> None:
+    app()
+    dialog = OrderImportDialog(import_service=OrderImportService(), settings_service=EmptySettingsService())
+    captured = {}
+
+    def fake_get_open_file_name(*args, **kwargs):
+        captured["filter"] = args[3]
+        return "", ""
+
+    monkeypatch.setattr(
+        "ui.dialogs.order_import_dialog.QFileDialog.getOpenFileName",
+        fake_get_open_file_name,
+    )
+
+    dialog._on_select_file()
+
+    assert "*.xlsx" in captured["filter"]
 
 
 def test_order_import_dialog_loads_declarers_and_plan_from_settings(session_factory) -> None:
@@ -180,17 +253,60 @@ def test_order_import_dialog_loads_csv_header_and_no_header(tmp_path) -> None:
     assert dialog._table.item(0, 3).text() == "成功"
 
 
+def test_order_import_dialog_loads_xlsx_and_suggests_channel(tmp_path) -> None:
+    app()
+    dialog = OrderImportDialog(import_service=OrderImportService(), settings_service=EmptySettingsService())
+    path = tmp_path / "orders.xlsx"
+    write_xlsx(path, [["投注内容"], ["01各10"], ["明显无效"]])
+
+    dialog.load_file(str(path))
+
+    assert dialog._path_edit.text() == str(path)
+    assert dialog._channel_combo.currentText() == "XLSX导入"
+    assert dialog._raw_text.toPlainText() == "01各10\n明显无效"
+    assert dialog._table.rowCount() == 2
+    assert dialog._table.item(0, 3).text() == "成功"
+    assert dialog._table.item(1, 3).text() == "失败"
+    assert dialog._btn_confirm_import.isEnabled()
+
+
+def test_order_import_dialog_xlsx_does_not_override_manual_channel(tmp_path) -> None:
+    app()
+    dialog = OrderImportDialog(import_service=OrderImportService(), settings_service=EmptySettingsService())
+    dialog._channel_combo.setCurrentText("手工整理导入")
+    path = tmp_path / "orders.xlsx"
+    write_xlsx(path, [["订单内容"], ["01各10"]])
+
+    dialog.load_file(str(path))
+
+    assert dialog._channel_combo.currentText() == "手工整理导入"
+
+
+def test_order_import_dialog_xlsx_read_failure_shows_error(tmp_path) -> None:
+    app()
+    dialog = OrderImportDialog(import_service=OrderImportService(), settings_service=EmptySettingsService())
+    path = tmp_path / "broken.xlsx"
+    path.write_text("not a real xlsx", encoding="utf-8")
+
+    with patch("ui.dialogs.order_import_dialog.QMessageBox.warning") as warning:
+        dialog.load_file(str(path))
+
+    assert warning.called
+    assert "xlsx 文件读取失败" in dialog._stats_label.text()
+    assert dialog._table.rowCount() == 0
+
+
 def test_order_import_dialog_unsupported_type_shows_error(tmp_path) -> None:
     app()
     dialog = OrderImportDialog(import_service=OrderImportService())
-    path = tmp_path / "orders.xlsx"
+    path = tmp_path / "orders.docx"
     path.write_text("01各10", encoding="utf-8")
 
     with patch("ui.dialogs.order_import_dialog.QMessageBox.warning") as warning:
         dialog.load_file(str(path))
 
     assert warning.called
-    assert "当前仅支持 txt/csv" in dialog._stats_label.text()
+    assert "当前仅支持 txt/csv/xlsx" in dialog._stats_label.text()
     assert dialog._table.rowCount() == 0
 
 
@@ -348,6 +464,36 @@ def test_order_import_confirm_passes_declarer_channel_and_plan_to_save_log_and_r
     lines = csv_path.read_text(encoding="utf-8").splitlines()
     assert "申报人,渠道,配置方案" in lines[0]
     assert "老汪,手工整理导入,46倍6水" in lines[1]
+
+
+def test_order_import_xlsx_confirm_uses_existing_save_flow_and_report_channel(
+    session_factory, tmp_path
+) -> None:
+    app()
+    intake = OrderIntakeService(session_factory)
+    service = OrderImportService(order_intake_service=intake)
+    dialog = OrderImportDialog(import_service=service, settings_service=EmptySettingsService())
+    dialog._region_combo.setCurrentText("澳门")
+    path = tmp_path / "orders.xlsx"
+    write_xlsx(path, [["订单文本"], ["01各10"], ["明显无效"], ["02各5"]])
+    dialog.load_file(str(path))
+    before = count_orders(session_factory)
+
+    with patch.object(intake, "save_preview", wraps=intake.save_preview) as save_preview, patch(
+        "ui.dialogs.order_import_dialog.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    ), patch("ui.dialogs.order_import_dialog.QMessageBox.information"):
+        dialog._btn_confirm_import.click()
+
+    assert save_preview.called
+    assert count_orders(session_factory) == before + 2
+    assert dialog._table.item(0, 8).text() == "已导入"
+    assert dialog._table.item(1, 8).text() == "未导入，解析失败"
+    assert dialog._table.item(2, 8).text() == "已导入"
+    report = dialog._build_import_result_report()
+    assert "渠道：XLSX导入" in report
+    assert "成功导入数：2" in report
+    assert "解析失败数：1" in report
 
 
 def test_order_import_result_report_copy_and_export(session_factory, tmp_path, monkeypatch) -> None:

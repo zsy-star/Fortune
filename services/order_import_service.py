@@ -6,6 +6,8 @@ import csv
 from dataclasses import replace
 from pathlib import Path
 
+from openpyxl import load_workbook
+
 from schemas.order_import_schema import (
     ImportSourceResult,
     OrderImportConfirmResult,
@@ -17,8 +19,17 @@ from services.log_service import LogService
 from services.order_intake_service import OrderIntakeService
 from services.order_parser import ParseResult, parse_lines
 
-TEXT_COLUMN_NAMES = {"text", "order_text", "content", "原文", "原始文本", "订单内容"}
-SUPPORTED_SUFFIXES = {".txt", ".csv"}
+TEXT_COLUMN_NAMES = {
+    "text",
+    "order_text",
+    "content",
+    "原文",
+    "原始文本",
+    "订单内容",
+    "订单文本",
+    "投注内容",
+}
+SUPPORTED_SUFFIXES = {".txt", ".csv", ".xlsx"}
 
 
 class OrderImportService:
@@ -41,8 +52,11 @@ class OrderImportService:
         if suffix not in SUPPORTED_SUFFIXES:
             return ImportSourceResult(
                 lines=[],
-                error="当前仅支持 txt/csv，xlsx 后续开放",
+                error="当前仅支持 txt/csv/xlsx",
             )
+
+        if suffix == ".xlsx":
+            return self.extract_xlsx_lines(file_path)
 
         try:
             content = self._read_text(file_path, encoding=encoding)
@@ -106,11 +120,63 @@ class OrderImportService:
             lines.append(text)
         return ImportSourceResult(lines=lines, skipped_count=skipped)
 
+    def extract_xlsx_lines(self, path: str | Path) -> ImportSourceResult:
+        """Read order text lines from the first worksheet of an xlsx file."""
+
+        try:
+            workbook = load_workbook(path, data_only=True, read_only=True)
+        except Exception as exc:
+            return ImportSourceResult(lines=[], error=f"xlsx 文件读取失败：{exc}")
+
+        try:
+            sheet = workbook.worksheets[0]
+            rows = [list(row) for row in sheet.iter_rows(values_only=True)]
+        finally:
+            workbook.close()
+
+        if not rows:
+            return ImportSourceResult(lines=[], skipped_count=0)
+
+        first_non_empty_index: int | None = None
+        for index, row in enumerate(rows):
+            if any(self._cell_text(cell) for cell in row):
+                first_non_empty_index = index
+                break
+        if first_non_empty_index is None:
+            return ImportSourceResult(lines=[], skipped_count=len(rows))
+
+        header_index = self._detect_text_column(
+            [self._cell_text(cell) for cell in rows[first_non_empty_index]]
+        )
+        data_rows = rows[first_non_empty_index + 1 :] if header_index is not None else rows[first_non_empty_index:]
+        text_index = header_index if header_index is not None else 0
+
+        lines: list[str] = []
+        skipped = first_non_empty_index
+        for row in data_rows:
+            if not row or all(not self._cell_text(cell) for cell in row):
+                skipped += 1
+                continue
+            if text_index >= len(row):
+                skipped += 1
+                continue
+            text = self._cell_text(row[text_index])
+            if not text:
+                skipped += 1
+                continue
+            lines.append(text)
+        return ImportSourceResult(lines=lines, skipped_count=skipped)
+
     def _detect_text_column(self, first_row: list[str]) -> int | None:
         for index, cell in enumerate(first_row):
             if cell.strip().lower() in TEXT_COLUMN_NAMES:
                 return index
         return None
+
+    def _cell_text(self, value) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
 
     def preview_lines(
         self,
