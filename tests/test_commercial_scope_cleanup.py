@@ -79,29 +79,27 @@ def test_special_order_page_is_reserved_without_fake_business_data() -> None:
     assert all(button.toolTip() == UNAVAILABLE_TOOLTIP for button in page.findChildren(QPushButton))
 
 
-def test_split_order_window_marks_feature_unavailable() -> None:
+def test_split_order_window_opens_first_stage_text_tools() -> None:
     app()
     window = SplitOrderWindow()
 
-    assert "当前测试版暂未开放：拆单助手" in window._scope_hint.text()
-    assert not window._btn_split.isEnabled()
-    assert not window._btn_style.isEnabled()
-    assert not window._btn_save.isEnabled()
-    assert window._btn_split.toolTip() == UNAVAILABLE_TOOLTIP
-    assert window._btn_style.toolTip() == UNAVAILABLE_TOOLTIP
-    assert window._btn_save.toolTip() == UNAVAILABLE_TOOLTIP
+    assert "拆单助手第一阶段仅用于文本整理" in window._scope_hint.text()
+    assert window._btn_split.isEnabled()
+    assert window._btn_style.isEnabled()
+    assert window._btn_copy.isEnabled()
+    assert window._btn_save.isEnabled()
+    assert "不会保存订单" in window._scope_hint.text()
 
 
-def test_split_order_unavailable_handlers_are_not_silent() -> None:
+def test_split_order_first_stage_handlers_are_not_silent() -> None:
     app()
     window = SplitOrderWindow()
 
+    window._input_text.setPlainText("兔各10，马各5")
     window._on_start_split()
-    assert "当前测试版暂未开放：拆单助手" in window._result_text.toPlainText()
-    window._on_style_disabled()
-    assert "当前测试版暂未开放：拆分结果样式调整" in window._result_text.toPlainText()
-    window._on_save_results()
-    assert "当前测试版暂未开放：保存拆分结果到文件" in window._result_text.toPlainText()
+    assert window._result_text.toPlainText() == "兔各10\n马各5"
+    window._on_toggle_numbered_style()
+    assert window._result_text.toPlainText() == "1. 兔各10\n2. 马各5"
 
 
 def test_order_detail_page_keeps_supported_actions_and_disables_unopened_buttons(session_factory) -> None:
