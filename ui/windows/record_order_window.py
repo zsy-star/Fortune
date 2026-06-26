@@ -1,5 +1,6 @@
 """我要录单弹窗（布局参照业务录单界面，功能后续实现）。"""
 
+import re
 from decimal import Decimal, InvalidOperation
 
 from PySide6.QtCore import QEvent, Qt, QTimer
@@ -29,7 +30,7 @@ from PySide6.QtWidgets import (
 
 from schemas.order_intake_schema import IntakeMetadata, IntakeTableRow
 from services.order_intake_service import OrderIntakeService
-from services.order_parser import format_result, parse_lines
+from services.order_parser import ParseResult, format_result, parse_lines
 from services.settings_service import SettingsService
 from ui.app_events import app_events
 from ui.unavailable import UNAVAILABLE_TOOLTIP
@@ -73,7 +74,18 @@ _FOOTER_HINT = (
     "未开放选项已禁用，不会影响当前录单保存。"
 )
 
-_UNAVAILABLE_CHECKBOXES = {"识别地区", "智能纠错", "特肖模式", "抄写法", "各->各肖"}
+_UNAVAILABLE_CHECKBOXES = {"特肖模式", "抄写法", "各->各肖"}
+_UNAVAILABLE_CHECKBOX_TOOLTIPS = {
+    "特肖模式": "需要确认特肖保存口径：按特码生肖保存，还是继续展开为特码号码。",
+    "抄写法": "需要配置抄写法输入样例和目标输出规则后开放。",
+    "各->各肖": "需要确认“各”转“各肖”的输入格式、金额含义和目标玩法后开放。",
+}
+_SMART_CORRECTION_TOOLTIP = "低风险规范化：全角转半角、标点统一、连续空格压缩、金额符号清理。"
+_DETECT_REGION_TOOLTIP = "自动识别澳门/香港标记；同时出现两地时阻止保存。"
+_REGION_MARKERS = {
+    "澳门": re.compile(r"(澳门盘|澳门|澳盘|(?:^|[\s,，、;；。])澳(?=$|[\s,，、;；。0-9一-龥]))"),
+    "香港": re.compile(r"(香港盘|香港|港盘|(?:^|[\s,，、;；。])港(?=$|[\s,，、;；。0-9一-龥]))"),
+}
 
 
 class RecordOrderWindow(QMainWindow):
@@ -90,6 +102,7 @@ class RecordOrderWindow(QMainWindow):
         self._settings_service = settings_service or SettingsService()
         self._declarer_plans: dict[str, str | None] = {}
         self._declarer_config_load_failed = False
+        self._last_region_conflict = ""
         self._table_user_adjusted = False
         self._table_loading = False
         self.setWindowTitle("我要录单")
@@ -215,6 +228,110 @@ class RecordOrderWindow(QMainWindow):
         """输入框文本变化时重启防抖定时器。"""
         self._parse_timer.start()  # setSingleShot=True, 每次调用重置倒计时
 
+    def _set_advanced_status(self, message: str) -> None:
+        if hasattr(self, "_advanced_status"):
+            self._advanced_status.setText(message)
+
+    def _is_checked(self, attr_name: str) -> bool:
+        checkbox = getattr(self, attr_name, None)
+        return bool(checkbox is not None and checkbox.isChecked())
+
+    def _prepare_raw_text(self, raw: str) -> tuple[str, str | None]:
+        """Apply enabled low-risk advanced options before parse/save.
+
+        Returns:
+            (prepared_text, error_message). error_message is set only for hard blockers
+            such as region conflict.
+        """
+        prepared = self._apply_replace_presets(raw)
+        messages: list[str] = []
+
+        if self._is_checked("_chk_smart_correction"):
+            corrected = self._apply_smart_correction(prepared)
+            if corrected != prepared:
+                prepared = corrected
+                messages.append("已应用智能纠错")
+            else:
+                messages.append("智能纠错已检查，无需修改")
+
+        if self._is_checked("_chk_detect_region"):
+            region, error = self._detect_region(prepared)
+            if error:
+                self._last_region_conflict = error
+                self._set_advanced_status(error)
+                return prepared, error
+            self._last_region_conflict = ""
+            if region:
+                prepared = self._normalize_region_markers(prepared, region)
+                self._set_region(region)
+                messages.append(f"已识别地区：{region}")
+            else:
+                messages.append("未识别到明确地区，使用当前手动选择")
+        else:
+            self._last_region_conflict = ""
+
+        self._set_advanced_status("；".join(messages))
+        return prepared, None
+
+    def _apply_smart_correction(self, text: str) -> str:
+        lines: list[str] = []
+        for raw_line in text.splitlines():
+            line = self._fullwidth_to_halfwidth(raw_line)
+            line = line.replace("，", ",").replace("、", ",")
+            line = line.replace("；", ";")
+            line = line.replace("：", ":")
+            line = re.sub(r"[￥¥$]\s*", "", line)
+            line = re.sub(r"\s*,\s*", ",", line)
+            line = re.sub(r"\s+", " ", line).strip()
+            lines.append(line)
+        return "\n".join(lines)
+
+    def _fullwidth_to_halfwidth(self, text: str) -> str:
+        chars: list[str] = []
+        for ch in text:
+            code = ord(ch)
+            if code == 0x3000:
+                chars.append(" ")
+            elif 0xFF01 <= code <= 0xFF5E:
+                chars.append(chr(code - 0xFEE0))
+            else:
+                chars.append(ch)
+        return "".join(chars)
+
+    def _detect_region(self, text: str) -> tuple[str | None, str | None]:
+        detected = [
+            region
+            for region, pattern in _REGION_MARKERS.items()
+            if pattern.search(text)
+        ]
+        if len(detected) > 1:
+            return None, "地区冲突：文本同时包含澳门和香港，请拆分订单或手动确认地区。"
+        return (detected[0], None) if detected else (None, None)
+
+    def _normalize_region_markers(self, text: str, region: str) -> str:
+        if region == "澳门":
+            replacements = (
+                (r"澳门盘", "澳门 "),
+                (r"澳盘", "澳门 "),
+                (r"(^|[\s,，、;；。])澳(?!门)(?=\s|$|[0-9一-龥])", r"\1澳门"),
+            )
+        else:
+            replacements = (
+                (r"香港盘", "香港 "),
+                (r"港盘", "香港 "),
+                (r"(^|[\s,，、;；。])港(?=\s|$|[0-9一-龥])", r"\1香港"),
+            )
+        normalized = text
+        for pattern, replacement in replacements:
+            normalized = re.sub(pattern, replacement, normalized)
+        return normalized
+
+    def _set_region(self, region: str) -> None:
+        if region == "香港":
+            self._radio_hk.setChecked(True)
+        elif region == "澳门":
+            self._radio_macau.setChecked(True)
+
     def _do_parse(self) -> None:
         """解析输入框中的全部文本，将结果显示到输出框。"""
         raw = self._input_text.toPlainText()
@@ -225,9 +342,15 @@ class RecordOrderWindow(QMainWindow):
             self._last_parse_raw = ""
             return
 
-        # 自动应用替换预设
-        raw = self._apply_replace_presets(raw)
+        raw, advanced_error = self._prepare_raw_text(raw)
         self._last_parse_raw = raw
+        if advanced_error:
+            result = ParseResult(success=False, error=advanced_error)
+            self._parsed_results = []
+            self._last_parse_results = [result]
+            text = format_result(result).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            self._output_text.setHtml(f"<pre style='margin:0;'><span style='color:red;'>{text}</span></pre>")
+            return
 
         results = parse_lines(raw)
         # 回填每行的原始输入文本
@@ -310,7 +433,8 @@ class RecordOrderWindow(QMainWindow):
         return "澳门" if self._radio_macau.isChecked() else "香港"
 
     def _current_raw_text_for_save(self) -> str:
-        return self._apply_replace_presets(self._input_text.toPlainText())
+        raw, _error = self._prepare_raw_text(self._input_text.toPlainText())
+        return raw
 
     def _show_warning(self, message: str) -> None:
         QMessageBox.warning(self, "保存订单", message)
@@ -333,6 +457,9 @@ class RecordOrderWindow(QMainWindow):
         raw = self._current_raw_text_for_save()
         if not raw.strip() and self._order_table.rowCount() == 0:
             self._show_warning("请输入订单内容")
+            return
+        if self._last_region_conflict:
+            self._show_warning(self._last_region_conflict)
             return
 
         if self._table_user_adjusted:
@@ -1022,10 +1149,20 @@ class RecordOrderWindow(QMainWindow):
             cb = QCheckBox(label)
             if label == "自动获取":
                 cb.setChecked(True)
+            if label == "识别地区":
+                cb.setObjectName("detectRegionCheck")
+                cb.setToolTip(_DETECT_REGION_TOOLTIP)
+                cb.stateChanged.connect(lambda _state: self._do_parse())
+                self._chk_detect_region = cb
+            if label == "智能纠错":
+                cb.setObjectName("smartCorrectionCheck")
+                cb.setToolTip(_SMART_CORRECTION_TOOLTIP)
+                cb.stateChanged.connect(lambda _state: self._do_parse())
+                self._chk_smart_correction = cb
             if label in _UNAVAILABLE_CHECKBOXES:
                 cb.setChecked(False)
                 cb.setEnabled(False)
-                cb.setToolTip(UNAVAILABLE_TOOLTIP)
+                cb.setToolTip(_UNAVAILABLE_CHECKBOX_TOOLTIPS.get(label, UNAVAILABLE_TOOLTIP))
             if label == "自动获取":
                 cb.setObjectName("autoFetchCheck")
                 self._chk_auto_fetch = cb
@@ -1041,6 +1178,10 @@ class RecordOrderWindow(QMainWindow):
                 self._btn_clip_mode.clicked.connect(self._on_toggle_clip_mode)
                 checks.addWidget(self._btn_clip_mode)
             checks.addWidget(cb)
+        self._advanced_status = QLabel("")
+        self._advanced_status.setObjectName("advancedOptionStatus")
+        self._advanced_status.setMinimumWidth(180)
+        checks.addWidget(self._advanced_status)
         checks.addStretch(1)
         outer.addLayout(checks)
 

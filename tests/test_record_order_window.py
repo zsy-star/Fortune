@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QMessageBox,
     QTableWidgetItem,
+    QCheckBox,
     QPushButton,
 )
 
@@ -197,6 +198,80 @@ class TestInputParsing:
         window._do_parse()
         r = window._parsed_results[0]
         assert r.region == "香港"
+
+
+class TestAdvancedOptionsFirstStage:
+    def _checkboxes(self, window):
+        return {checkbox.text(): checkbox for checkbox in window.findChildren(QCheckBox)}
+
+    def test_implemented_options_are_enabled_and_unimplemented_remain_disabled(self, window):
+        checkboxes = self._checkboxes(window)
+
+        assert checkboxes["识别地区"].isEnabled()
+        assert "自动识别澳门/香港" in checkboxes["识别地区"].toolTip()
+        assert checkboxes["智能纠错"].isEnabled()
+        assert "低风险规范化" in checkboxes["智能纠错"].toolTip()
+        for label in ("特肖模式", "抄写法", "各->各肖"):
+            assert not checkboxes[label].isEnabled()
+            assert "需要" in checkboxes[label].toolTip()
+
+    def test_detect_region_hong_kong_sets_radio_and_results(self, window):
+        checkboxes = self._checkboxes(window)
+        checkboxes["识别地区"].setChecked(True)
+        window._input_text.setPlainText("香港盘兔各10")
+        window._do_parse()
+
+        assert window._radio_hk.isChecked()
+        assert window._parsed_results[0].region == "香港"
+        assert "已识别地区：香港" in window._advanced_status.text()
+
+    def test_detect_region_macau_sets_radio_and_results(self, window):
+        checkboxes = self._checkboxes(window)
+        checkboxes["识别地区"].setChecked(True)
+        window._radio_hk.setChecked(True)
+        window._input_text.setPlainText("澳门盘01/10")
+        window._do_parse()
+
+        assert window._radio_macau.isChecked()
+        assert window._parsed_results[0].region == "澳门"
+        assert "已识别地区：澳门" in window._advanced_status.text()
+
+    def test_detect_region_conflict_blocks_parse_and_save(self, save_window):
+        checkboxes = self._checkboxes(save_window)
+        checkboxes["识别地区"].setChecked(True)
+        save_window._input_text.setPlainText("澳门兔各10\n香港马各5")
+        save_window._do_parse()
+
+        assert save_window._parsed_results == []
+        assert "地区冲突" in save_window._advanced_status.text()
+        assert "地区冲突" in save_window._output_text.toPlainText()
+        with patch("ui.windows.record_order_window.QMessageBox.warning") as warning:
+            save_window._on_save_order()
+        warning.assert_called_once()
+        assert "地区冲突" in warning.call_args.args[2]
+
+    def test_smart_correction_normalizes_fullwidth_punctuation_and_parses(self, window):
+        checkboxes = self._checkboxes(window)
+        checkboxes["智能纠错"].setChecked(True)
+        window._input_text.setPlainText("０１，０２、０３　各　￥１０元")
+        window._do_parse()
+
+        assert len(window._parsed_results) == 1
+        result = window._parsed_results[0]
+        assert result.success
+        assert result.numbers == (1, 2, 3)
+        assert result.amount == 10
+        assert "已应用智能纠错" in window._advanced_status.text()
+
+    def test_smart_correction_does_not_rewrite_uncertain_play_name(self, window):
+        checkboxes = self._checkboxes(window)
+        checkboxes["智能纠错"].setChecked(True)
+        window._input_text.setPlainText("未知玩法　各　１０")
+        window._do_parse()
+
+        assert window._parsed_results == []
+        assert window._last_parse_raw == "未知玩法 各 10"
+        assert "无法识别的类别" in window._output_text.toPlainText()
 
 
 # ══════════════════════════════════════════════════════════════════════

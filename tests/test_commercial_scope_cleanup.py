@@ -186,8 +186,11 @@ def test_record_order_window_marks_unimplemented_options_and_footer_scope() -> N
 
     for label in ("识别地区", "智能纠错", "特肖模式", "抄写法", "各->各肖"):
         assert label in checkboxes
+    assert checkboxes["识别地区"].isEnabled()
+    assert checkboxes["智能纠错"].isEnabled()
+    for label in ("特肖模式", "抄写法", "各->各肖"):
         assert not checkboxes[label].isEnabled()
-        assert checkboxes[label].toolTip() == UNAVAILABLE_TOOLTIP
+        assert "需要" in checkboxes[label].toolTip()
     assert "当前测试版重点支持特码类录入和结算" in window.findChild(QLabel, "footerHint").text()
     assert "未开放选项已禁用" in window.findChild(QLabel, "footerHint").text()
     assert "全面支持" not in window.findChild(QLabel, "footerHint").text()
