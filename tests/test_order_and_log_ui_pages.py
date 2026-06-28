@@ -488,7 +488,8 @@ def test_order_detail_filter_and_combined_settlement_summary_are_readonly(sessio
 
     assert info.call_count == 2
     assert "订单数：2" in page._combined_result.toPlainText()
-    assert "中奖金额：—" in page._combined_result.toPlainText()
+    assert "中奖金额：读取已结算快照中的基础中奖金额" in page._combined_result.toPlainText()
+    assert "赔付/中奖金额：0.00" in page._combined_result.toPlainText()
     assert LogService(session_factory).count_logs() == log_count_before
 
 
@@ -553,7 +554,10 @@ def test_order_detail_selected_settlement_summary_uses_snapshot(session_factory)
     assert "结果：未中" in macau_text
     assert "特码号码=01" in macau_text
     assert "命中 / 未中说明：" in macau_text
-    assert "当前未计算赔付金额、余额、返水、佣金" in macau_text
+    assert "当前展示基础中奖金额，不写余额，不计算返水、佣金" in macau_text
+    assert "总中奖金额：0.00" in macau_text
+    assert "赔率：" in macau_text
+    assert "中奖金额：0.00" in macau_text
     assert "订单 ID" not in page._hong_kong_result.toPlainText()
     assert page._combined_result.toPlainText() == macau_text
 

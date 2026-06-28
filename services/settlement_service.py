@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 from sqlalchemy import select
@@ -14,6 +15,7 @@ from core.database import SessionLocal
 from domain.bet_types import normalize_region
 from domain.zodiac_rules import get_zodiac
 from models import LotteryDraw, Order, SettlementRecord
+from repositories.settings_repository import SettingsRepository
 from repositories.settlement_record_repository import SettlementRecordRepository
 from schemas.settlement_schema import (
     ItemSettlementResult,
@@ -22,10 +24,49 @@ from schemas.settlement_schema import (
     SettlementLedgerResult,
 )
 from settlement.exceptions import SettlementDataError
+from settlement.bet_normalizer import (
+    LINKED_TAIL,
+    NON_HIT_NUMBER,
+    PACKAGE_HALF_WAVE,
+    REGULAR_NUMBER,
+    SPECIAL_COLOR,
+    SPECIAL_ELEMENT,
+    SPECIAL_HALF_WAVE,
+    SPECIAL_HEAD,
+    SPECIAL_NUMBER,
+    SPECIAL_PARITY,
+    SPECIAL_SIZE,
+    SPECIAL_SUM_PARITY,
+    SPECIAL_SUM_SIZE,
+    SPECIAL_TAIL,
+    SPECIAL_ZODIAC,
+    SPECIAL_ZODIAC_GROUP,
+    SIX_SPECIAL_ZODIAC,
+)
 from settlement.settlement_engine import SettlementEngine
 from services.log_service import LogService
 
 ORDER_STATUS_SETTLED = "settled"
+CENT = Decimal("0.01")
+
+ODDS_CANDIDATES: dict[str, tuple[str, ...]] = {
+    SPECIAL_NUMBER: ("特码号码", "特码", "号码", "特号", "单号投注", "纯数字"),
+    SPECIAL_ZODIAC: ("特码生肖", "生肖", "平特一肖", "一肖"),
+    SPECIAL_COLOR: ("波色", "特码波色", "色波"),
+    SPECIAL_HALF_WAVE: ("半波", "包半波", "特码半波"),
+    SPECIAL_SIZE: ("大小", "特码大小", "特码两面"),
+    SPECIAL_PARITY: ("单双", "特码单双", "特码两面"),
+    SPECIAL_TAIL: ("尾数", "特码尾数"),
+    SPECIAL_HEAD: ("头数", "特码头数"),
+    SPECIAL_SUM_PARITY: ("合数", "合数单双", "特码合数单双"),
+    SPECIAL_SUM_SIZE: ("合数", "合数大小", "特码合数大小"),
+    SPECIAL_ELEMENT: ("五行", "特码五行"),
+    LINKED_TAIL: ("连尾", "尾数"),
+    NON_HIT_NUMBER: ("不中",),
+    SIX_SPECIAL_ZODIAC: ("六肖中特",),
+    REGULAR_NUMBER: ("平码",),
+    PACKAGE_HALF_WAVE: ("半波", "包半波", "特码半波"),
+}
 
 
 class SettlementService:
@@ -44,7 +85,8 @@ class SettlementService:
             draw = session.get(LotteryDraw, draw_id)
             if draw is None:
                 raise SettlementDataError(f"未找到开奖记录：{draw_id}")
-            return self._engine.evaluate_order(order, draw)
+            preview = self._engine.evaluate_order(order, draw)
+            return self._apply_payouts(session, order, preview)
 
     def preview_order_by_issue(self, order_id: int, region: str, issue_number: str):
         with self._session_factory() as session:
@@ -56,7 +98,8 @@ class SettlementService:
             draw = session.scalars(stmt).first()
             if draw is None:
                 raise SettlementDataError(f"未找到开奖记录：{region} {issue_number}")
-            return self._engine.evaluate_order(order, draw)
+            preview = self._engine.evaluate_order(order, draw)
+            return self._apply_payouts(session, order, preview)
 
     def preview_order_data(self, order_result, lottery_draw_result):
         return self._engine.evaluate_order(order_result, lottery_draw_result)
@@ -182,7 +225,11 @@ class SettlementService:
         if record_repo.get_by_order_id(order.id) is not None:
             raise SettlementDataError(f"订单已有结算记录，不能重复结算：{order.order_no}")
 
-        preview: OrderSettlementPreview = self._engine.evaluate_order(order, draw)
+        preview: OrderSettlementPreview = self._apply_payouts(
+            session,
+            order,
+            self._engine.evaluate_order(order, draw),
+        )
         if preview.unsupported_items:
             unsupported = [
                 f"{item.bet_type}/{item.selection}: {item.reason}"
@@ -245,7 +292,105 @@ class SettlementService:
             results=preview.results,
             warnings=[],
             operation_log_id=log.id,
+            total_payout_amount=preview.total_payout_amount,
         )
+
+    def _apply_payouts(
+        self,
+        session: Session,
+        order: Order,
+        preview: OrderSettlementPreview,
+    ) -> OrderSettlementPreview:
+        plan, odds_source = self._resolve_odds_plan(session, order)
+        plan_name = getattr(plan, "name", None) if plan is not None else None
+        plan_items = list(getattr(plan, "items", []) or []) if plan is not None else []
+        results = [
+            self._apply_item_payout(item, plan_items, plan_name, odds_source)
+            for item in preview.results
+        ]
+        total_payout = sum((item.payout_amount for item in results), Decimal("0.00")).quantize(CENT)
+        return replace(preview, results=results, total_payout_amount=total_payout)
+
+    def _resolve_odds_plan(self, session: Session, order: Order):
+        repo = SettingsRepository(session)
+        customer_name = (getattr(order, "customer_name", None) or "").strip()
+        if customer_name:
+            declarer = repo.get_declarer_by_name(customer_name)
+            if declarer is not None:
+                plan = repo.get_plan(declarer.plan_id)
+                if plan is not None:
+                    return plan, "申报人绑定方案"
+        plans = repo.list_plans()
+        default_plan = next((plan for plan in plans if plan.is_default), None)
+        if default_plan is not None:
+            return default_plan, "默认方案"
+        return None, "未配置"
+
+    def _apply_item_payout(
+        self,
+        item: ItemSettlementResult,
+        plan_items: list[Any],
+        plan_name: str | None,
+        odds_source: str,
+    ) -> ItemSettlementResult:
+        if item.is_supported is False:
+            return replace(
+                item,
+                payout_amount=Decimal("0.00"),
+                odds_source="未配置",
+                payout_note="不支持玩法，不计算中奖金额",
+            )
+        if item.is_winner is not True:
+            return replace(
+                item,
+                payout_amount=Decimal("0.00"),
+                odds_source="未配置",
+                payout_note="未命中，不计算中奖金额",
+            )
+        if not plan_items:
+            return replace(
+                item,
+                payout_amount=Decimal("0.00"),
+                odds_plan_name=plan_name,
+                odds_source="未配置",
+                payout_note="未配置赔率",
+            )
+        odds_item = self._find_odds_item(item, plan_items)
+        if odds_item is None:
+            return replace(
+                item,
+                payout_amount=Decimal("0.00"),
+                odds_plan_name=plan_name,
+                odds_source=odds_source,
+                payout_note="未找到赔率配置",
+            )
+        odds = Decimal(odds_item.odds)
+        payout = (item.amount * odds).quantize(CENT, rounding=ROUND_HALF_UP)
+        return replace(
+            item,
+            odds=odds,
+            payout_amount=payout,
+            odds_plan_name=plan_name,
+            odds_source=odds_source,
+            payout_note=f"中奖金额 = 投注金额 {_decimal_money(item.amount)} × 赔率 {_decimal_odds(odds)}",
+        )
+
+    def _find_odds_item(self, item: ItemSettlementResult, plan_items: list[Any]):
+        candidates = self._odds_candidates_for_item(item)
+        item_by_name = {str(config.bet_type).strip(): config for config in plan_items}
+        for candidate in candidates:
+            config = item_by_name.get(candidate)
+            if config is not None:
+                return config
+        return None
+
+    def _odds_candidates_for_item(self, item: ItemSettlementResult) -> tuple[str, ...]:
+        normalized_type = item.normalized_bet_type
+        if normalized_type == SPECIAL_ZODIAC_GROUP:
+            if item.bet_type == "多生肖":
+                return ("多生肖", "连肖", "生肖")
+            return ("连肖", "多生肖", "生肖")
+        return ODDS_CANDIDATES.get(normalized_type or "", ())
 
     def _validate_limit_offset(self, limit: int, offset: int) -> tuple[int, int]:
         if limit < 1:
@@ -287,6 +432,7 @@ class SettlementService:
                 "unsupported_items": preview.unsupported_items,
                 "hit_count": preview.winning_items,
                 "miss_count": preview.losing_items,
+                "total_payout_amount": _decimal_money(preview.total_payout_amount),
             },
             "items": [self._snapshot_item(item) for item in preview.results],
         }
@@ -320,11 +466,17 @@ class SettlementService:
             "selected_halfwaves": list(item.selected_halfwaves),
             "matched_halfwave": item.matched_halfwave,
             "unsupported_reason": item.unsupported_reason,
+            "odds": _decimal_odds(item.odds) if item.odds is not None else None,
+            "payout_amount": _decimal_money(item.payout_amount),
+            "odds_plan_name": item.odds_plan_name,
+            "odds_source": item.odds_source,
+            "payout_note": item.payout_note,
         }
 
     def _to_ledger_result(self, record: SettlementRecord) -> SettlementLedgerResult:
         order = record.order
         log = record.operation_log
+        total_payout_amount = self._snapshot_total_payout(record.result_snapshot)
         return SettlementLedgerResult(
             id=record.id,
             order_id=record.order_id,
@@ -345,4 +497,27 @@ class SettlementService:
             order_created_at=order.created_at,
             order_updated_at=order.updated_at,
             operation_log_description=log.description if log else None,
+            total_payout_amount=total_payout_amount,
         )
+
+    def _snapshot_total_payout(self, snapshot: object) -> Decimal:
+        if isinstance(snapshot, dict):
+            settlement = snapshot.get("settlement")
+            if isinstance(settlement, dict) and settlement.get("total_payout_amount") not in (None, ""):
+                return Decimal(str(settlement["total_payout_amount"])).quantize(CENT)
+            items = snapshot.get("items")
+            if isinstance(items, list):
+                total = Decimal("0.00")
+                for item in items:
+                    if isinstance(item, dict) and item.get("payout_amount") not in (None, ""):
+                        total += Decimal(str(item["payout_amount"]))
+                return total.quantize(CENT)
+        return Decimal("0.00")
+
+
+def _decimal_money(value: Decimal) -> str:
+    return f"{Decimal(value).quantize(CENT, rounding=ROUND_HALF_UP):.2f}"
+
+
+def _decimal_odds(value: Decimal) -> str:
+    return str(Decimal(value).normalize())

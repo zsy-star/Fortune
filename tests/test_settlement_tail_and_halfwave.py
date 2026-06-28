@@ -172,6 +172,8 @@ def test_tail_and_halfwave_snapshot_contains_reference_data(session_factory) -> 
     assert halfwave_item["draw_special_big_small"] == "小"
     assert halfwave_item["selected_halfwaves"] == ["红单", "红小"]
     assert halfwave_item["matched_halfwave"] in {"红单", "红小"}
-    assert "payout" not in str(snapshot).lower()
+    assert snapshot["settlement"]["total_payout_amount"] == "0.00"
+    assert tail_item["payout_amount"] == "0.00"
+    assert halfwave_item["payout_amount"] == "0.00"
     assert "balance" not in str(snapshot).lower()
     assert "rebate" not in str(snapshot).lower()

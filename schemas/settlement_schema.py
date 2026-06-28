@@ -37,6 +37,11 @@ class ItemSettlementResult:
     selected_halfwaves: tuple[str, ...] = ()
     matched_halfwave: str | None = None
     unsupported_reason: str | None = None
+    odds: Decimal | None = None
+    payout_amount: Decimal = Decimal("0.00")
+    odds_plan_name: str | None = None
+    odds_source: str = "未配置"
+    payout_note: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +66,7 @@ class OrderSettlementPreview:
     winning_items: int
     losing_items: int
     results: list[ItemSettlementResult]
+    total_payout_amount: Decimal = Decimal("0.00")
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +86,7 @@ class OrderSettlementCommitResult:
     results: list[ItemSettlementResult]
     warnings: list[str]
     operation_log_id: int
+    total_payout_amount: Decimal = Decimal("0.00")
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,3 +110,4 @@ class SettlementLedgerResult:
     order_created_at: datetime
     order_updated_at: datetime
     operation_log_description: str | None = None
+    total_payout_amount: Decimal = Decimal("0.00")

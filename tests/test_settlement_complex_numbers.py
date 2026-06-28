@@ -218,7 +218,7 @@ def test_commit_is_blocked_when_complex_number_item_is_unsupported(session_facto
     assert SettlementService(session_factory).count_settlement_records() == 0
 
 
-def test_commit_is_allowed_without_unsupported_and_does_not_write_payout_fields(session_factory) -> None:
+def test_commit_is_allowed_without_unsupported_and_writes_zero_payout_when_odds_missing(session_factory) -> None:
     order_service = OrderService(session_factory)
     order = create_order(
         order_service,
@@ -242,6 +242,8 @@ def test_commit_is_allowed_without_unsupported_and_does_not_write_payout_fields(
     snapshot = record.result_snapshot
     assert snapshot["items"][0]["draw_regular_numbers"] == ["01", "02", "03", "04", "05", "06"]
     assert snapshot["items"][1]["draw_numbers"] == ["01", "02", "03", "04", "05", "06", "07"]
-    assert "payout" not in str(snapshot).lower()
+    assert snapshot["settlement"]["total_payout_amount"] == "0.00"
+    assert snapshot["items"][0]["payout_amount"] == "0.00"
+    assert snapshot["items"][1]["payout_amount"] == "0.00"
     assert "balance" not in str(snapshot).lower()
     assert "rebate" not in str(snapshot).lower()

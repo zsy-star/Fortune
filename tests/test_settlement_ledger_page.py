@@ -211,7 +211,8 @@ def test_settlement_snapshot_dialog_displays_hit_miss_and_unsupported_items() ->
     assert dialog._items_table.item(0, 3).text() == "命中"
     assert dialog._items_table.item(1, 3).text() == "未中"
     assert dialog._items_table.item(2, 3).text() == "不支持"
-    assert dialog._items_table.item(2, 5).text() == "暂不支持玩法"
+    assert dialog._items_table.item(2, 5).text() == "-"
+    assert dialog._items_table.item(2, 8).text() == "暂不支持玩法"
     assert '"selection": "01"' in dialog._raw_snapshot.toPlainText()
 
 
@@ -240,9 +241,10 @@ def test_settlement_ledger_page_lists_only_settled_orders_with_log_summary(sessi
     assert page._table.item(0, 4).text() == "澳门"
     assert page._table.item(0, 5).text() == "settled"
     assert page._table.item(0, 6).text() == "10.00"
-    assert page._table.item(0, 8).text() != "-"
-    assert page._table.item(0, 9).text() == "中1 / 未0 / 不支持0"
-    assert settled.order_no in page._table.item(0, 10).toolTip()
+    assert page._table.item(0, 7).text() == "0.00"
+    assert page._table.item(0, 9).text() != "-"
+    assert page._table.item(0, 10).text() == "中1 / 未0 / 不支持0"
+    assert settled.order_no in page._table.item(0, 11).toolTip()
     assert active.order_no not in [page._table.item(row, 2).text() for row in range(page._table.rowCount())]
 
 

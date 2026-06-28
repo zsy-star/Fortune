@@ -163,7 +163,7 @@ def test_lianxiao_invalid_selection_is_unsupported(session_factory) -> None:
     assert "无法解析生肖列表" in preview.results[0].reason
 
 
-def test_complex_zodiac_commit_writes_snapshot_without_payout_fields(session_factory) -> None:
+def test_complex_zodiac_commit_writes_snapshot_with_zero_payout_when_odds_missing(session_factory) -> None:
     order_id = create_multi_zodiac_order(session_factory, selection="马,蛇", amount="15")
     draw = create_draw(DrawService(session_factory), special_number="01")
 
@@ -193,7 +193,9 @@ def test_complex_zodiac_commit_writes_snapshot_without_payout_fields(session_fac
     assert item_snapshot["draw_special_zodiac"] == "马"
     assert item_snapshot["selected_zodiacs"] == ["马", "蛇"]
     assert item_snapshot["matched_zodiac"] == "马"
-    assert "payout" not in str(snapshot).lower()
+    assert snapshot["settlement"]["total_payout_amount"] == "0.00"
+    assert item_snapshot["payout_amount"] == "0.00"
+    assert item_snapshot["payout_note"] == "未配置赔率"
     assert "balance" not in str(snapshot).lower()
     assert "rebate" not in str(snapshot).lower()
 

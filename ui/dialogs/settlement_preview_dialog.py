@@ -194,6 +194,7 @@ class SettlementPreviewDialog(QDialog):
       self._lbl_unsupported = QLabel("—")
       self._lbl_winning = QLabel("—")
       self._lbl_losing = QLabel("—")
+      self._lbl_total_payout = QLabel("—")
 
       for col, (label, widget) in enumerate(
           (
@@ -202,6 +203,7 @@ class SettlementPreviewDialog(QDialog):
               ("暂不支持数量", self._lbl_unsupported),
               ("中奖数量", self._lbl_winning),
               ("未中奖数量", self._lbl_losing),
+              ("总中奖金额", self._lbl_total_payout),
           )
       ):
           grid.addWidget(QLabel(label), 0, col)
@@ -209,9 +211,20 @@ class SettlementPreviewDialog(QDialog):
       return frame
 
   def _build_result_table(self) -> QTableWidget:
-      self._result_table = QTableWidget(0, 7)
+      self._result_table = QTableWidget(0, 10)
       self._result_table.setHorizontalHeaderLabels(
-          ["投注类型", "投注内容", "投注金额", "是否支持", "判定结果", "命中号码", "判定说明"]
+          [
+              "投注类型",
+              "投注内容",
+              "投注金额",
+              "是否支持",
+              "判定结果",
+              "命中号码",
+              "赔率",
+              "中奖金额",
+              "赔率来源/提示",
+              "判定说明",
+          ]
       )
       self._result_table.verticalHeader().setVisible(False)
       self._result_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -324,6 +337,7 @@ class SettlementPreviewDialog(QDialog):
       self._lbl_unsupported.setText(str(preview.unsupported_items))
       self._lbl_winning.setText(str(preview.winning_items))
       self._lbl_losing.setText(str(preview.losing_items))
+      self._lbl_total_payout.setText(_money(preview.total_payout_amount))
 
       self._result_table.setRowCount(len(preview.results))
       for row_idx, item in enumerate(preview.results):
@@ -344,14 +358,25 @@ class SettlementPreviewDialog(QDialog):
               supported_text,
               outcome,
               _dash(item.matched_number),
+              _dash(item.odds),
+              _money(item.payout_amount),
+              self._payout_hint(item),
               item.reason,
           ]
           for col_idx, value in enumerate(values):
               cell = QTableWidgetItem(value)
               cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-              if col_idx == 6:
+              if col_idx in (8, 9):
                   cell.setToolTip(item.reason)
+              if col_idx == 8:
+                  cell.setToolTip(self._payout_hint(item))
               self._result_table.setItem(row_idx, col_idx, cell)
+
+  def _payout_hint(self, item) -> str:
+      source = item.odds_source or "未配置"
+      plan = f" / {item.odds_plan_name}" if item.odds_plan_name else ""
+      note = f"：{item.payout_note}" if item.payout_note else ""
+      return f"{source}{plan}{note}"
 
   def _clear_preview_results(self) -> None:
       self._preview_done = False
@@ -362,6 +387,7 @@ class SettlementPreviewDialog(QDialog):
           self._lbl_unsupported,
           self._lbl_winning,
           self._lbl_losing,
+          self._lbl_total_payout,
       ):
           label.setText("—")
       self._result_table.setRowCount(0)

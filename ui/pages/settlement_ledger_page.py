@@ -81,6 +81,25 @@ def _snapshot_result_text(item: dict) -> str:
     return "-"
 
 
+def _snapshot_has_payout(snapshot: object) -> bool:
+    if not isinstance(snapshot, dict):
+        return False
+    settlement = snapshot.get("settlement")
+    if isinstance(settlement, dict) and "total_payout_amount" in settlement:
+        return True
+    items = snapshot.get("items")
+    return isinstance(items, list) and any(
+        isinstance(item, dict) and "payout_amount" in item
+        for item in items
+    )
+
+
+def _payout_text(record: SettlementLedgerResult) -> str:
+    if not _snapshot_has_payout(record.result_snapshot):
+        return "旧记录无赔付数据"
+    return _money(record.total_payout_amount)
+
+
 class _SettlementSnapshotDialog(QDialog):
     def __init__(self, record: SettlementLedgerResult, parent=None):
         super().__init__(parent)
@@ -96,17 +115,27 @@ class _SettlementSnapshotDialog(QDialog):
         self._empty_label.setObjectName("snapshotEmptyLabel")
         layout.addWidget(self._empty_label)
 
-        self._items_table = QTableWidget(0, 6)
+        self._items_table = QTableWidget(0, 9)
         self._items_table.setHorizontalHeaderLabels(
-            ["投注类型", "投注内容", "金额", "判定结果", "命中号码或原因", "不支持说明"]
+            [
+                "投注类型",
+                "投注内容",
+                "金额",
+                "判定结果",
+                "赔率",
+                "中奖金额",
+                "赔率来源/提示",
+                "命中号码或原因",
+                "不支持说明",
+            ]
         )
         self._items_table.verticalHeader().setVisible(False)
         self._items_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._items_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table_header = self._items_table.horizontalHeader()
-        for col in range(5):
+        for col in range(8):
             table_header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-        table_header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        table_header.setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self._items_table, stretch=2)
 
         self._raw_snapshot = QPlainTextEdit()
@@ -131,7 +160,8 @@ class _SettlementSnapshotDialog(QDialog):
             f"命中数：{record.hit_count}    "
             f"未命中数：{record.miss_count}    "
             f"不支持数：{record.unsupported_count}    "
-            f"总金额：{_money(record.total_amount)}"
+            f"总金额：{_money(record.total_amount)}    "
+            f"总中奖金额：{_payout_text(record)}"
         )
 
     def _load_items(self, snapshot: object) -> None:
@@ -146,11 +176,12 @@ class _SettlementSnapshotDialog(QDialog):
         self._items_table.setRowCount(len(items))
         for row_idx, item in enumerate(items):
             if not isinstance(item, dict):
-                self._set_item_row(row_idx, ["-", "-", "-", "格式不完整", "-", str(item)])
+                self._set_item_row(row_idx, ["-", "-", "-", "格式不完整", "-", "-", "-", "-", str(item)])
                 continue
             reason = _dash(item.get("reason"))
             unsupported_reason = reason if item.get("is_supported") is False else "-"
             matched_or_reason = _dash(item.get("matched_number")) if item.get("matched_number") else reason
+            payout_hint = self._payout_hint(item)
             self._set_item_row(
                 row_idx,
                 [
@@ -158,10 +189,19 @@ class _SettlementSnapshotDialog(QDialog):
                     _dash(item.get("selection")),
                     _dash(item.get("amount")),
                     _snapshot_result_text(item),
+                    _dash(item.get("odds")),
+                    _dash(item.get("payout_amount")),
+                    payout_hint,
                     matched_or_reason,
                     unsupported_reason,
                 ],
             )
+
+    def _payout_hint(self, item: dict) -> str:
+        source = _dash(item.get("odds_source"))
+        plan = _dash(item.get("odds_plan_name"))
+        note = _dash(item.get("payout_note"))
+        return f"{source} / {plan} / {note}"
 
     def _set_item_row(self, row_idx: int, values: list[str]) -> None:
         for col_idx, value in enumerate(values):
@@ -282,7 +322,7 @@ class SettlementLedgerPage(QWidget):
         return line
 
     def _build_table(self) -> QTableWidget:
-        self._table = QTableWidget(0, 13)
+        self._table = QTableWidget(0, 14)
         self._table.setHorizontalHeaderLabels(
             [
                 "结算ID",
@@ -292,6 +332,7 @@ class SettlementLedgerPage(QWidget):
                 "地区",
                 "状态",
                 "投注总额",
+                "中奖金额",
                 "结算时间",
                 "开奖期号",
                 "判定摘要",
@@ -305,10 +346,10 @@ class SettlementLedgerPage(QWidget):
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         header = self._table.horizontalHeader()
-        for col in (0, 1, 3, 4, 5, 6, 7, 8, 9, 11, 12):
+        for col in (0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(10, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(11, QHeaderView.ResizeMode.Stretch)
         return self._table
 
     def _build_pager(self) -> QHBoxLayout:
@@ -417,6 +458,7 @@ class SettlementLedgerPage(QWidget):
                 record.region,
                 record.order_status,
                 _money(record.total_amount),
+                _payout_text(record),
                 settlement_time.strftime("%Y-%m-%d %H:%M:%S"),
                 record.issue_number,
                 summary,
@@ -426,9 +468,9 @@ class SettlementLedgerPage(QWidget):
             ]
             for col_idx, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                alignment = Qt.AlignmentFlag.AlignLeft if col_idx == 10 else Qt.AlignmentFlag.AlignCenter
+                alignment = Qt.AlignmentFlag.AlignLeft if col_idx == 11 else Qt.AlignmentFlag.AlignCenter
                 item.setTextAlignment(alignment)
-                if col_idx == 10:
+                if col_idx == 11:
                     item.setToolTip(log_text)
                 self._table.setItem(row_idx, col_idx, item)
 

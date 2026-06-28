@@ -220,7 +220,11 @@ def test_preview_supported_winning_losing_and_unsupported(session_factory) -> No
     assert dialog._result_table.item(0, 2).text() == "10.00"
     assert dialog._result_table.item(0, 5).text() == "01"
     assert dialog._result_table.item(1, 5).text() == "—"
-    assert dialog._result_table.item(0, 6).toolTip() == dialog._result_table.item(0, 6).text()
+    assert dialog._result_table.item(0, 6).text() == "—"
+    assert dialog._result_table.item(0, 7).text() == "0.00"
+    assert "未配置赔率" in dialog._result_table.item(0, 8).text()
+    assert dialog._result_table.item(0, 9).toolTip() == dialog._result_table.item(0, 9).text()
+    assert dialog._lbl_total_payout.text() == "0.00"
 
 
 def test_preview_does_not_modify_order_or_logs(session_factory) -> None:

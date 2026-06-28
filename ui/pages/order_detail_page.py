@@ -203,11 +203,11 @@ class OrderDetailPage(QWidget):
         self._btn_import_orders.clicked.connect(self._on_import_orders)
         self._btn_filter_prize = QPushButton("过滤结算结果")
         self._btn_filter_prize.setObjectName("primaryAction")
-        self._btn_filter_prize.setToolTip("只读查看当前筛选结果的命中状态统计，不计算赔付金额")
+        self._btn_filter_prize.setToolTip("只读查看当前筛选结果的命中状态和快照中奖金额")
         self._btn_filter_prize.clicked.connect(self._on_filter_settlement_results)
         self._btn_combined_prize = QPushButton("综合结算摘要")
         self._btn_combined_prize.setObjectName("primaryAction")
-        self._btn_combined_prize.setToolTip("只读汇总当前筛选结果，不计算中奖金额、赔付、余额")
+        self._btn_combined_prize.setToolTip("只读汇总当前筛选结果，不写余额、不计算返水佣金")
         self._btn_combined_prize.clicked.connect(self._on_combined_settlement_summary)
         self._btn_reset_draw = self._unavailable_button("重置开奖")
         self._btn_expand_prize = QPushButton("扩大兑奖框")
@@ -632,6 +632,7 @@ class OrderDetailPage(QWidget):
                 note_parts.append(f"来源：{order.source}")
             settlement_record = self._settlement_records.get(order.id)
             winning_status = _settlement_status(settlement_record, order.status)
+            payout_text = self._settlement_record_payout_text(settlement_record)
             values = [
                 compact_raw,
                 "—",
@@ -642,7 +643,7 @@ class OrderDetailPage(QWidget):
                 order.order_no,
                 _dash(order.customer_name),
                 winning_status,
-                "—",
+                payout_text,
                 " / ".join(note_parts),
             ]
             for col_idx, value in enumerate(values):
@@ -738,7 +739,7 @@ class OrderDetailPage(QWidget):
     def _on_filter_settlement_results(self) -> None:
         summary = self._build_current_settlement_summary()
         text = (
-            "过滤结算结果为只读统计功能，不写数据库，不计算赔付金额。\n\n"
+            "过滤结算结果为只读统计功能，不写数据库，不写余额。\n\n"
             f"{summary}"
         )
         self._combined_result.setPlainText(text)
@@ -748,7 +749,7 @@ class OrderDetailPage(QWidget):
     def _on_combined_settlement_summary(self) -> None:
         text = (
             "综合结算摘要（只读）\n"
-            "中奖金额：—（当前版本不计算赔付金额）\n\n"
+            "中奖金额：读取已结算快照中的基础中奖金额；未结算订单不参与。\n\n"
             f"{self._build_current_settlement_summary()}"
         )
         self._combined_result.setPlainText(text)
@@ -789,6 +790,12 @@ class OrderDetailPage(QWidget):
         orders = self._list_current_filtered_orders()
         records = self._settlement_service.get_settlement_records_by_order_ids([order.id for order in orders])
         total_amount = sum((order.total_amount for order in orders), Decimal("0"))
+        payout_values = [
+            record.total_payout_amount
+            for record in records.values()
+            if self._snapshot_has_payout(record.result_snapshot)
+        ]
+        total_payout = sum(payout_values, Decimal("0.00"))
         status_counts = {
             "已结算": 0,
             "未结算": 0,
@@ -806,13 +813,14 @@ class OrderDetailPage(QWidget):
             if display_status in status_counts:
                 status_counts[display_status] += 1
 
+        payout_text = _money(total_payout) if payout_values else "—（旧记录无赔付数据）"
         return (
             f"订单数：{len(orders)}\n"
             f"已结算数：{status_counts['已结算']}    未结算数：{status_counts['未结算']}\n"
             f"命中订单数：{status_counts['命中']}    未中订单数：{status_counts['未中']}\n"
             f"部分命中订单数：{status_counts['部分命中']}    含不支持订单数：{status_counts['含不支持']}\n"
             f"当前订单总额：{_money(total_amount)}\n"
-            "赔付/中奖金额：—（未计算）"
+            f"赔付/中奖金额：{payout_text}"
         )
 
     def _list_current_filtered_orders(self) -> list[OrderSummary]:
@@ -996,12 +1004,18 @@ class OrderDetailPage(QWidget):
         elif record is None:
             summary = "该订单为历史已结算订单，但暂无结算快照记录。"
         else:
+            payout_text = (
+                _money(record.total_payout_amount)
+                if self._snapshot_has_payout(record.result_snapshot)
+                else "旧记录无赔付数据"
+            )
             summary = (
                 f"订单 ID：{record.order_id}\n"
                 f"地区：{record.region}    期号：{record.issue_number}\n"
                 f"命中数：{record.hit_count}    未命中数：{record.miss_count}    "
                 f"不支持数：{record.unsupported_count}\n"
-                f"总明细数：{record.total_items}    总金额：{_money(record.total_amount)}\n"
+                f"总明细数：{record.total_items}    总金额：{_money(record.total_amount)}    "
+                f"总中奖金额：{payout_text}\n"
                 f"{self._build_settlement_detail_text(record.result_snapshot)}"
             )
 
@@ -1043,7 +1057,7 @@ class OrderDetailPage(QWidget):
         return (
             "当前订单暂无结算明细，请先进行结算预览。\n\n"
             "当前仅展示命中 / 未中 / 不支持判断。\n"
-            "当前未计算赔付金额、余额、返水、佣金。\n"
+            "当前不写余额，不计算返水、佣金。\n"
             "复杂玩法规则以当前 settlement_rules.md 为准。"
         )
 
@@ -1060,7 +1074,7 @@ class OrderDetailPage(QWidget):
         lines = [
             "结算明细：",
             "当前仅展示命中 / 未中 / 不支持判断。",
-            "当前未计算赔付金额、余额、返水、佣金。",
+            "当前展示基础中奖金额，不写余额，不计算返水、佣金。",
             "复杂玩法规则以当前 settlement_rules.md 为准。",
         ]
         for index, item in enumerate(items, start=1):
@@ -1071,6 +1085,11 @@ class OrderDetailPage(QWidget):
             reference = self._settlement_item_reference_text(item)
             reason = _dash(item.get("reason"))
             unsupported_reason = _dash(item.get("unsupported_reason"))
+            odds_text = _dash(item.get("odds"))
+            payout_text = _dash(item.get("payout_amount"))
+            odds_source = _dash(item.get("odds_source"))
+            odds_plan = _dash(item.get("odds_plan_name"))
+            payout_note = _dash(item.get("payout_note"))
             lines.extend(
                 [
                     (
@@ -1079,6 +1098,11 @@ class OrderDetailPage(QWidget):
                         f"金额：{_dash(item.get('amount'))}    结果：{result_text}"
                     ),
                     f"   开奖参考：{reference}",
+                    (
+                        f"   赔率：{odds_text}    中奖金额：{payout_text}    "
+                        f"赔率来源：{odds_source}    赔率方案：{odds_plan}"
+                    ),
+                    f"   赔率/赔付提示：{payout_note}",
                     f"   命中 / 未中说明：{reason}",
                     f"   不支持原因：{unsupported_reason}",
                 ]
@@ -1116,6 +1140,25 @@ class OrderDetailPage(QWidget):
         self._append_reference(parts, "命中号码", item.get("matched_number"))
         return "；".join(parts) if parts else "—"
 
+    def _settlement_record_payout_text(self, record: SettlementLedgerResult | None) -> str:
+        if record is None:
+            return "—"
+        if not self._snapshot_has_payout(record.result_snapshot):
+            return "旧记录无赔付数据"
+        return _money(record.total_payout_amount)
+
+    def _snapshot_has_payout(self, snapshot: object) -> bool:
+        if not isinstance(snapshot, dict):
+            return False
+        settlement = snapshot.get("settlement")
+        if isinstance(settlement, dict) and "total_payout_amount" in settlement:
+            return True
+        items = snapshot.get("items")
+        return isinstance(items, list) and any(
+            isinstance(item, dict) and "payout_amount" in item
+            for item in items
+        )
+
     def _append_reference(self, parts: list[str], label: str, value: object | None) -> None:
         text = self._format_reference_value(value)
         if text:
@@ -1130,6 +1173,9 @@ class OrderDetailPage(QWidget):
 
     def _preview_to_snapshot(self, preview: OrderSettlementPreview) -> dict[str, object]:
         return {
+            "settlement": {
+                "total_payout_amount": _money(preview.total_payout_amount),
+            },
             "items": [
                 {
                     "bet_type": item.bet_type,
@@ -1157,6 +1203,11 @@ class OrderDetailPage(QWidget):
                     "selected_halfwaves": list(item.selected_halfwaves),
                     "matched_halfwave": item.matched_halfwave,
                     "unsupported_reason": item.unsupported_reason,
+                    "odds": str(item.odds) if item.odds is not None else None,
+                    "payout_amount": _money(item.payout_amount),
+                    "odds_plan_name": item.odds_plan_name,
+                    "odds_source": item.odds_source,
+                    "payout_note": item.payout_note,
                 }
                 for item in preview.results
             ]
