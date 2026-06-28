@@ -48,6 +48,7 @@ class OrderImportPreviewRow:
     item_count: int = 0
     selection_summary: str = ""
     error: str = ""
+    selected_for_import: bool = True
     duplicate_warning: str = ""
     history_duplicate_warning: str = ""
     history_duplicate_order_id: int | None = None
@@ -94,4 +95,6 @@ class OrderImportConfirmResult:
     save_failed_count: int
     skipped_parse_failed_count: int
     skipped_history_duplicate_count: int = 0
+    skipped_unselected_count: int = 0
+    skipped_already_imported_count: int = 0
     log_id: int | None = None

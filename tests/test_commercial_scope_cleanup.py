@@ -30,6 +30,11 @@ from ui.windows.split_order_window import SplitOrderWindow
 from ui.unavailable import UNAVAILABLE_TOOLTIP
 
 
+class EmptySettingsService:
+    def list_declarers(self):
+        return []
+
+
 def app() -> QApplication:
     return QApplication.instance() or QApplication([])
 
@@ -143,19 +148,21 @@ def test_tema_hover_menu_uses_delayed_stable_hide_instead_of_immediate_hide() ->
 
 def test_split_order_window_opens_first_stage_text_tools() -> None:
     app()
-    window = SplitOrderWindow()
+    window = SplitOrderWindow(settings_service=EmptySettingsService())
 
-    assert "拆单助手第一阶段仅用于文本整理" in window._scope_hint.text()
+    assert "可预览拆分结果并确认保存成功行" in window._scope_hint.text()
     assert window._btn_split.isEnabled()
     assert window._btn_style.isEnabled()
     assert window._btn_copy.isEnabled()
     assert window._btn_save.isEnabled()
-    assert "不会保存订单" in window._scope_hint.text()
+    assert window._btn_preview_orders.isEnabled()
+    assert not window._btn_confirm_save.isEnabled()
+    assert "不会结算" in window._scope_hint.text()
 
 
 def test_split_order_first_stage_handlers_are_not_silent() -> None:
     app()
-    window = SplitOrderWindow()
+    window = SplitOrderWindow(settings_service=EmptySettingsService())
 
     window._input_text.setPlainText("兔各10，马各5")
     window._on_start_split()

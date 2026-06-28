@@ -274,6 +274,7 @@ class OrderImportService:
                 raw_text=raw_text,
                 region=self._display_region(region_mode, []),
                 success=False,
+                selected_for_import=False,
                 error="未解析出订单明细",
             )
 
@@ -284,6 +285,7 @@ class OrderImportService:
                 raw_text=raw_text,
                 region=self._display_region(region_mode, results),
                 success=False,
+                selected_for_import=False,
                 error="；".join(result.error or "解析失败" for result in failed),
             )
 
@@ -407,6 +409,9 @@ class OrderImportService:
         config_plan_name: str | None = None,
         skip_history_duplicates: bool = True,
         source: str = "order_import",
+        log_action: str = "order/import",
+        log_label: str = "订单导入",
+        related_type: str = "order_import",
     ) -> OrderImportConfirmResult:
         """Save only parse-success rows through OrderIntakeService.
 
@@ -420,12 +425,26 @@ class OrderImportService:
         save_failed = 0
         skipped_parse_failed = 0
         skipped_history_duplicate = 0
+        skipped_unselected = 0
+        skipped_already_imported = 0
 
         for row in preview.rows:
             if not row.success:
                 skipped_parse_failed += 1
                 updated_rows.append(
                     replace(row, import_status="未导入，解析失败", import_error=row.error or "解析失败")
+                )
+                continue
+            if not row.selected_for_import:
+                skipped_unselected += 1
+                updated_rows.append(
+                    replace(row, import_status="已跳过，未勾选", import_error="")
+                )
+                continue
+            if row.order_id is not None or row.import_status == "已导入":
+                skipped_already_imported += 1
+                updated_rows.append(
+                    replace(row, import_status="已跳过，已保存", import_error="")
                 )
                 continue
             if skip_history_duplicates and row.history_duplicate_warning:
@@ -491,6 +510,11 @@ class OrderImportService:
             imported_count=imported,
             save_failed_count=save_failed,
             skipped_parse_failed_count=skipped_parse_failed,
+            skipped_unselected_count=skipped_unselected,
+            skipped_already_imported_count=skipped_already_imported,
+            log_action=log_action,
+            log_label=log_label,
+            related_type=related_type,
             context=OrderImportContext(
                 customer_name=customer_name,
                 channel=channel,
@@ -508,6 +532,8 @@ class OrderImportService:
             save_failed_count=save_failed,
             skipped_parse_failed_count=skipped_parse_failed,
             skipped_history_duplicate_count=skipped_history_duplicate,
+            skipped_unselected_count=skipped_unselected,
+            skipped_already_imported_count=skipped_already_imported,
             log_id=log_id,
         )
 
@@ -539,15 +565,20 @@ class OrderImportService:
         imported_count: int,
         save_failed_count: int,
         skipped_parse_failed_count: int,
+        skipped_unselected_count: int = 0,
+        skipped_already_imported_count: int = 0,
+        log_action: str = "order/import",
+        log_label: str = "订单导入",
+        related_type: str = "order_import",
         context: OrderImportContext | None = None,
     ) -> int | None:
         context = context or OrderImportContext()
         try:
             log = self._log_service.create_log(
                 module="order",
-                action="order/import",
+                action=log_action,
                 description=(
-                    "订单导入汇总；"
+                    f"{log_label}汇总；"
                     f"file={Path(file_path).name if file_path else '未选择文件'}; "
                     f"declarer={context.display_customer_name}; "
                     f"channel={context.channel}; "
@@ -561,10 +592,12 @@ class OrderImportService:
                     f"imported={imported_count}; "
                     f"save_failed={save_failed_count}; "
                     f"skipped_empty={preview.skipped_count}; "
-                    f"skipped_parse_failed={skipped_parse_failed_count}"
+                    f"skipped_parse_failed={skipped_parse_failed_count}; "
+                    f"skipped_unselected={skipped_unselected_count}; "
+                    f"skipped_already_imported={skipped_already_imported_count}"
                 ),
                 operator="system",
-                related_type="order_import",
+                related_type=related_type,
             )
             return log.id
         except Exception:
