@@ -80,7 +80,8 @@ def test_order_analysis_page_loads_number_table_charts_and_report(session_factor
     assert "订单数量：1" in report
     assert "明细数量：3" in report
     assert "总投注金额：60.00" in report
-    assert "当前不计算赔付金额" in report
+    assert "已结算中奖金额：0.00" in report
+    assert "未结算订单不参与真实盈亏" in report
 
 
 def test_order_analysis_page_region_filter_refreshes_all_sections(session_factory) -> None:

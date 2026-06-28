@@ -1,4 +1,4 @@
-"""特码调单页面：第一阶段只读汇总 + 页面内临时调整。"""
+"""特码调单页面：汇总调整并保存调单快照记录。"""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ def _decimal_from_text(text: str) -> Decimal:
 class SpecialOrderPage(QWidget):
     """特码调单主页面。
 
-    第一阶段只读取现有订单做汇总，不保存调整、不写数据库。
+    当前只读取现有订单做汇总，并可保存调单快照记录；不修改原订单、不自动兑奖。
     """
 
     def __init__(
@@ -436,8 +436,9 @@ class SpecialOrderPage(QWidget):
                 "安全说明",
                 "保存调整仅写入调单记录",
                 "不修改订单",
-                "不自动结算",
+                "不自动结算或兑奖",
                 "未计算真实赔付",
+                "不写余额",
             ]
         )
         return "\n".join(lines)
@@ -477,7 +478,7 @@ class SpecialOrderPage(QWidget):
             f"原金额合计：{payload.original_total}\n"
             f"调整金额合计：{payload.adjustment_total}\n"
             f"调整后合计：{payload.after_total}\n\n"
-            "保存为调单记录，不修改订单，不自动结算。"
+            "保存为调单快照记录，不修改订单，不自动结算或兑奖，不写余额。"
         )
         choice = QMessageBox.question(
             self,
@@ -499,7 +500,7 @@ class SpecialOrderPage(QWidget):
         app_events.logs_changed.emit()
         self._append_output(
             f"已保存特码调单记录 ID：{result.record.id}；"
-            f"操作日志 ID：{result.operation_log_id}。当前调整未清空，订单未被修改。"
+            f"操作日志 ID：{result.operation_log_id}。当前调整未清空，订单未被修改，未自动兑奖。"
         )
 
     def _on_round_to_tens(self) -> None:
@@ -524,7 +525,7 @@ class SpecialOrderPage(QWidget):
         self._append_output("高风险功能暂未开放：重置所有数据不会执行，数据库未被修改。")
 
     def _on_special_settlement(self) -> None:
-        self._append_output("当前仅显示汇总，不计算赔付，也不执行特码兑奖。")
+        self._append_output("当前仅显示调单汇总，不执行特码兑奖，不计算赔付金额，也不写余额。")
 
     def _on_open_extension(self) -> None:
         self._append_output("打开拓展：第一阶段仅保留入口，暂不打开额外调单扩展。")

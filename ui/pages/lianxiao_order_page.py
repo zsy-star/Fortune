@@ -1,4 +1,4 @@
-"""连肖调单页面：第一阶段只读汇总工作台。"""
+"""连肖调单页面：只读汇总并保存调单快照记录。"""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def _money(value: Decimal) -> str:
 class LianxiaoOrderPage(QWidget):
     """连肖调单页面。
 
-    第一阶段只读汇总已有连肖类订单明细，不保存调整、不写数据库、不计算赔付。
+    当前只读汇总已有连肖类订单明细，并可保存调单快照记录；不修改原订单、不自动兑奖。
     布局恢复为传统连肖工作台：左侧总表 + 右侧四个并排连肖列表。
     """
 
@@ -238,7 +238,7 @@ class LianxiaoOrderPage(QWidget):
             self._append_output(f"已加载连肖汇总：{len(self._summaries)} 组。")
         else:
             self._append_output("暂无数据：当前筛选条件下没有连肖订单明细。")
-        self._append_output("当前仅展示只读汇总，不保存订单调整。")
+        self._append_output("当前展示只读汇总；保存本次调整仅记录调单快照，不修改订单。")
 
     def _selected_region(self) -> str | None:
         button = self._region_group.checkedButton()
@@ -376,8 +376,9 @@ class LianxiaoOrderPage(QWidget):
                 "安全说明",
                 "保存调整仅写入调单记录",
                 "不修改订单",
-                "不自动结算",
+                "不自动结算或兑奖",
                 "未计算真实赔付",
+                "不写余额",
             ]
         )
         return "\n".join(lines)
@@ -423,7 +424,7 @@ class LianxiaoOrderPage(QWidget):
             f"地区：{payload.region}\n"
             f"连肖组数量：{payload.item_count}\n"
             f"连肖总额：{payload.original_total}\n\n"
-            "保存为调单记录，不修改订单，不自动结算。"
+            "保存为调单快照记录，不修改订单，不自动结算或兑奖，不写余额。"
         )
         choice = QMessageBox.question(
             self,
@@ -445,7 +446,7 @@ class LianxiaoOrderPage(QWidget):
         app_events.logs_changed.emit()
         self._append_output(
             f"已保存连肖调单记录 ID：{result.record.id}；"
-            f"操作日志 ID：{result.operation_log_id}。订单未被修改。"
+            f"操作日志 ID：{result.operation_log_id}。订单未被修改，未自动兑奖。"
         )
 
     def _on_adjust_records(self) -> None:

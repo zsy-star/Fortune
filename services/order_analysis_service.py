@@ -6,6 +6,7 @@ import re
 from collections.abc import Callable
 from decimal import Decimal
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from core.database import SessionLocal
@@ -18,6 +19,7 @@ from domain.bet_types import (
     REGION_MACAU,
 )
 from domain.zodiac_rules import get_zodiac
+from models import Order, SettlementRecord
 from repositories.order_repository import OrderRepository
 from schemas.order_analysis_schema import (
     NumberAnalysisRow,
@@ -88,6 +90,7 @@ class OrderAnalysisService:
             order_count = len(orders)
             item_count = sum(len(order.items) for order in orders)
             total_amount = sum((Decimal(order.total_amount or 0) for order in orders), Decimal("0"))
+            settled_payout_amount, old_snapshot_count = self._settled_payout_summary(session, filter_key)
 
         filter_label = self._filter_label(filter_key)
         report_text = self._build_report(
@@ -95,6 +98,8 @@ class OrderAnalysisService:
             order_count=order_count,
             item_count=item_count,
             total_amount=total_amount,
+            settled_payout_amount=settled_payout_amount,
+            old_snapshot_count=old_snapshot_count,
             number_rows=number_rows,
             lianxiao_frequency=lianxiao_frequency,
             pingte_zodiac_amounts=pingte_zodiac_amounts,
@@ -184,6 +189,47 @@ class OrderAnalysisService:
     def _split_selection(self, selection: str) -> list[str]:
         return [part.strip() for part in _SELECTION_SPLIT.split(selection.strip()) if part.strip()]
 
+    def _settled_payout_summary(self, session: Session, filter_key: str) -> tuple[Decimal, int]:
+        stmt = (
+            select(SettlementRecord.result_snapshot, Order.region, Order.status)
+            .join(Order, Order.id == SettlementRecord.order_id)
+            .where(Order.status != "voided")
+        )
+        total = Decimal("0")
+        old_snapshot_count = 0
+        for snapshot, region, _status in session.execute(stmt):
+            if not self._region_matches(region, filter_key):
+                continue
+            payout, has_payout = self._snapshot_payout_amount(snapshot)
+            if has_payout:
+                total += payout
+            else:
+                old_snapshot_count += 1
+        return total.quantize(Decimal("0.01")), old_snapshot_count
+
+    def _snapshot_payout_amount(self, snapshot: object) -> tuple[Decimal, bool]:
+        if not isinstance(snapshot, dict):
+            return Decimal("0"), False
+        settlement = snapshot.get("settlement")
+        if isinstance(settlement, dict) and settlement.get("total_payout_amount") not in (None, ""):
+            return self._to_decimal_money(settlement.get("total_payout_amount")), True
+        items = snapshot.get("items")
+        if not isinstance(items, list):
+            return Decimal("0"), False
+        total = Decimal("0")
+        has_item_payout = False
+        for item in items:
+            if isinstance(item, dict) and item.get("payout_amount") not in (None, ""):
+                total += self._to_decimal_money(item.get("payout_amount"))
+                has_item_payout = True
+        return total, has_item_payout
+
+    def _to_decimal_money(self, value: object) -> Decimal:
+        try:
+            return Decimal(str(value)).quantize(Decimal("0.01"))
+        except Exception:
+            return Decimal("0.00")
+
     def _build_report(
         self,
         *,
@@ -191,6 +237,8 @@ class OrderAnalysisService:
         order_count: int,
         item_count: int,
         total_amount: Decimal,
+        settled_payout_amount: Decimal,
+        old_snapshot_count: int,
         number_rows: tuple[NumberAnalysisRow, ...],
         lianxiao_frequency: tuple[ZodiacFrequencyRow, ...],
         pingte_zodiac_amounts: tuple[ZodiacAmountRow, ...],
@@ -208,14 +256,16 @@ class OrderAnalysisService:
             f"订单数量：{order_count}",
             f"明细数量：{item_count}",
             f"总投注金额：{total_amount:.2f}",
+            f"已结算中奖金额：{settled_payout_amount:.2f}",
             f"下注最多的号码 Top 5：{self._format_number_top(number_top)}",
             f"连肖出现最多的生肖 Top 5：{self._format_count_top(lianxiao_top)}",
             f"平特一肖投注金额 Top 5：{self._format_amount_top(pingte_top)}",
             "",
             "说明：当前分析基于订单明细和投注金额统计。",
-            "说明：当前不计算赔付金额。",
-            "说明：当前不处理余额、返水、佣金。",
-            "说明：盈亏字段暂不代表真实结算盈亏，仅作占位/风险参考。",
+            "说明：已结算中奖金额只读取 SettlementRecord 快照中的第一阶段基础中奖金额。",
+            f"说明：旧结算快照无赔付字段的记录数：{old_snapshot_count}。",
+            "说明：未结算订单不参与真实盈亏；当前不写余额，不计算返水、佣金。",
+            "说明：盈亏字段仍不代表余额或真实净利润，仅作占位/风险参考。",
         ]
         return "\n".join(lines)
 

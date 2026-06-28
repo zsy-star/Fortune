@@ -271,13 +271,23 @@ def test_record_order_window_marks_unimplemented_options_and_footer_scope() -> N
 def test_readme_and_scope_document_describe_commercial_test_scope() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
     scope = Path("docs/commercial_test_scope.md").read_text(encoding="utf-8")
+    feature_status = Path("docs/feature_status.md").read_text(encoding="utf-8")
 
     for heading in ("当前测试版已完成", "当前测试版暂未开放", "后续规划"):
         assert heading in readme
     assert "录单窗口尚未接入数据库" not in readme
     assert "订单详情、数据总览、订单分析仍未读取真实订单数据" not in readme
+    assert "订单导入、批量删除、清空订单" not in readme
+    assert "拆单助手仅做文本整理，不识别复杂玩法、不保存订单、不写数据库" not in readme
+    assert "导入订单 | 暂未开放" not in feature_status
+    assert "拆单助手保存订单 | 暂未开放" not in feature_status
+    assert "赔付金额 / 中奖金额 | 暂未开放" not in feature_status
+    assert "导入订单 | 第一阶段可用" in feature_status
+    assert "拆单助手保存订单 | 第一阶段可用" in feature_status
+    assert "调单快照记录" in feature_status
     assert "商用测试版范围" in scope
     assert "不显示假业务数据" in scope
+    assert "调单页面保存的调整记录仅为快照，不修改订单状态" in scope
 
 
 def test_order_analysis_dead_demo_code_removed() -> None:

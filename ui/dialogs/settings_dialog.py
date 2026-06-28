@@ -57,7 +57,7 @@ class SettingsDialog(QDialog):
         title_row = QHBoxLayout()
         title = QLabel("个人设置 / 配置中心")
         title.setObjectName("settingsTitle")
-        subtitle = QLabel("配置数据仅保存在本机，不自动参与赔付、余额或结算计算。")
+        subtitle = QLabel("赔率配置可被结算只读读取；返水、余额和客户账户仍不参与计算。")
         subtitle.setObjectName("settingsSubtitle")
         title_row.addWidget(title)
         title_row.addWidget(subtitle)
@@ -160,7 +160,7 @@ class SettingsDialog(QDialog):
         explanation.setReadOnly(True)
         explanation.setMaximumHeight(92)
         explanation.setPlainText(
-            "说明：此页仅保存赔率与返水配置，不执行赔付、盈亏或结算计算。\n"
+            "说明：结算会只读读取赔率用于第一阶段中奖金额；返水仍不参与结算。\n"
             "双击表格中的赔率或返水可编辑，编辑后请点击“保存表格修改”。\n"
             "默认方案和仅剩的最后一个方案不能删除；已绑定申报人的方案也会受到保护。"
         )

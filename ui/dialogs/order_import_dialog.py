@@ -1,4 +1,4 @@
-"""订单导入预览弹窗：第一阶段只解析预览，不保存订单。"""
+"""订单导入预览弹窗：预览后可确认导入解析成功行。"""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ from ui.app_events import app_events
 class OrderImportDialog(QDialog):
     """订单导入预览对话框。
 
-    本阶段不提供确认导入/保存按钮，所有结果仅用于人工检查。
+    确认导入时只保存解析成功行，失败行和未勾选行不会写入订单。
     """
 
     def __init__(
@@ -95,7 +95,7 @@ class OrderImportDialog(QDialog):
         self._table.horizontalHeader().setSectionResizeMode(9, QHeaderView.ResizeMode.Stretch)
         root.addWidget(self._table, stretch=1)
 
-        self._stats_label = QLabel("总行数：0    解析成功：0    解析失败：0    跳过空行：0    当前不会写数据库")
+        self._stats_label = QLabel("总行数：0    解析成功：0    解析失败：0    跳过空行：0    尚未确认导入")
         self._stats_label.setObjectName("safeHint")
         root.addWidget(self._stats_label)
         root.addLayout(self._build_bottom_row())
@@ -165,7 +165,7 @@ class OrderImportDialog(QDialog):
             declarers = []
             self._plan_label.setText("配置方案：配置读取失败")
             if hasattr(self, "_stats_label"):
-                self._stats_label.setText("申报人配置读取失败，已降级为未设置；当前不会写数据库")
+                self._stats_label.setText("申报人配置读取失败，已降级为未设置；尚未确认导入")
         else:
             self._plan_label.setText("配置方案：未绑定配置方案")
         for declarer in declarers:

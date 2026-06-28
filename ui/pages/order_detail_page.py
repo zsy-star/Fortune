@@ -199,7 +199,7 @@ class OrderDetailPage(QWidget):
         self._btn_export_excel.clicked.connect(self._on_export_excel)
         self._btn_import_orders = QPushButton("导入订单")
         self._btn_import_orders.setObjectName("primaryAction")
-        self._btn_import_orders.setToolTip("打开订单导入预览；当前仅解析预览，不写数据库")
+        self._btn_import_orders.setToolTip("打开订单导入预览；确认导入后只保存解析成功行")
         self._btn_import_orders.clicked.connect(self._on_import_orders)
         self._btn_filter_prize = QPushButton("过滤结算结果")
         self._btn_filter_prize.setObjectName("primaryAction")

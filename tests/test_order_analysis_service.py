@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import func, select
 
-from models import Order, OrderItem
+from models import Order, OrderItem, SettlementRecord
+from schemas.draw_schema import LotteryDrawCreate
 from schemas.order_schema import OrderCreate, OrderItemCreate
+from services.draw_service import DrawService
 from services.order_analysis_service import OrderAnalysisService
 from services.order_service import OrderService
 
@@ -121,7 +124,7 @@ def test_order_analysis_service_does_not_force_unclear_items_into_statistics(ses
 
 def test_order_analysis_report_contains_top_info_and_safety_notes(session_factory) -> None:
     order_service = OrderService(session_factory)
-    create_order(
+    order = create_order(
         order_service,
         region="澳门",
         items=[
@@ -130,6 +133,35 @@ def test_order_analysis_report_contains_top_info_and_safety_notes(session_factor
             OrderItemCreate(bet_type="平特一肖", selection="马", amount="30"),
         ],
     )
+    draw = DrawService(session_factory).create_draw(
+        LotteryDrawCreate(
+            region="澳门",
+            issue_number="A001",
+            draw_date=date(2026, 1, 1),
+            regular_numbers=[1, 2, 3, 4, 5, 6],
+            special_number=7,
+            source="test",
+        )
+    )
+    with session_factory() as session:
+        session.add(
+            SettlementRecord(
+                order_id=order.id,
+                draw_id=draw.id,
+                region="澳门",
+                issue_number="A001",
+                total_items=3,
+                hit_count=1,
+                miss_count=2,
+                unsupported_count=0,
+                total_amount=Decimal("60.00"),
+                result_snapshot={
+                    "settlement": {"total_payout_amount": "470.00"},
+                    "items": [{"payout_amount": "470.00"}],
+                },
+            )
+        )
+        session.commit()
 
     report = OrderAnalysisService(session_factory).get_workbench(region="澳门").report_text
 
@@ -137,12 +169,14 @@ def test_order_analysis_report_contains_top_info_and_safety_notes(session_factor
     assert "订单数量：1" in report
     assert "明细数量：3" in report
     assert "总投注金额：60.00" in report
+    assert "已结算中奖金额：470.00" in report
     assert "下注最多的号码 Top 5" in report
     assert "连肖出现最多的生肖 Top 5" in report
     assert "平特一肖投注金额 Top 5" in report
-    assert "当前不计算赔付金额" in report
-    assert "余额、返水、佣金" in report
-    assert "盈亏字段暂不代表真实结算盈亏" in report
+    assert "基础中奖金额" in report
+    assert "未结算订单不参与真实盈亏" in report
+    assert "不写余额，不计算返水、佣金" in report
+    assert "盈亏字段仍不代表余额或真实净利润" in report
 
 
 def test_order_analysis_service_does_not_write_database(session_factory) -> None:

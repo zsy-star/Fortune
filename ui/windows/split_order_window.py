@@ -86,7 +86,9 @@ class SplitOrderWindow(QMainWindow):
         self._recognize_text = QPlainTextEdit()
         self._recognize_text.setReadOnly(True)
         self._recognize_text.setMinimumHeight(72)
-        self._recognize_text.setPlainText("等待拆分。第一阶段只整理文本，不识别玩法、不计算金额。")
+        self._recognize_text.setPlainText(
+            "等待拆分。可先整理文本并预览订单；确认保存时只保存勾选的解析成功行。"
+        )
         recognize_layout.addWidget(self._recognize_text)
         root.addWidget(recognize_box)
 

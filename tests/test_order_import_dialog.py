@@ -246,7 +246,7 @@ def test_order_import_dialog_initializes_with_confirm_button_disabled() -> None:
     assert dialog._chk_history_duplicate.isChecked()
     assert dialog._chk_skip_history_duplicate.text() == "导入时跳过历史疑似重复行"
     assert dialog._chk_skip_history_duplicate.isChecked()
-    assert "当前不会写数据库" in dialog._stats_label.text()
+    assert "尚未确认导入" in dialog._stats_label.text()
 
 
 def test_order_import_dialog_file_picker_supports_xlsx(monkeypatch) -> None:
