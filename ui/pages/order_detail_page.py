@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 from domain.color_rules import get_wave_color
 from domain.zodiac_rules import get_zodiac
 from schemas.order_schema import OrderDetailResult, OrderSummary
-from schemas.settlement_schema import SettlementLedgerResult
+from schemas.settlement_schema import OrderSettlementPreview, SettlementLedgerResult
 from services.draw_service import DrawService
 from services.excel_export_service import ExcelExportService
 from services.log_service import LogService
@@ -134,6 +134,7 @@ class OrderDetailPage(QWidget):
         self._row_amounts: list[Decimal] = []
         self._row_statuses: list[str] = []
         self._settlement_records: dict[int, SettlementLedgerResult] = {}
+        self._preview_snapshots: dict[int, dict[str, object]] = {}
         self._draw_widgets: dict[str, dict[str, object]] = {}
         self._result_expanded = False
 
@@ -968,7 +969,7 @@ class OrderDetailPage(QWidget):
             zodiac_label.setText(get_zodiac(number, year=draw.draw_date.year))
 
     def _clear_result_panels(self) -> None:
-        empty = "请选择订单查看结算摘要。"
+        empty = "请选择订单查看结算摘要与结算明细。"
         self._macau_result.setPlainText(empty)
         self._hong_kong_result.setPlainText(empty)
         self._combined_result.setPlainText(empty)
@@ -987,18 +988,21 @@ class OrderDetailPage(QWidget):
         if lookup_error:
             summary = f"结算摘要读取失败：{lookup_error}"
         elif detail.status != ORDER_STATUS_SETTLED:
-            summary = "当前订单未结算，暂无兑奖结果。"
+            preview_snapshot = self._preview_snapshots.get(detail.id)
+            if preview_snapshot is None:
+                summary = self._empty_settlement_detail_message()
+            else:
+                summary = self._build_preview_detail_text(preview_snapshot)
         elif record is None:
             summary = "该订单为历史已结算订单，但暂无结算快照记录。"
         else:
-            item_summary = self._snapshot_item_summary(record.result_snapshot)
             summary = (
                 f"订单 ID：{record.order_id}\n"
                 f"地区：{record.region}    期号：{record.issue_number}\n"
                 f"命中数：{record.hit_count}    未命中数：{record.miss_count}    "
                 f"不支持数：{record.unsupported_count}\n"
                 f"总明细数：{record.total_items}    总金额：{_money(record.total_amount)}\n"
-                f"简要明细摘要：{item_summary}"
+                f"{self._build_settlement_detail_text(record.result_snapshot)}"
             )
 
         self._macau_result.setPlainText("当前选中订单不属于澳门，未显示兑奖结果。")
@@ -1035,6 +1039,129 @@ class OrderDetailPage(QWidget):
         suffix = f"；另有 {len(summaries) - 3} 条" if len(summaries) > 3 else ""
         return "；".join(visible) + suffix
 
+    def _empty_settlement_detail_message(self) -> str:
+        return (
+            "当前订单暂无结算明细，请先进行结算预览。\n\n"
+            "当前仅展示命中 / 未中 / 不支持判断。\n"
+            "当前未计算赔付金额、余额、返水、佣金。\n"
+            "复杂玩法规则以当前 settlement_rules.md 为准。"
+        )
+
+    def _build_preview_detail_text(self, snapshot: dict[str, object]) -> str:
+        return "结算预览明细（未正式结算）\n" + self._build_settlement_detail_text(snapshot)
+
+    def _build_settlement_detail_text(self, snapshot: object) -> str:
+        if not isinstance(snapshot, dict):
+            return "结算明细：快照数据为空或格式不完整"
+        items = snapshot.get("items")
+        if not isinstance(items, list) or not items:
+            return "结算明细：快照数据为空或格式不完整"
+
+        lines = [
+            "结算明细：",
+            "当前仅展示命中 / 未中 / 不支持判断。",
+            "当前未计算赔付金额、余额、返水、佣金。",
+            "复杂玩法规则以当前 settlement_rules.md 为准。",
+        ]
+        for index, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                lines.append(f"{index}. 快照明细格式不完整")
+                continue
+            result_text = self._settlement_item_result_text(item)
+            reference = self._settlement_item_reference_text(item)
+            reason = _dash(item.get("reason"))
+            unsupported_reason = _dash(item.get("unsupported_reason"))
+            lines.extend(
+                [
+                    (
+                        f"{index}. 投注类型：{_dash(item.get('bet_type'))}    "
+                        f"投注内容：{_dash(item.get('selection'))}    "
+                        f"金额：{_dash(item.get('amount'))}    结果：{result_text}"
+                    ),
+                    f"   开奖参考：{reference}",
+                    f"   命中 / 未中说明：{reason}",
+                    f"   不支持原因：{unsupported_reason}",
+                ]
+            )
+        return "\n".join(lines)
+
+    def _settlement_item_result_text(self, item: dict[str, object]) -> str:
+        if item.get("is_supported") is False:
+            return "不支持"
+        if item.get("is_winner") is True:
+            return "命中"
+        if item.get("is_winner") is False:
+            return "未中"
+        return "状态未知"
+
+    def _settlement_item_reference_text(self, item: dict[str, object]) -> str:
+        parts: list[str] = []
+        self._append_reference(parts, "特码号码", item.get("draw_special_number"))
+        self._append_reference(parts, "特码生肖", item.get("draw_special_zodiac"))
+        self._append_reference(parts, "正码", item.get("draw_regular_numbers"))
+        self._append_reference(parts, "全部号码", item.get("draw_numbers"))
+        self._append_reference(parts, "开奖号尾数", item.get("draw_tails"))
+        self._append_reference(parts, "投注生肖", item.get("selected_zodiacs"))
+        self._append_reference(parts, "命中生肖", item.get("matched_zodiac"))
+        self._append_reference(parts, "投注尾数", item.get("selected_tails"))
+        self._append_reference(parts, "命中尾数", item.get("matched_tails"))
+        self._append_reference(parts, "投注号码", item.get("selected_numbers"))
+        self._append_reference(parts, "出现号码", item.get("hit_numbers"))
+        self._append_reference(parts, "命中号码", item.get("matched_numbers"))
+        self._append_reference(parts, "特码波色", item.get("draw_special_wave"))
+        self._append_reference(parts, "特码单双", item.get("draw_special_odd_even"))
+        self._append_reference(parts, "特码大小", item.get("draw_special_big_small"))
+        self._append_reference(parts, "投注半波", item.get("selected_halfwaves"))
+        self._append_reference(parts, "命中半波", item.get("matched_halfwave"))
+        self._append_reference(parts, "命中号码", item.get("matched_number"))
+        return "；".join(parts) if parts else "—"
+
+    def _append_reference(self, parts: list[str], label: str, value: object | None) -> None:
+        text = self._format_reference_value(value)
+        if text:
+            parts.append(f"{label}={text}")
+
+    def _format_reference_value(self, value: object | None) -> str:
+        if value in (None, "", (), [], {}):
+            return ""
+        if isinstance(value, (list, tuple)):
+            return ",".join(str(item) for item in value)
+        return str(value)
+
+    def _preview_to_snapshot(self, preview: OrderSettlementPreview) -> dict[str, object]:
+        return {
+            "items": [
+                {
+                    "bet_type": item.bet_type,
+                    "selection": item.selection,
+                    "amount": _money(item.amount),
+                    "is_supported": item.is_supported,
+                    "is_winner": item.is_winner,
+                    "matched_number": item.matched_number,
+                    "reason": item.reason,
+                    "draw_special_number": item.draw_special_number,
+                    "draw_special_zodiac": item.draw_special_zodiac,
+                    "draw_numbers": list(item.draw_numbers),
+                    "draw_tails": list(item.draw_tails),
+                    "draw_regular_numbers": list(item.draw_regular_numbers),
+                    "selected_zodiacs": list(item.selected_zodiacs),
+                    "matched_zodiac": item.matched_zodiac,
+                    "selected_tails": list(item.selected_tails),
+                    "matched_tails": list(item.matched_tails),
+                    "selected_numbers": list(item.selected_numbers),
+                    "hit_numbers": list(item.hit_numbers),
+                    "matched_numbers": list(item.matched_numbers),
+                    "draw_special_wave": item.draw_special_wave,
+                    "draw_special_odd_even": item.draw_special_odd_even,
+                    "draw_special_big_small": item.draw_special_big_small,
+                    "selected_halfwaves": list(item.selected_halfwaves),
+                    "matched_halfwave": item.matched_halfwave,
+                    "unsupported_reason": item.unsupported_reason,
+                }
+                for item in preview.results
+            ]
+        }
+
     def _on_settlement_preview(self) -> None:
         if self._selected_order_id is None:
             self._status_label.setText("请先选择订单")
@@ -1050,6 +1177,14 @@ class OrderDetailPage(QWidget):
             QMessageBox.warning(self, "结算预览", "订单不存在或已被删除。")
             return
         dialog.exec()
+        preview = getattr(dialog, "_current_preview", None)
+        if isinstance(preview, OrderSettlementPreview):
+            self._preview_snapshots[self._selected_order_id] = self._preview_to_snapshot(preview)
+        if dialog.settlement_committed():
+            self.reload_data()
+        detail = self._order_service.get_order(self._selected_order_id)
+        if detail is not None:
+            self._update_result_panels(detail)
 
     def _on_void_order(self) -> None:
         if self._selected_order_id is None:

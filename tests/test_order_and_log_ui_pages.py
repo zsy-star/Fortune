@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication
 from models import Order, SettlementRecord
 from schemas.draw_schema import LotteryDrawCreate
 from schemas.order_schema import OrderCreate, OrderItemCreate
+from schemas.settlement_schema import ItemSettlementResult, OrderSettlementPreview
 from services.draw_service import DrawService
 from services.log_service import LogService
 from services.order_service import OrderService
@@ -360,8 +361,8 @@ def test_order_detail_unsettled_order_keeps_amount_unavailable(session_factory) 
     row = next(row for row in range(page._table.rowCount()) if page._table.item(row, 6).text() == order.order_no)
     assert page._table.item(row, 9).text() == "—"
     select_order_row(page, order.order_no)
-    assert page._macau_result.toPlainText() == "当前订单未结算，暂无兑奖结果。"
-    assert page._combined_result.toPlainText() == "当前订单未结算，暂无兑奖结果。"
+    assert "当前订单暂无结算明细，请先进行结算预览" in page._macau_result.toPlainText()
+    assert "当前仅展示命中 / 未中 / 不支持判断" in page._combined_result.toPlainText()
 
 
 def test_order_detail_uses_persisted_counts_for_winning_statuses(session_factory) -> None:
@@ -543,10 +544,260 @@ def test_order_detail_selected_settlement_summary_uses_snapshot(session_factory)
     assert "不支持数：0" in macau_text
     assert "总明细数：2" in macau_text
     assert "总金额：30.00" in macau_text
-    assert "特码/01：命中" in macau_text
-    assert "特码/02：未中" in macau_text
+    assert "结算明细：" in macau_text
+    assert "投注类型：特码" in macau_text
+    assert "投注内容：01" in macau_text
+    assert "金额：10.00" in macau_text
+    assert "结果：命中" in macau_text
+    assert "投注内容：02" in macau_text
+    assert "结果：未中" in macau_text
+    assert "特码号码=01" in macau_text
+    assert "命中 / 未中说明：" in macau_text
+    assert "当前未计算赔付金额、余额、返水、佣金" in macau_text
     assert "订单 ID" not in page._hong_kong_result.toPlainText()
     assert page._combined_result.toPlainText() == macau_text
+
+
+def test_order_detail_snapshot_displays_unsupported_reason(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    order = create_single_item_order(service, selection="01", customer="不支持展示")
+    draw = create_settlement_draw(session_factory)
+    SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+    with session_factory() as session:
+        record = session.query(SettlementRecord).filter_by(order_id=order.id).one()
+        record.unsupported_count = 1
+        record.hit_count = 0
+        record.miss_count = 0
+        record.result_snapshot = {
+            "items": [
+                {
+                    "bet_type": "未知玩法",
+                    "selection": "X",
+                    "amount": "10.00",
+                    "is_supported": False,
+                    "is_winner": None,
+                    "reason": "未知或未实现玩法：未知玩法",
+                    "unsupported_reason": "未知或未实现玩法：未知玩法",
+                }
+            ]
+        }
+        session.commit()
+
+    page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
+    select_order_row(page, order.order_no)
+    text = page._macau_result.toPlainText()
+
+    assert "结果：不支持" in text
+    assert "不支持原因：未知或未实现玩法：未知玩法" in text
+
+
+def test_order_detail_snapshot_displays_complex_reference_fields(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    order = create_order(service, customer="复杂快照")
+    draw = create_settlement_draw(session_factory)
+    SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+    with session_factory() as session:
+        record = session.query(SettlementRecord).filter_by(order_id=order.id).one()
+        record.hit_count = 4
+        record.miss_count = 1
+        record.total_items = 5
+        record.result_snapshot = {
+            "items": [
+                {
+                    "bet_type": "连肖",
+                    "selection": "马,蛇",
+                    "amount": "10.00",
+                    "is_supported": True,
+                    "is_winner": True,
+                    "reason": "特码生肖为马，投注生肖列表包含马",
+                    "draw_special_zodiac": "马",
+                    "selected_zodiacs": ["马", "蛇"],
+                    "matched_zodiac": "马",
+                },
+                {
+                    "bet_type": "连尾",
+                    "selection": "1,2",
+                    "amount": "10.00",
+                    "is_supported": True,
+                    "is_winner": True,
+                    "reason": "投注尾数全部出现",
+                    "draw_numbers": ["01", "12", "23", "34", "45", "06", "19"],
+                    "draw_tails": ["1", "2", "3", "4", "5", "6", "9"],
+                    "selected_tails": ["1", "2"],
+                    "matched_tails": ["1", "2"],
+                },
+                {
+                    "bet_type": "不中",
+                    "selection": "08,09",
+                    "amount": "10.00",
+                    "is_supported": True,
+                    "is_winner": True,
+                    "reason": "投注号码均未出现",
+                    "selected_numbers": ["08", "09"],
+                    "hit_numbers": [],
+                },
+                {
+                    "bet_type": "平码",
+                    "selection": "03",
+                    "amount": "10.00",
+                    "is_supported": True,
+                    "is_winner": True,
+                    "reason": "平码命中正码 03",
+                    "draw_regular_numbers": ["01", "02", "03", "04", "05", "06"],
+                    "draw_special_number": "07",
+                    "selected_numbers": ["03"],
+                    "matched_numbers": ["03"],
+                },
+                {
+                    "bet_type": "包半波",
+                    "selection": "红单,蓝大",
+                    "amount": "10.00",
+                    "is_supported": True,
+                    "is_winner": False,
+                    "reason": "包半波未命中",
+                    "draw_special_wave": "红波",
+                    "draw_special_odd_even": "单",
+                    "draw_special_big_small": "小",
+                    "selected_halfwaves": ["红单", "蓝大"],
+                    "matched_halfwave": "红单",
+                },
+            ]
+        }
+        session.commit()
+
+    page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
+    select_order_row(page, order.order_no)
+    text = page._macau_result.toPlainText()
+
+    assert "投注生肖=马,蛇" in text
+    assert "命中生肖=马" in text
+    assert "开奖号尾数=1,2,3,4,5,6,9" in text
+    assert "投注尾数=1,2" in text
+    assert "命中尾数=1,2" in text
+    assert "投注号码=08,09" in text
+    assert "正码=01,02,03,04,05,06" in text
+    assert "命中号码=03" in text
+    assert "特码波色=红波" in text
+    assert "特码单双=单" in text
+    assert "特码大小=小" in text
+    assert "投注半波=红单,蓝大" in text
+    assert "命中半波=红单" in text
+    assert "结果：未中" in text
+
+
+def test_order_detail_missing_optional_snapshot_fields_does_not_crash(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    order = create_single_item_order(service, selection="01", customer="少字段快照")
+    draw = create_settlement_draw(session_factory)
+    SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+    with session_factory() as session:
+        record = session.query(SettlementRecord).filter_by(order_id=order.id).one()
+        record.result_snapshot = {
+            "items": [
+                {
+                    "bet_type": "特码",
+                    "selection": "01",
+                    "is_supported": True,
+                    "is_winner": True,
+                }
+            ]
+        }
+        session.commit()
+
+    page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
+    select_order_row(page, order.order_no)
+    text = page._macau_result.toPlainText()
+
+    assert "投注类型：特码" in text
+    assert "结果：命中" in text
+    assert "金额：—" in text
+    assert "命中 / 未中说明：—" in text
+
+
+def test_order_detail_shows_preview_detail_after_preview_dialog(session_factory, monkeypatch) -> None:
+    app()
+    service = OrderService(session_factory)
+    order = create_single_item_order(service, selection="01", customer="预览展示")
+    page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
+    select_order_row(page, order.order_no)
+    preview = OrderSettlementPreview(
+        order_id=order.id,
+        order_no=order.order_no,
+        region="澳门",
+        issue_number="PREVIEW-1",
+        draw_date=date(2026, 6, 24),
+        regular_numbers=["02", "03", "04", "05", "06", "07"],
+        special_number="01",
+        total_items=1,
+        supported_items=1,
+        unsupported_items=0,
+        winning_items=1,
+        losing_items=0,
+        results=[
+            ItemSettlementResult(
+                order_item_id=1,
+                bet_type="特码",
+                normalized_bet_type="special_number",
+                selection="01",
+                amount=Decimal("10.00"),
+                is_supported=True,
+                is_winner=True,
+                matched_number="01",
+                reason="特码 01 命中号码 01",
+                draw_special_number="01",
+                draw_special_zodiac="马",
+            )
+        ],
+    )
+
+    class FakePreviewDialog:
+        def __init__(self, *args, **kwargs):
+            self._current_preview = preview
+
+        def is_valid(self):
+            return True
+
+        def exec(self):
+            return None
+
+        def settlement_committed(self):
+            return False
+
+    monkeypatch.setattr("ui.pages.order_detail_page.SettlementPreviewDialog", FakePreviewDialog)
+
+    page._on_settlement_preview()
+
+    text = page._macau_result.toPlainText()
+    assert "结算预览明细（未正式结算）" in text
+    assert "结果：命中" in text
+    assert "特码号码=01" in text
+    assert service.get_order(order.id).status == "active"
+
+
+def test_order_detail_settled_snapshot_display_does_not_recalculate_or_modify_order(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    order = create_single_item_order(service, selection="01", customer="只读快照")
+    draw = create_settlement_draw(session_factory)
+    SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+    settlement_service = SettlementService(session_factory)
+
+    with patch.object(settlement_service, "preview_order", side_effect=AssertionError("should not preview")):
+        page = OrderDetailPage(
+            order_service=service,
+            log_service=LogService(session_factory),
+            settlement_service=settlement_service,
+        )
+        select_order_row(page, order.order_no)
+
+    after = service.get_order(order.id)
+    assert after.status == "settled"
+    assert "结算明细：" in page._macau_result.toPlainText()
+    assert "payout" not in page._macau_result.toPlainText().lower()
+    assert "balance" not in page._macau_result.toPlainText().lower()
 
 
 def test_order_detail_historical_settled_order_without_record(session_factory) -> None:
