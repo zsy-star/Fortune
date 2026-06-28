@@ -3,14 +3,19 @@ from __future__ import annotations
 import os
 from decimal import Decimal
 
-from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton
+from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QMessageBox, QPushButton
 from sqlalchemy import func, select
 
-from models import Order
+from models import AdjustmentRecord, OperationLog, Order, SettlementRecord
+from schemas.adjustment_record_schema import AdjustmentRecordCreate
 from schemas.order_schema import OrderCreate, OrderItemCreate
+from services.adjustment_record_service import AdjustmentRecordService
 from services.order_service import OrderService
+from ui.app_events import app_events
+import ui.dialogs.adjustment_record_dialog as adjustment_dialog_module
 import ui.pages.lianxiao_order_page as lianxiao_module
 import ui.pages.special_order_page as special_module
+from ui.dialogs.adjustment_record_dialog import AdjustmentRecordDialog
 from ui.pages.lianxiao_order_page import LianxiaoOrderPage
 from ui.pages.special_order_page import SpecialOrderPage
 
@@ -47,6 +52,16 @@ def count_orders(session_factory) -> int:
         return int(session.scalar(select(func.count(Order.id))) or 0)
 
 
+def count_adjustment_records(session_factory) -> int:
+    with session_factory() as session:
+        return int(session.scalar(select(func.count(AdjustmentRecord.id))) or 0)
+
+
+def count_settlement_records(session_factory) -> int:
+    with session_factory() as session:
+        return int(session.scalar(select(func.count(SettlementRecord.id))) or 0)
+
+
 def test_special_order_page_creates_and_shows_empty_state(session_factory) -> None:
     app()
     page = SpecialOrderPage(order_service=OrderService(session_factory))
@@ -75,12 +90,23 @@ def test_special_order_page_reads_existing_special_order_summary(session_factory
     assert "特码总额：25.00" in page._lbl_special_total.text()
 
 
-def test_special_order_page_low_and_high_risk_buttons_are_in_memory_only(session_factory) -> None:
+def test_special_order_page_saves_adjustment_record_and_keeps_orders_unchanged(
+    session_factory,
+    monkeypatch,
+) -> None:
     app()
     service = OrderService(session_factory)
     create_order(service, selection="01", amount="11")
-    before = count_orders(session_factory)
+    before_orders = count_orders(session_factory)
+    before_settlements = count_settlement_records(session_factory)
     page = SpecialOrderPage(order_service=service)
+    emitted = []
+    app_events.logs_changed.connect(lambda: emitted.append("logs"))
+    monkeypatch.setattr(
+        special_module.QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
 
     page._on_round_to_tens()
     assert page._adjust_edits["01"].text() == "9.00"
@@ -88,14 +114,39 @@ def test_special_order_page_low_and_high_risk_buttons_are_in_memory_only(session
     page._on_reset_all_data()
     page._on_special_settlement()
     page._on_open_extension()
-    page._on_adjust_records()
-    assert count_orders(session_factory) == before
+    assert count_orders(session_factory) == before_orders
+    assert count_settlement_records(session_factory) == before_settlements
+    assert count_adjustment_records(session_factory) == 1
+    assert emitted == ["logs"]
+    with session_factory() as session:
+        record = session.scalars(select(AdjustmentRecord)).one()
+        assert record.adjustment_type == "special"
+        assert record.region == "全部"
+        assert record.original_total == "11.00"
+        assert record.adjustment_total == "9.00"
+        assert record.after_total == "20.00"
+        assert record.item_count == 1
+        assert record.record_snapshot["adjusted_numbers"][0]["number"] == "01"
+        assert session.scalar(
+            select(func.count(OperationLog.id)).where(OperationLog.module == "adjustment")
+        ) == 1
     output = page._output.toPlainText()
-    assert "页面内临时调整" in output
+    assert "已保存特码调单记录 ID" in output
     assert "数据库未被修改" in output
     assert "不计算赔付" in output
     assert "打开拓展" in output
-    assert "调整记录" in output
+
+
+def test_special_order_page_does_not_save_when_no_adjustment(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    create_order(service, selection="01", amount="11")
+    page = SpecialOrderPage(order_service=service)
+
+    page._on_save_adjustment()
+
+    assert count_adjustment_records(session_factory) == 0
+    assert "当前没有调整内容，无需保存" in page._output.toPlainText()
 
 
 def test_special_order_page_export_text_and_buttons(session_factory) -> None:
@@ -112,7 +163,8 @@ def test_special_order_page_export_text_and_buttons(session_factory) -> None:
     assert "当前筛选区域：全部" in text
     assert "号码\t下注数\t盈亏\tID" in text
     assert "号码\t原金额\t调整\t总计" in text
-    assert "未写数据库" in text
+    assert "保存调整仅写入调单记录" in text
+    assert "不修改订单" in text
 
 
 def test_special_order_page_copy_and_export_summary_are_readonly(
@@ -181,15 +233,18 @@ def test_lianxiao_order_page_creates_and_shows_empty_state(session_factory) -> N
     assert "调整后数据" in labels
     assert not page.findChildren(QLineEdit)
     button_texts = {button.text() for button in page.findChildren(QPushButton)}
-    assert "保存本次调整" not in button_texts
+    assert "保存本次调整" in button_texts
+    assert "调整记录" in button_texts
     assert "调整成为 10 的倍数" not in button_texts
     assert "清空当前调整" not in button_texts
     assert "连肖兑奖" not in button_texts
+    assert page._btn_save_adjustment.text() == "保存本次调整"
     assert page._btn_print.text() == "打印连肖调整"
     assert page._btn_copy_summary.text() == "复制当前汇总"
     assert page._btn_export_summary.text() == "导出当前汇总"
     assert page._btn_clear_output.text() == "清空输出框"
     assert page._btn_reset.text() == "重置调整"
+    assert page._btn_adjust_records.text() == "调整记录"
     assert "暂无数据" in page._output.toPlainText()
 
 
@@ -227,6 +282,45 @@ def test_lianxiao_order_page_actions_are_readonly(session_factory) -> None:
     assert "数据库订单未被修改" in output
 
 
+def test_lianxiao_order_page_saves_current_snapshot_record(
+    session_factory,
+    monkeypatch,
+) -> None:
+    app()
+    service = OrderService(session_factory)
+    create_order(service, bet_type="连肖", selection="牛,马", amount="100")
+    before_orders = count_orders(session_factory)
+    before_settlements = count_settlement_records(session_factory)
+    page = LianxiaoOrderPage(order_service=service)
+    emitted = []
+    app_events.logs_changed.connect(lambda: emitted.append("logs"))
+    monkeypatch.setattr(
+        lianxiao_module.QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+
+    page._on_save_adjustment()
+
+    assert count_orders(session_factory) == before_orders
+    assert count_settlement_records(session_factory) == before_settlements
+    assert count_adjustment_records(session_factory) == 1
+    assert emitted == ["logs"]
+    with session_factory() as session:
+        record = session.scalars(select(AdjustmentRecord)).one()
+        assert record.adjustment_type == "lianxiao"
+        assert record.region == "全部"
+        assert record.original_total == "100.00"
+        assert record.adjustment_total == "0.00"
+        assert record.after_total == "100.00"
+        assert record.item_count == 1
+        assert record.record_snapshot["summary_table"][0]["group"] == "牛,马"
+        assert session.scalar(
+            select(func.count(OperationLog.id)).where(OperationLog.module == "adjustment")
+        ) == 1
+    assert "已保存连肖调单记录 ID" in page._output.toPlainText()
+
+
 def test_lianxiao_order_page_export_text_and_copy_export_behaviors(
     session_factory, tmp_path, monkeypatch
 ) -> None:
@@ -241,7 +335,8 @@ def test_lianxiao_order_page_export_text_and_copy_export_behaviors(
     assert "当前筛选区域：全部" in text
     assert "生肖组\t下注数\t盈亏" in text
     assert "第 1 列表" in text
-    assert "未写数据库" in text
+    assert "保存调整仅写入调单记录" in text
+    assert "不修改订单" in text
 
     page._btn_copy_summary.click()
     assert "连肖调单汇总" in QApplication.clipboard().text()
@@ -273,3 +368,70 @@ def test_lianxiao_order_page_export_text_and_copy_export_behaviors(
     page._on_export_summary()
     assert "导出连肖调单汇总失败" in page._output.toPlainText()
     assert count_orders(session_factory) == before
+
+
+def test_adjustment_record_dialog_lists_details_copy_export_and_print(
+    session_factory,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    app()
+    service = AdjustmentRecordService(session_factory)
+    save_result = service.create_record(
+        AdjustmentRecordCreate(
+            adjustment_type="special",
+            region="澳门",
+            source_filter={"region": "澳门"},
+            original_total="10.00",
+            adjustment_total="5.00",
+            after_total="15.00",
+            item_count=1,
+            positive_count=1,
+            negative_count=0,
+            record_snapshot={
+                "adjusted_numbers": [
+                    {
+                        "number": "01",
+                        "original_amount": "10.00",
+                        "adjustment_amount": "5.00",
+                        "after_amount": "15.00",
+                    }
+                ]
+            },
+            summary_snapshot={"adjusted_stats": {"adjustment_total": "调整金额：5.00"}},
+            note="测试记录",
+        )
+    )
+
+    dialog = AdjustmentRecordDialog(default_type="special", service=service)
+
+    assert dialog._table.rowCount() == 1
+    assert dialog._table.item(0, 0).text() == str(save_result.record.id)
+    assert "特码调单记录" in dialog._detail.toPlainText()
+    assert "number=01" in dialog._detail.toPlainText()
+
+    dialog._on_copy_detail()
+    assert "特码调单记录" in QApplication.clipboard().text()
+    assert "已复制记录详情" in dialog._status_label.text()
+
+    monkeypatch.setattr(
+        adjustment_dialog_module.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: ("", ""),
+    )
+    dialog._on_export_detail()
+    assert "已取消导出" in dialog._status_label.text()
+
+    export_path = tmp_path / "adjustment_record.txt"
+    monkeypatch.setattr(
+        adjustment_dialog_module.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(export_path), "Text Files (*.txt)"),
+    )
+    dialog._on_export_detail()
+    assert export_path.read_text(encoding="utf-8").startswith("特码调单记录")
+    assert "已导出记录详情" in dialog._status_label.text()
+
+    dialog._on_print_detail()
+    assert "请复制或导出后打印" in dialog._detail.toPlainText()
+    assert "已生成打印文本" in dialog._status_label.text()

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QPushButton,
     QPlainTextEdit,
     QRadioButton,
@@ -24,7 +25,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from schemas.adjustment_record_schema import AdjustmentRecordCreate
+from services.adjustment_record_service import AdjustmentRecordService
 from services.order_service import OrderService
+from ui.app_events import app_events
+from ui.dialogs.adjustment_record_dialog import AdjustmentRecordDialog
 
 LIANXIAO_BET_TYPES = {"连肖", "多生肖", "复试连肖"}
 TABLE_HEADERS = ["生肖组", "下注数", "盈亏"]
@@ -47,9 +52,18 @@ class LianxiaoOrderPage(QWidget):
     布局恢复为传统连肖工作台：左侧总表 + 右侧四个并排连肖列表。
     """
 
-    def __init__(self, parent=None, order_service: OrderService | None = None):
+    def __init__(
+        self,
+        parent=None,
+        order_service: OrderService | None = None,
+        adjustment_record_service: AdjustmentRecordService | None = None,
+    ):
         super().__init__(parent)
         self._order_service = order_service or OrderService()
+        session_factory = getattr(self._order_service, "_session_factory", None)
+        self._adjustment_record_service = adjustment_record_service or (
+            AdjustmentRecordService(session_factory) if session_factory is not None else AdjustmentRecordService()
+        )
         self._summaries: list[LianxiaoSummary] = []
         self._tables: list[QTableWidget] = []
 
@@ -188,17 +202,21 @@ class LianxiaoOrderPage(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(0)
         actions = [
+            ("保存本次调整", self._on_save_adjustment),
             ("打印连肖调整", self._on_print_adjustment),
             ("复制当前汇总", self._on_copy_summary),
             ("导出当前汇总", self._on_export_summary),
             ("清空输出框", self._on_clear_output),
             ("重置调整", self._on_reset_adjustment),
+            ("调整记录", self._on_adjust_records),
         ]
         for text, handler in actions:
             button = QPushButton(text)
             button.clicked.connect(handler)
             row.addWidget(button, stretch=1)
-            if text == "打印连肖调整":
+            if text == "保存本次调整":
+                self._btn_save_adjustment = button
+            elif text == "打印连肖调整":
                 self._btn_print = button
             elif text == "复制当前汇总":
                 self._btn_copy_summary = button
@@ -208,6 +226,8 @@ class LianxiaoOrderPage(QWidget):
                 self._btn_clear_output = button
             elif text == "重置调整":
                 self._btn_reset = button
+            elif text == "调整记录":
+                self._btn_adjust_records = button
         return frame
 
     def reload_data(self) -> None:
@@ -354,9 +374,9 @@ class LianxiaoOrderPage(QWidget):
                 self._lbl_adjusted_max_loss.text(),
                 "",
                 "安全说明",
-                "当前为只读汇总",
-                "未写数据库",
-                "未保存正式调整",
+                "保存调整仅写入调单记录",
+                "不修改订单",
+                "不自动结算",
                 "未计算真实赔付",
             ]
         )
@@ -395,6 +415,102 @@ class LianxiaoOrderPage(QWidget):
 
     def _on_reset_adjustment(self) -> None:
         self._append_output("已重置当前页面临时调整；数据库订单未被修改。")
+
+    def _on_save_adjustment(self) -> None:
+        payload = self._build_adjustment_payload()
+        message = (
+            "确认保存本次连肖调单记录？\n\n"
+            f"地区：{payload.region}\n"
+            f"连肖组数量：{payload.item_count}\n"
+            f"连肖总额：{payload.original_total}\n\n"
+            "保存为调单记录，不修改订单，不自动结算。"
+        )
+        choice = QMessageBox.question(
+            self,
+            "保存本次调整",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if choice != QMessageBox.StandardButton.Yes:
+            self._append_output("已取消保存本次调整。")
+            return
+
+        try:
+            result = self._adjustment_record_service.create_record(payload)
+        except Exception as exc:
+            QMessageBox.warning(self, "保存本次调整", f"保存失败：{exc}")
+            self._append_output(f"保存本次调整失败：{exc}")
+            return
+        app_events.logs_changed.emit()
+        self._append_output(
+            f"已保存连肖调单记录 ID：{result.record.id}；"
+            f"操作日志 ID：{result.operation_log_id}。订单未被修改。"
+        )
+
+    def _on_adjust_records(self) -> None:
+        dialog = AdjustmentRecordDialog(
+            self,
+            default_type="lianxiao",
+            service=self._adjustment_record_service,
+        )
+        dialog.exec()
+        self._append_output("已关闭连肖调整记录窗口。")
+
+    def _table_rows_snapshot(self, table: QTableWidget) -> list[dict[str, str]]:
+        rows: list[dict[str, str]] = []
+        for row in range(table.rowCount()):
+            values = [
+                table.item(row, column).text() if table.item(row, column) is not None else ""
+                for column in range(table.columnCount())
+            ]
+            rows.append(
+                {
+                    "group": values[0] if len(values) > 0 else "",
+                    "amount": values[1] if len(values) > 1 else "0.00",
+                    "profit_loss": values[2] if len(values) > 2 else "0.00",
+                }
+            )
+        return rows
+
+    def _build_adjustment_payload(self) -> AdjustmentRecordCreate:
+        total = sum((summary.amount for summary in self._summaries), Decimal("0"))
+        return AdjustmentRecordCreate(
+            adjustment_type="lianxiao",
+            region=self._selected_region_label(),
+            source_filter={"region": self._selected_region_label()},
+            original_total=_money(total),
+            adjustment_total="0.00",
+            after_total=_money(total),
+            item_count=len(self._summaries),
+            positive_count=0,
+            negative_count=0,
+            record_snapshot={
+                "summary_table": self._table_rows_snapshot(self._summary_table),
+                "right_tables": [
+                    {
+                        "table": index,
+                        "rows": self._table_rows_snapshot(table),
+                    }
+                    for index, table in enumerate(self._tables, start=1)
+                ],
+                "temporary_adjustments": [],
+            },
+            summary_snapshot={
+                "original_stats": {
+                    "lianxiao_total": self._lbl_lianxiao_total.text(),
+                    "max_profit": self._lbl_max_profit.text(),
+                    "max_loss": self._lbl_max_loss.text(),
+                },
+                "adjusted_stats": {
+                    "eat_total": self._lbl_eat_total.text(),
+                    "adjustment_total": self._lbl_adjustment_total.text(),
+                    "adjusted_max_profit": self._lbl_adjusted_max_profit.text(),
+                    "adjusted_max_loss": self._lbl_adjusted_max_loss.text(),
+                },
+            },
+            note="连肖调单保存，仅记录汇总快照，不修改订单、不自动结算。",
+        )
 
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(

@@ -69,15 +69,18 @@ def test_lianxiao_order_page_first_stage_is_readonly(session_factory) -> None:
     assert not page.findChildren(QLineEdit)
     assert "暂无数据" in page._output.toPlainText()
     button_texts = {button.text() for button in page.findChildren(QPushButton)}
-    assert "保存本次调整" not in button_texts
+    assert "保存本次调整" in button_texts
+    assert "调整记录" in button_texts
     assert "调整成为 10 的倍数" not in button_texts
     assert "清空当前调整" not in button_texts
     assert "连肖兑奖" not in button_texts
+    assert page._btn_save_adjustment.isEnabled()
     assert page._btn_print.isEnabled()
     assert page._btn_copy_summary.isEnabled()
     assert page._btn_export_summary.isEnabled()
     assert page._btn_reset.isEnabled()
     assert page._btn_clear_output.isEnabled()
+    assert page._btn_adjust_records.isEnabled()
     page._on_print_adjustment()
     page._on_reset_adjustment()
     assert "当前版本未调用打印机" in page._output.toPlainText()
@@ -90,7 +93,7 @@ def test_special_order_page_is_tema_readonly_first_stage(session_factory) -> Non
     labels = "\n".join(_texts(page, QLabel))
 
     assert "特码调单" in labels
-    assert "第一阶段只读汇总" in labels
+    assert "不修改订单" in labels
     assert "连码调单" not in labels
     assert page._summary_table.rowCount() == 49
     assert len(page._adjust_edits) == 49
@@ -103,7 +106,7 @@ def test_special_order_page_is_tema_readonly_first_stage(session_factory) -> Non
     page._on_reset_all_data()
     page._on_special_settlement()
     output = page._output.toPlainText()
-    assert "调整保存功能后续开放" in output
+    assert "当前没有调整内容，无需保存" in output
     assert "高风险功能暂未开放" in output
     assert "不计算赔付" in output
 

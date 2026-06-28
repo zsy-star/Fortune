@@ -1,6 +1,7 @@
 """ORM 模型包：导入子模块以注册元数据。"""
 
 from models.base import Base
+from models.adjustment_record import AdjustmentRecord
 from models.app_meta import AppMeta
 from models.lottery_draw import LotteryDraw
 from models.operation_log import OperationLog
@@ -10,6 +11,7 @@ from models.settings import DeclarerSetting, OddsRebateItem, OddsRebatePlan
 
 __all__ = [
     "Base",
+    "AdjustmentRecord",
     "AppMeta",
     "LotteryDraw",
     "OperationLog",

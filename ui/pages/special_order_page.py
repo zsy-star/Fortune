@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QPlainTextEdit,
     QRadioButton,
@@ -30,7 +31,11 @@ from PySide6.QtWidgets import (
 from domain.color_rules import get_wave_color
 from domain.number_rules import normalize_number
 from domain.zodiac_rules import get_zodiac
+from schemas.adjustment_record_schema import AdjustmentRecordCreate
+from services.adjustment_record_service import AdjustmentRecordService
 from services.order_service import OrderService
+from ui.app_events import app_events
+from ui.dialogs.adjustment_record_dialog import AdjustmentRecordDialog
 
 SPECIAL_BET_TYPES = {"特码", "号码", "单号投注", "纯数字"}
 WAVE_TEXT_COLORS = {
@@ -70,9 +75,18 @@ class SpecialOrderPage(QWidget):
     第一阶段只读取现有订单做汇总，不保存调整、不写数据库。
     """
 
-    def __init__(self, parent=None, order_service: OrderService | None = None):
+    def __init__(
+        self,
+        parent=None,
+        order_service: OrderService | None = None,
+        adjustment_record_service: AdjustmentRecordService | None = None,
+    ):
         super().__init__(parent)
         self._order_service = order_service or OrderService()
+        session_factory = getattr(self._order_service, "_session_factory", None)
+        self._adjustment_record_service = adjustment_record_service or (
+            AdjustmentRecordService(session_factory) if session_factory is not None else AdjustmentRecordService()
+        )
         self._number_rows: dict[str, NumberSummary] = {}
         self._number_labels: dict[str, QLabel] = {}
         self._original_edits: dict[str, QLineEdit] = {}
@@ -109,7 +123,7 @@ class SpecialOrderPage(QWidget):
         frame.setObjectName("topFilter")
         row = QHBoxLayout(frame)
         row.setContentsMargins(8, 4, 8, 4)
-        row.addWidget(QLabel("特码调单（第一阶段只读汇总，不保存订单调整）"))
+        row.addWidget(QLabel("特码调单（保存调单记录，不修改订单、不自动结算）"))
         row.addStretch(1)
         self._region_group = QButtonGroup(self)
         specs = [("全部", None, True), ("只看澳门", "澳门", False), ("只看香港", "香港", False)]
@@ -420,9 +434,9 @@ class SpecialOrderPage(QWidget):
                 self._lbl_adjustment_total.text(),
                 "",
                 "安全说明",
-                "当前为页面临时汇总",
-                "未写数据库",
-                "未保存正式调整",
+                "保存调整仅写入调单记录",
+                "不修改订单",
+                "不自动结算",
                 "未计算真实赔付",
             ]
         )
@@ -451,7 +465,42 @@ class SpecialOrderPage(QWidget):
         self._append_output(f"已导出特码调单汇总：{path}")
 
     def _on_save_adjustment(self) -> None:
-        self._append_output("调整保存功能后续开放：当前仅支持页面内临时调整，不写数据库。")
+        payload = self._build_adjustment_payload()
+        if payload is None:
+            self._append_output("当前没有调整内容，无需保存。")
+            return
+
+        message = (
+            "确认保存本次特码调单记录？\n\n"
+            f"地区：{payload.region}\n"
+            f"调整号码数量：{payload.item_count}\n"
+            f"原金额合计：{payload.original_total}\n"
+            f"调整金额合计：{payload.adjustment_total}\n"
+            f"调整后合计：{payload.after_total}\n\n"
+            "保存为调单记录，不修改订单，不自动结算。"
+        )
+        choice = QMessageBox.question(
+            self,
+            "保存本次调整",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if choice != QMessageBox.StandardButton.Yes:
+            self._append_output("已取消保存本次调整。")
+            return
+
+        try:
+            result = self._adjustment_record_service.create_record(payload)
+        except Exception as exc:
+            QMessageBox.warning(self, "保存本次调整", f"保存失败：{exc}")
+            self._append_output(f"保存本次调整失败：{exc}")
+            return
+        app_events.logs_changed.emit()
+        self._append_output(
+            f"已保存特码调单记录 ID：{result.record.id}；"
+            f"操作日志 ID：{result.operation_log_id}。当前调整未清空，订单未被修改。"
+        )
 
     def _on_round_to_tens(self) -> None:
         changed = 0
@@ -481,7 +530,76 @@ class SpecialOrderPage(QWidget):
         self._append_output("打开拓展：第一阶段仅保留入口，暂不打开额外调单扩展。")
 
     def _on_adjust_records(self) -> None:
-        self._append_output("调整记录：当前仅有页面内临时调整记录，未保存到数据库。")
+        dialog = AdjustmentRecordDialog(
+            self,
+            default_type="special",
+            service=self._adjustment_record_service,
+        )
+        dialog.exec()
+        self._append_output("已关闭特码调整记录窗口。")
+
+    def _build_adjustment_payload(self) -> AdjustmentRecordCreate | None:
+        details: list[dict[str, str]] = []
+        non_zero_details: list[dict[str, str]] = []
+        original_total = Decimal("0")
+        adjustment_total = Decimal("0")
+        after_total = Decimal("0")
+        positive_count = 0
+        negative_count = 0
+        for number in range(1, 50):
+            key = f"{number:02d}"
+            original = _decimal_from_text(self._original_edits[key].text())
+            adjustment = _decimal_from_text(self._adjust_edits[key].text())
+            after = original + adjustment
+            original_total += original
+            adjustment_total += adjustment
+            after_total += after
+            detail = {
+                "number": key,
+                "original_amount": _money(original),
+                "adjustment_amount": _money(adjustment),
+                "after_amount": _money(after),
+            }
+            details.append(detail)
+            if adjustment > 0:
+                positive_count += 1
+                non_zero_details.append(detail)
+            elif adjustment < 0:
+                negative_count += 1
+                non_zero_details.append(detail)
+
+        if not non_zero_details:
+            return None
+
+        return AdjustmentRecordCreate(
+            adjustment_type="special",
+            region=self._selected_region_label(),
+            source_filter={"region": self._selected_region_label()},
+            original_total=_money(original_total),
+            adjustment_total=_money(adjustment_total),
+            after_total=_money(after_total),
+            item_count=len(non_zero_details),
+            positive_count=positive_count,
+            negative_count=negative_count,
+            record_snapshot={
+                "all_numbers": details,
+                "adjusted_numbers": non_zero_details,
+            },
+            summary_snapshot={
+                "original_stats": {
+                    "special_total": self._lbl_special_total.text(),
+                    "max_profit": self._lbl_max_profit.text(),
+                    "max_loss": self._lbl_max_loss.text(),
+                    "profit_count": self._lbl_profit_count.text(),
+                    "loss_count": self._lbl_loss_count.text(),
+                },
+                "adjusted_stats": {
+                    "adjusted_total": self._lbl_adjusted_total.text(),
+                    "adjustment_total": self._lbl_adjustment_total.text(),
+                },
+            },
+            note="特码调单保存，仅记录调整快照，不修改订单、不自动结算。",
+        )
 
     def _number_zodiac(self, number: str) -> str:
         try:
