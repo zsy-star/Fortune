@@ -21,8 +21,21 @@ class ItemSettlementResult:
     reason: str
     draw_special_number: str | None = None
     draw_special_zodiac: str | None = None
+    draw_numbers: tuple[str, ...] = ()
+    draw_tails: tuple[str, ...] = ()
+    draw_regular_numbers: tuple[str, ...] = ()
     selected_zodiacs: tuple[str, ...] = ()
     matched_zodiac: str | None = None
+    selected_tails: tuple[str, ...] = ()
+    matched_tails: tuple[str, ...] = ()
+    selected_numbers: tuple[str, ...] = ()
+    hit_numbers: tuple[str, ...] = ()
+    matched_numbers: tuple[str, ...] = ()
+    draw_special_wave: str | None = None
+    draw_special_odd_even: str | None = None
+    draw_special_big_small: str | None = None
+    selected_halfwaves: tuple[str, ...] = ()
+    matched_halfwave: str | None = None
     unsupported_reason: str | None = None
 
 

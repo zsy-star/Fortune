@@ -5,10 +5,15 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from domain.number_rules import normalize_number
+from domain.color_rules import get_wave_color
+from domain.number_rules import normalize_number, odd_even_label, size_label, tail_number
 from domain.zodiac_rules import get_zodiac
 from schemas.settlement_schema import ItemSettlementResult, OrderSettlementPreview
 from settlement.bet_normalizer import (
+    LINKED_TAIL,
+    NON_HIT_NUMBER,
+    PACKAGE_HALF_WAVE,
+    REGULAR_NUMBER,
     SPECIAL_COLOR,
     SPECIAL_ELEMENT,
     SPECIAL_HALF_WAVE,
@@ -21,6 +26,7 @@ from settlement.bet_normalizer import (
     SPECIAL_TAIL,
     SPECIAL_ZODIAC,
     SPECIAL_ZODIAC_GROUP,
+    SIX_SPECIAL_ZODIAC,
     BetTypeNormalizer,
 )
 from settlement.exceptions import InvalidDrawError, InvalidSelectionError, SettlementDataError, UnsupportedBetTypeError
@@ -29,7 +35,12 @@ from settlement.matchers import (
     match_element,
     match_half_color,
     match_head,
+    match_linked_tail,
+    match_non_hit_number,
+    match_package_half_wave,
     match_parity,
+    match_regular_number,
+    match_six_special_zodiac,
     match_size,
     match_special_number,
     match_sum_parity,
@@ -54,6 +65,11 @@ MATCHERS: dict[str, Matcher] = {
     SPECIAL_SUM_SIZE: match_sum_size,
     SPECIAL_ELEMENT: match_element,
     SPECIAL_ZODIAC_GROUP: match_zodiac_group,
+    LINKED_TAIL: match_linked_tail,
+    NON_HIT_NUMBER: match_non_hit_number,
+    SIX_SPECIAL_ZODIAC: match_six_special_zodiac,
+    REGULAR_NUMBER: match_regular_number,
+    PACKAGE_HALF_WAVE: match_package_half_wave,
 }
 
 
@@ -67,8 +83,10 @@ class SettlementEngine:
     def evaluate_item(self, order_item: Any, lottery_draw: Any) -> ItemSettlementResult:
         draw = self._validate_draw(lottery_draw)
         amount = self._item_amount(order_item)
+        draw_regular_numbers = tuple(draw["regular_numbers"])
         draw_special_number = draw["special_number"]
         draw_special_zodiac = get_zodiac(draw_special_number, year=self._zodiac_year)
+        common_draw_fields = self._draw_reference_fields(draw_regular_numbers, draw_special_number)
         try:
             normalized = self._normalizer.normalize(order_item.bet_type, order_item.selection)
         except (UnsupportedBetTypeError, InvalidSelectionError) as exc:
@@ -85,27 +103,40 @@ class SettlementEngine:
                 draw_special_number=draw_special_number,
                 draw_special_zodiac=draw_special_zodiac,
                 unsupported_reason=str(exc),
+                **common_draw_fields,
             )
 
         matcher = MATCHERS[normalized.normalized_bet_type]
-        if normalized.normalized_bet_type in {SPECIAL_ZODIAC, SPECIAL_ZODIAC_GROUP}:
+        if normalized.normalized_bet_type in {SPECIAL_ZODIAC, SPECIAL_ZODIAC_GROUP, SIX_SPECIAL_ZODIAC}:
             is_winner, matched_number, reason = matcher(
                 normalized.selection,
                 draw_special_number,
                 year=self._zodiac_year,
+            )
+        elif normalized.normalized_bet_type in {LINKED_TAIL, NON_HIT_NUMBER, REGULAR_NUMBER}:
+            is_winner, matched_number, reason = matcher(
+                normalized.selection,
+                list(draw_regular_numbers),
+                draw_special_number,
             )
         else:
             is_winner, matched_number, reason = matcher(normalized.selection, draw_special_number)
 
         selected_zodiacs = (
             tuple(token for token in normalized.selection.split(",") if token)
-            if normalized.normalized_bet_type == SPECIAL_ZODIAC_GROUP
+            if normalized.normalized_bet_type in {SPECIAL_ZODIAC_GROUP, SIX_SPECIAL_ZODIAC}
             else ()
         )
         matched_zodiac = (
             draw_special_zodiac
-            if normalized.normalized_bet_type == SPECIAL_ZODIAC_GROUP and is_winner
+            if normalized.normalized_bet_type in {SPECIAL_ZODIAC_GROUP, SIX_SPECIAL_ZODIAC} and is_winner
             else None
+        )
+        match_fields = self._match_reference_fields(
+            normalized.normalized_bet_type,
+            normalized.selection,
+            draw_regular_numbers,
+            draw_special_number,
         )
 
         return ItemSettlementResult(
@@ -122,6 +153,8 @@ class SettlementEngine:
             draw_special_zodiac=draw_special_zodiac,
             selected_zodiacs=selected_zodiacs,
             matched_zodiac=matched_zodiac,
+            **common_draw_fields,
+            **match_fields,
         )
 
     def evaluate_order(self, order: Any, lottery_draw: Any) -> OrderSettlementPreview:
@@ -185,3 +218,61 @@ class SettlementEngine:
         if not amount.is_finite() or amount <= 0:
             raise SettlementDataError(f"订单明细金额非法：{getattr(order_item, 'amount', None)!r}")
         return amount
+
+    def _draw_reference_fields(
+        self,
+        regular_numbers: tuple[str, ...],
+        special_number: str,
+    ) -> dict[str, Any]:
+        draw_numbers = (*regular_numbers, special_number)
+        return {
+            "draw_numbers": draw_numbers,
+            "draw_tails": tuple(str(tail_number(number)) for number in draw_numbers),
+            "draw_regular_numbers": regular_numbers,
+            "draw_special_wave": get_wave_color(special_number),
+            "draw_special_odd_even": odd_even_label(special_number),
+            "draw_special_big_small": size_label(special_number),
+        }
+
+    def _match_reference_fields(
+        self,
+        normalized_type: str,
+        selection: str,
+        regular_numbers: tuple[str, ...],
+        special_number: str,
+    ) -> dict[str, Any]:
+        draw_numbers = (*regular_numbers, special_number)
+        draw_tails = {str(tail_number(number)) for number in draw_numbers}
+        if normalized_type == LINKED_TAIL:
+            selected_tails = tuple(token for token in selection.split(",") if token)
+            return {
+                "selected_tails": selected_tails,
+                "matched_tails": tuple(tail for tail in selected_tails if tail in draw_tails),
+            }
+        if normalized_type == NON_HIT_NUMBER:
+            selected_numbers = tuple(token for token in selection.split(",") if token)
+            draw_set = set(draw_numbers)
+            return {
+                "selected_numbers": selected_numbers,
+                "hit_numbers": tuple(number for number in selected_numbers if number in draw_set),
+            }
+        if normalized_type == REGULAR_NUMBER:
+            selected_numbers = tuple(token for token in selection.split(",") if token)
+            regular_set = set(regular_numbers)
+            return {
+                "selected_numbers": selected_numbers,
+                "matched_numbers": tuple(number for number in selected_numbers if number in regular_set),
+            }
+        if normalized_type == PACKAGE_HALF_WAVE:
+            selected_halfwaves = tuple(token for token in selection.split(",") if token)
+            color = get_wave_color(special_number).removesuffix("波")
+            actual_halfwaves = {
+                f"{color}{odd_even_label(special_number)}",
+                f"{color}{size_label(special_number)}",
+            }
+            matched_halfwave = next((token for token in selected_halfwaves if token in actual_halfwaves), None)
+            return {
+                "selected_halfwaves": selected_halfwaves,
+                "matched_halfwave": matched_halfwave,
+            }
+        return {}
