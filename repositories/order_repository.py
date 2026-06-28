@@ -142,6 +142,16 @@ class OrderRepository:
         stmt = stmt.order_by(Order.created_at.desc(), Order.id.desc()).limit(limit).offset(offset)
         return list(self.session.scalars(stmt))
 
+    def list_for_analysis(
+        self,
+        *,
+        exclude_statuses: tuple[str, ...] | None = None,
+    ) -> list[Order]:
+        stmt: Select[tuple[Order]] = select(Order).options(selectinload(Order.items))
+        stmt = self._apply_filters(stmt, exclude_statuses=exclude_statuses)
+        stmt = stmt.order_by(Order.created_at.desc(), Order.id.desc())
+        return list(self.session.scalars(stmt))
+
     def _apply_settlement_ledger_filters(
         self,
         stmt,
