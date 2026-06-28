@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from core.database import SessionLocal
 from domain.bet_types import normalize_region
+from domain.zodiac_rules import get_zodiac
 from models import LotteryDraw, Order, SettlementRecord
 from repositories.settlement_record_repository import SettlementRecordRepository
 from schemas.settlement_schema import (
@@ -277,6 +278,7 @@ class SettlementService:
                 "draw_date": draw.draw_date.isoformat(),
                 "regular_numbers": list(draw.regular_numbers),
                 "special_number": draw.special_number,
+                "special_zodiac": get_zodiac(draw.special_number),
             },
             "settlement": {
                 "settled_at": settled_at.isoformat(sep=" "),
@@ -300,6 +302,11 @@ class SettlementService:
             "is_winner": item.is_winner,
             "matched_number": item.matched_number,
             "reason": item.reason,
+            "draw_special_number": item.draw_special_number,
+            "draw_special_zodiac": item.draw_special_zodiac,
+            "selected_zodiacs": list(item.selected_zodiacs),
+            "matched_zodiac": item.matched_zodiac,
+            "unsupported_reason": item.unsupported_reason,
         }
 
     def _to_ledger_result(self, record: SettlementRecord) -> SettlementLedgerResult:

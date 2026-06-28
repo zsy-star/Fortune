@@ -207,16 +207,16 @@ def test_preview_supported_winning_losing_and_unsupported(session_factory) -> No
     dialog._on_start_preview()
 
     assert dialog._lbl_total_items.text() == "3"
-    assert dialog._lbl_supported.text() == "2"
-    assert dialog._lbl_unsupported.text() == "1"
-    assert dialog._lbl_winning.text() == "1"
+    assert dialog._lbl_supported.text() == "3"
+    assert dialog._lbl_unsupported.text() == "0"
+    assert dialog._lbl_winning.text() == "2"
     assert dialog._lbl_losing.text() == "1"
     assert dialog._result_table.rowCount() == 3
 
     assert dialog._result_table.item(0, 4).text() == "中奖"
     assert dialog._result_table.item(1, 4).text() == "未中奖"
-    assert dialog._result_table.item(2, 4).text() == "暂不支持"
-    assert dialog._result_table.item(2, 3).text() == "否"
+    assert dialog._result_table.item(2, 4).text() == "中奖"
+    assert dialog._result_table.item(2, 3).text() == "是"
     assert dialog._result_table.item(0, 2).text() == "10.00"
     assert dialog._result_table.item(0, 5).text() == "01"
     assert dialog._result_table.item(1, 5).text() == "—"
@@ -287,7 +287,10 @@ def test_commit_with_unsupported_preview_is_blocked(session_factory) -> None:
     order_service = OrderService(session_factory)
     draw_service = DrawService(session_factory)
     log_service = LogService(session_factory)
-    order = create_order(order_service)
+    order = create_order(
+        order_service,
+        items=[OrderItemCreate(bet_type="连肖", selection="马X", amount="30.00")],
+    )
     create_draw(draw_service)
     dialog = open_preview_dialog(session_factory, order.id)
     dialog._on_start_preview()

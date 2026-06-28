@@ -29,6 +29,30 @@ def match_zodiac(selection: str, special_number: str, *, year: int = 2026) -> tu
     return matched, special if matched else None, f"特码 {special} 生肖为{actual}，投注{selection}"
 
 
+def match_zodiac_group(
+    selection: str,
+    special_number: str,
+    *,
+    year: int = 2026,
+) -> tuple[bool, str | None, str]:
+    special = normalize_number(special_number)
+    actual = get_zodiac(special, year=year)
+    selected = [token for token in selection.split(",") if token]
+    matched = actual in selected
+    selected_text = "、".join(selected)
+    if matched:
+        return (
+            True,
+            special,
+            f"特码 {special} 生肖为{actual}，投注生肖列表：{selected_text}，命中生肖：{actual}",
+        )
+    return (
+        False,
+        None,
+        f"特码 {special} 生肖为{actual}，投注生肖列表：{selected_text}，未命中",
+    )
+
+
 def match_color(selection: str, special_number: str) -> tuple[bool, str | None, str]:
     special = normalize_number(special_number)
     actual = get_wave_color(special)

@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 from domain.number_rules import normalize_number
+from domain.zodiac_rules import get_zodiac
 from schemas.settlement_schema import ItemSettlementResult, OrderSettlementPreview
 from settlement.bet_normalizer import (
     SPECIAL_COLOR,
@@ -19,9 +20,10 @@ from settlement.bet_normalizer import (
     SPECIAL_SUM_SIZE,
     SPECIAL_TAIL,
     SPECIAL_ZODIAC,
+    SPECIAL_ZODIAC_GROUP,
     BetTypeNormalizer,
 )
-from settlement.exceptions import InvalidDrawError, SettlementDataError, UnsupportedBetTypeError
+from settlement.exceptions import InvalidDrawError, InvalidSelectionError, SettlementDataError, UnsupportedBetTypeError
 from settlement.matchers import (
     match_color,
     match_element,
@@ -34,6 +36,7 @@ from settlement.matchers import (
     match_sum_size,
     match_tail,
     match_zodiac,
+    match_zodiac_group,
 )
 
 Matcher = Any
@@ -50,6 +53,7 @@ MATCHERS: dict[str, Matcher] = {
     SPECIAL_SUM_PARITY: match_sum_parity,
     SPECIAL_SUM_SIZE: match_sum_size,
     SPECIAL_ELEMENT: match_element,
+    SPECIAL_ZODIAC_GROUP: match_zodiac_group,
 }
 
 
@@ -63,9 +67,11 @@ class SettlementEngine:
     def evaluate_item(self, order_item: Any, lottery_draw: Any) -> ItemSettlementResult:
         draw = self._validate_draw(lottery_draw)
         amount = self._item_amount(order_item)
+        draw_special_number = draw["special_number"]
+        draw_special_zodiac = get_zodiac(draw_special_number, year=self._zodiac_year)
         try:
             normalized = self._normalizer.normalize(order_item.bet_type, order_item.selection)
-        except UnsupportedBetTypeError as exc:
+        except (UnsupportedBetTypeError, InvalidSelectionError) as exc:
             return ItemSettlementResult(
                 order_item_id=getattr(order_item, "id", None),
                 bet_type=order_item.bet_type,
@@ -76,17 +82,31 @@ class SettlementEngine:
                 is_winner=None,
                 matched_number=None,
                 reason=str(exc),
+                draw_special_number=draw_special_number,
+                draw_special_zodiac=draw_special_zodiac,
+                unsupported_reason=str(exc),
             )
 
         matcher = MATCHERS[normalized.normalized_bet_type]
-        if normalized.normalized_bet_type == SPECIAL_ZODIAC:
+        if normalized.normalized_bet_type in {SPECIAL_ZODIAC, SPECIAL_ZODIAC_GROUP}:
             is_winner, matched_number, reason = matcher(
                 normalized.selection,
-                draw["special_number"],
+                draw_special_number,
                 year=self._zodiac_year,
             )
         else:
-            is_winner, matched_number, reason = matcher(normalized.selection, draw["special_number"])
+            is_winner, matched_number, reason = matcher(normalized.selection, draw_special_number)
+
+        selected_zodiacs = (
+            tuple(token for token in normalized.selection.split(",") if token)
+            if normalized.normalized_bet_type == SPECIAL_ZODIAC_GROUP
+            else ()
+        )
+        matched_zodiac = (
+            draw_special_zodiac
+            if normalized.normalized_bet_type == SPECIAL_ZODIAC_GROUP and is_winner
+            else None
+        )
 
         return ItemSettlementResult(
             order_item_id=getattr(order_item, "id", None),
@@ -98,6 +118,10 @@ class SettlementEngine:
             is_winner=is_winner,
             matched_number=matched_number,
             reason=reason,
+            draw_special_number=draw_special_number,
+            draw_special_zodiac=draw_special_zodiac,
+            selected_zodiacs=selected_zodiacs,
+            matched_zodiac=matched_zodiac,
         )
 
     def evaluate_order(self, order: Any, lottery_draw: Any) -> OrderSettlementPreview:

@@ -72,8 +72,8 @@ def test_bet_type_normalizer_aliases_and_unknown() -> None:
     with pytest.raises(UnsupportedBetTypeError):
         normalizer.normalize("未知玩法", "01")
 
-    with pytest.raises(UnsupportedBetTypeError):
-        normalizer.normalize("连肖", "马蛇")
+    assert normalizer.normalize("连肖", "马蛇").normalized_bet_type == "special_zodiac_group"
+    assert normalizer.normalize("连肖", "马蛇").selection == "马,蛇"
 
 
 def test_special_number_matchers() -> None:
@@ -122,7 +122,7 @@ def test_order_preview_counts_supported_losing_and_unsupported() -> None:
         items=[
             ItemLike(1, "特码", "01"),
             ItemLike(2, "特码生肖", "蛇"),
-            ItemLike(3, "连肖", "马蛇"),
+            ItemLike(3, "连尾", "马蛇"),
         ]
     )
     preview = SettlementEngine().evaluate_order(order, DrawLike())

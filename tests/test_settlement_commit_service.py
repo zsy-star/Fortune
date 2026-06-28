@@ -91,11 +91,11 @@ def test_commit_order_with_unsupported_bet_blocks_persistence(session_factory) -
     order_service = OrderService(session_factory)
     order = create_order(
         order_service,
-        items=[OrderItemCreate(bet_type="连肖", selection="马,蛇", amount="10")],
+        items=[OrderItemCreate(bet_type="连肖", selection="马X", amount="10")],
     )
     draw = create_draw(DrawService(session_factory))
 
-    with pytest.raises(SettlementDataError, match="暂不支持玩法"):
+    with pytest.raises(SettlementDataError, match="存在暂不支持玩法"):
         SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
 
     assert order_service.get_order(order.id).status == "active"

@@ -21,6 +21,7 @@ SPECIAL_HEAD = "special_head"
 SPECIAL_SUM_PARITY = "special_sum_parity"
 SPECIAL_SUM_SIZE = "special_sum_size"
 SPECIAL_ELEMENT = "special_element"
+SPECIAL_ZODIAC_GROUP = "special_zodiac_group"
 
 SUPPORTED_NORMALIZED_TYPES = {
     SPECIAL_NUMBER,
@@ -34,11 +35,10 @@ SUPPORTED_NORMALIZED_TYPES = {
     SPECIAL_SUM_PARITY,
     SPECIAL_SUM_SIZE,
     SPECIAL_ELEMENT,
+    SPECIAL_ZODIAC_GROUP,
 }
 
 UNSUPPORTED_BET_TYPES = {
-    "连肖",
-    "多生肖",
     "连尾",
     "胆拖",
     "拖码",
@@ -69,6 +69,7 @@ BET_TYPE_ALIASES = {
     SPECIAL_SUM_PARITY: {"特码合数单双", "合数单双"},
     SPECIAL_SUM_SIZE: {"特码合数大小", "合数大小"},
     SPECIAL_ELEMENT: {"特码五行", "五行"},
+    SPECIAL_ZODIAC_GROUP: {"连肖", "多生肖"},
 }
 
 SIZE_SELECTIONS = {"大", "小"}
@@ -173,6 +174,8 @@ class BetTypeNormalizer:
             if selection not in FIVE_ELEMENT_NUMBERS:
                 raise InvalidSelectionError(f"无效五行：{selection}")
             return selection
+        if normalized_type == SPECIAL_ZODIAC_GROUP:
+            return self._normalize_zodiac_group_selection(selection)
         raise UnsupportedBetTypeError(f"未实现玩法：{normalized_type}")
 
     def _infer_special_type(self, selection: str) -> str:
@@ -209,6 +212,22 @@ class BetTypeNormalizer:
         if not tokens:
             raise InvalidSelectionError("号码投注内容不能为空")
         return tokens
+
+    def _normalize_zodiac_group_selection(self, selection: str) -> str:
+        zodiacs = set(get_zodiac_map(2026))
+        tokens = [token for token in re.split(r"[\s,，、/|+-]+", selection.strip()) if token]
+        if len(tokens) <= 1:
+            compact = "".join(tokens) if tokens else selection.strip()
+            tokens = list(compact)
+        if len(tokens) < 2:
+            raise InvalidSelectionError(f"生肖列表至少需要 2 个生肖：{selection}")
+        invalid = [token for token in tokens if token not in zodiacs]
+        if invalid:
+            raise InvalidSelectionError(f"无法解析生肖列表：{selection}")
+        unique_tokens = list(dict.fromkeys(tokens))
+        if len(unique_tokens) < 2:
+            raise InvalidSelectionError(f"生肖列表至少需要 2 个不同生肖：{selection}")
+        return ",".join(unique_tokens)
 
     def _looks_like_number_selection(self, selection: str) -> bool:
         tokens = [token for token in re.split(r"[\s,，、/|+-]+", selection.strip()) if token]

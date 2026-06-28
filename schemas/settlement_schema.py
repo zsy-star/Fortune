@@ -19,6 +19,11 @@ class ItemSettlementResult:
     is_winner: bool | None
     matched_number: str | None
     reason: str
+    draw_special_number: str | None = None
+    draw_special_zodiac: str | None = None
+    selected_zodiacs: tuple[str, ...] = ()
+    matched_zodiac: str | None = None
+    unsupported_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
