@@ -132,9 +132,9 @@ def test_special_order_page_saves_adjustment_record_and_keeps_orders_unchanged(
         ) == 1
     output = page._output.toPlainText()
     assert "已保存特码调单记录 ID" in output
-    assert "数据库未被修改" in output
-    assert "不计算赔付" in output
-    assert "打开拓展" in output
+    assert "订单未被修改" in output
+    assert "不计算赔付金额" in output
+    assert "拓展调单规则尚未确认" in output
 
 
 def test_special_order_page_does_not_save_when_no_adjustment(session_factory) -> None:
@@ -278,7 +278,8 @@ def test_lianxiao_order_page_actions_are_readonly(session_factory) -> None:
 
     assert count_orders(session_factory) == before
     output = page._output.toPlainText()
-    assert "当前版本未调用打印机" in output
+    assert "只是生成可复制/导出的打印文本" in output
+    assert "未调用系统打印机" in output
     assert "数据库订单未被修改" in output
 
 

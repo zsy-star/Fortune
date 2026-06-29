@@ -294,6 +294,10 @@ def test_confirm_save_only_checked_success_rows_and_emits_events(session_factory
             assert "config_plan=默认方案" in log.description
             assert "imported=1" in log.description
             assert "skipped_unselected=1" in log.description
+        window._on_confirm_save()
+        assert count_orders(session_factory) == 1
+        assert "本次拆单保存已完成" in window._recognize_text.toPlainText()
+        assert not window._btn_confirm_save.isEnabled()
     finally:
         window.close()
         window.deleteLater()

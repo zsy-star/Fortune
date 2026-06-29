@@ -434,6 +434,10 @@ class SplitOrderWindow(QMainWindow):
             self._update_confirm_button()
 
     def _on_confirm_save(self) -> None:
+        if self._import_completed:
+            self._set_status("本次拆单保存已完成；请重新预览订单后再次保存")
+            self._update_confirm_button()
+            return
         self._sync_preview_selection_from_table()
         selected_count = self._selected_success_count()
         if selected_count <= 0:

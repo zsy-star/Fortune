@@ -455,6 +455,10 @@ class OrderImportDialog(QDialog):
         return any(self._row_has_text(row, "duplicate_warning") for row in self._preview_rows(self._preview))
 
     def _on_confirm_import(self) -> None:
+        if self._import_completed:
+            self._stats_label.setText("本次导入已完成；请重新解析或重新选择文件后再次导入")
+            self._update_import_button()
+            return
         if self._preview.success_count <= 0:
             self._stats_label.setText("没有解析成功行，不能导入")
             self._update_import_button()

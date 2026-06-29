@@ -257,7 +257,8 @@ def test_order_detail_remaining_unavailable_actions_are_explicitly_disabled(sess
         page._btn_reset_draw,
     ]
     assert all(not button.isEnabled() for button in buttons)
-    assert all("暂未开放" in button.toolTip() for button in buttons)
+    assert "高风险删除入口" in page._btn_clear_orders.toolTip()
+    assert "高风险开奖维护入口" in page._btn_reset_draw.toolTip()
     assert page._btn_import_orders.isEnabled()
     assert page._btn_import_orders.text() == "导入订单"
     assert "预览" in page._btn_import_orders.toolTip()

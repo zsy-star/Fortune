@@ -556,6 +556,11 @@ def test_order_import_confirm_saves_only_success_rows_and_writes_log(
     assert "save_failed=0" in description
     assert "skipped_empty=1" in description
 
+    dialog._on_confirm_import()
+    assert count_orders(session_factory) == before + 2
+    assert "本次导入已完成" in dialog._stats_label.text()
+    assert not dialog._btn_confirm_import.isEnabled()
+
 
 def test_order_import_confirm_passes_declarer_channel_and_plan_to_save_log_and_report(
     session_factory, tmp_path, monkeypatch

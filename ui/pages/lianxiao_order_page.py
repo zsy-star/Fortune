@@ -216,18 +216,24 @@ class LianxiaoOrderPage(QWidget):
             row.addWidget(button, stretch=1)
             if text == "保存本次调整":
                 self._btn_save_adjustment = button
+                button.setToolTip("保存当前连肖汇总快照；不修改订单、不自动兑奖、不写余额。")
             elif text == "打印连肖调整":
                 self._btn_print = button
+                button.setToolTip("生成可复制/导出的打印文本；当前不调用真实打印机。")
             elif text == "复制当前汇总":
                 self._btn_copy_summary = button
+                button.setToolTip("复制当前连肖汇总文本，不修改订单。")
             elif text == "导出当前汇总":
                 self._btn_export_summary = button
+                button.setToolTip("导出当前连肖汇总文本，不修改订单。")
             elif text == "清空输出框":
                 self._btn_clear_output = button
             elif text == "重置调整":
                 self._btn_reset = button
+                button.setToolTip("仅重置页面临时调整显示，不修改数据库订单。")
             elif text == "调整记录":
                 self._btn_adjust_records = button
+                button.setToolTip("查看已保存的连肖调单快照记录；不提供删除、恢复或重新应用。")
         return frame
 
     def reload_data(self) -> None:
@@ -386,7 +392,8 @@ class LianxiaoOrderPage(QWidget):
     def _on_print_adjustment(self) -> None:
         self._output.setPlainText(
             self._build_export_text()
-            + "\n\n当前版本未调用打印机，请使用“复制当前汇总”或“导出当前汇总”后打印。"
+            + "\n\n打印提示：当前只是生成可复制/导出的打印文本，未调用系统打印机；"
+            "请使用“复制当前汇总”或“导出当前汇总”后打印。"
         )
 
     def _on_copy_summary(self) -> None:

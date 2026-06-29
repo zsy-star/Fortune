@@ -6,7 +6,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtTest import QSignalSpy
-from PySide6.QtWidgets import QApplication, QDialog, QLineEdit
+from PySide6.QtWidgets import QApplication, QDialog, QLineEdit, QPlainTextEdit
 
 from services.settings_service import SettingsService
 from ui.app_events import app_events
@@ -33,6 +33,16 @@ def test_settings_dialog_has_three_required_tabs(session_factory) -> None:
         "申报人",
         "导入/导出秘钥",
     ]
+
+
+def test_settings_dialog_explains_payout_odds_and_rebate_boundary(session_factory) -> None:
+    app()
+    dialog = make_dialog(session_factory)
+    texts = "\n".join(edit.toPlainText() for edit in dialog.findChildren(QPlainTextEdit))
+
+    assert "基础中奖金额" in texts
+    assert "返水、余额和客户账户不参与计算" in texts
+    assert "优先读取申报人绑定方案" in texts
 
 
 def test_dialog_adds_plan_item_and_saves_edited_values(session_factory) -> None:

@@ -195,7 +195,10 @@ class OrderDetailPage(QWidget):
         row.setContentsMargins(4, 3, 4, 3)
         row.setSpacing(4)
 
-        self._btn_clear_orders = self._unavailable_button("清空订单")
+        self._btn_clear_orders = self._unavailable_button(
+            "清空订单",
+            "高风险删除入口，需要权限、审计和恢复策略；当前不开放，请使用筛选和单笔作废。",
+        )
         self._btn_export_excel = QPushButton("导出订单")
         self._btn_export_excel.setObjectName("primaryAction")
         self._btn_export_excel.setToolTip("按当前查询条件导出 Excel")
@@ -212,7 +215,10 @@ class OrderDetailPage(QWidget):
         self._btn_combined_prize.setObjectName("primaryAction")
         self._btn_combined_prize.setToolTip("只读汇总当前筛选结果，不写余额、不计算返水佣金")
         self._btn_combined_prize.clicked.connect(self._on_combined_settlement_summary)
-        self._btn_reset_draw = self._unavailable_button("重置开奖")
+        self._btn_reset_draw = self._unavailable_button(
+            "重置开奖",
+            "高风险开奖维护入口，需要权限、审计和恢复策略；当前不开放，请使用开奖记录页的新增或修正。",
+        )
         self._btn_expand_prize = QPushButton("扩大兑奖框")
         self._btn_expand_prize.setToolTip("扩大或收起底部结算摘要显示区域")
         self._btn_expand_prize.clicked.connect(self._on_toggle_result_panel_size)
@@ -252,12 +258,12 @@ class OrderDetailPage(QWidget):
         row.addWidget(self._btn_refresh)
         return frame
 
-    def _unavailable_button(self, text: str) -> QPushButton:
+    def _unavailable_button(self, text: str, reason: str) -> QPushButton:
         button = QPushButton(text)
         button.setObjectName("unavailableAction")
         button.setEnabled(False)
-        button.setToolTip(f"{text}：当前版本暂未开放")
-        button.setStatusTip(f"{text}：当前版本暂未开放")
+        button.setToolTip(f"{text}：当前版本不开放。{reason}")
+        button.setStatusTip(reason)
         return button
 
     def _build_order_table(self) -> QTableWidget:
@@ -442,9 +448,11 @@ class OrderDetailPage(QWidget):
         self._detail_info.setWordWrap(True)
         self._btn_preview = QPushButton("结算预览")
         self._btn_preview.setEnabled(False)
+        self._btn_preview.setToolTip("请选择未结算且未作废的订单后进行结算预览")
         self._btn_preview.clicked.connect(self._on_settlement_preview)
         self._btn_void = QPushButton("作废订单")
         self._btn_void.setEnabled(False)
+        self._btn_void.setToolTip("请选择未结算且未作废的订单后作废；作废会二次确认并写操作日志")
         self._btn_void.clicked.connect(self._on_void_order)
         detail_header.addWidget(self._detail_info, stretch=1)
         detail_header.addWidget(self._btn_preview)
@@ -911,8 +919,22 @@ class OrderDetailPage(QWidget):
                 self._status_label.setText("订单已显示，但查看日志写入失败。")
 
     def _render_detail(self, detail: OrderDetailResult) -> None:
-        self._btn_preview.setEnabled(True)
-        self._btn_void.setEnabled(detail.status in VOIDABLE_ORDER_STATUSES)
+        previewable = detail.status in VOIDABLE_ORDER_STATUSES
+        voidable = detail.status in VOIDABLE_ORDER_STATUSES
+        self._btn_preview.setEnabled(previewable)
+        self._btn_void.setEnabled(voidable)
+        if detail.status == ORDER_STATUS_SETTLED:
+            self._btn_preview.setToolTip("该订单已正式结算，不能重复结算预览；请查看已保存结算快照。")
+            self._btn_void.setToolTip("已结算订单不能作废，避免破坏结算记录。")
+        elif detail.status == ORDER_STATUS_VOIDED:
+            self._btn_preview.setToolTip("该订单已作废，不能进行结算预览。")
+            self._btn_void.setToolTip("该订单已作废，不能重复作废。")
+        elif previewable:
+            self._btn_preview.setToolTip("打开结算预览；正式结算前会再次校验开奖和不支持玩法。")
+            self._btn_void.setToolTip("作废当前订单；作废前需要填写原因并二次确认。")
+        else:
+            self._btn_preview.setToolTip(f"当前订单状态不能结算预览：{detail.status}")
+            self._btn_void.setToolTip(f"当前订单状态不能作废：{detail.status}")
         self._detail_info.setText(
             "订单号：{no}    申报人：{customer}    渠道：{channel}    地区：{region}    "
             "来源：{source}    状态：{status}    总金额：{total}".format(
@@ -940,7 +962,9 @@ class OrderDetailPage(QWidget):
         self._raw_text.clear()
         self._item_table.setRowCount(0)
         self._btn_preview.setEnabled(False)
+        self._btn_preview.setToolTip("请选择未结算且未作废的订单后进行结算预览")
         self._btn_void.setEnabled(False)
+        self._btn_void.setToolTip("请选择未结算且未作废的订单后作废；作废会二次确认并写操作日志")
         self._clear_result_panels()
 
     def _reload_draws(self) -> None:
@@ -1218,6 +1242,29 @@ class OrderDetailPage(QWidget):
     def _on_settlement_preview(self) -> None:
         if self._selected_order_id is None:
             self._status_label.setText("请先选择订单")
+            return
+        detail = self._order_service.get_order(self._selected_order_id)
+        if detail is None:
+            QMessageBox.warning(self, "结算预览", "订单不存在或已被删除。")
+            self.reload_data()
+            return
+        if detail.status == ORDER_STATUS_SETTLED:
+            message = "该订单已正式结算，不能重复结算预览；请查看已保存结算快照。"
+            self._status_label.setText(message)
+            QMessageBox.warning(self, "结算预览", message)
+            self._btn_preview.setEnabled(False)
+            return
+        if detail.status == ORDER_STATUS_VOIDED:
+            message = "该订单已作废，不能进行结算预览。"
+            self._status_label.setText(message)
+            QMessageBox.warning(self, "结算预览", message)
+            self._btn_preview.setEnabled(False)
+            return
+        if detail.status not in VOIDABLE_ORDER_STATUSES:
+            message = f"当前订单状态不能结算预览：{detail.status}"
+            self._status_label.setText(message)
+            QMessageBox.warning(self, "结算预览", message)
+            self._btn_preview.setEnabled(False)
             return
         dialog = SettlementPreviewDialog(
             self._selected_order_id,

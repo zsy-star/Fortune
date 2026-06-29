@@ -88,7 +88,8 @@ def test_lianxiao_order_page_first_stage_is_readonly(session_factory) -> None:
     assert page._btn_adjust_records.isEnabled()
     page._on_print_adjustment()
     page._on_reset_adjustment()
-    assert "当前版本未调用打印机" in page._output.toPlainText()
+    assert "只是生成可复制/导出的打印文本" in page._output.toPlainText()
+    assert "未调用系统打印机" in page._output.toPlainText()
     assert "数据库订单未被修改" in page._output.toPlainText()
 
 
@@ -102,7 +103,12 @@ def test_special_order_page_is_tema_readonly_first_stage(session_factory) -> Non
     assert "连码调单" not in labels
     assert page._summary_table.rowCount() == 49
     assert len(page._adjust_edits) == 49
-    assert page._btn_open_extension.isEnabled()
+    assert not page._btn_open_extension.isEnabled()
+    assert not page._btn_reset_all.isEnabled()
+    assert not page._btn_special_settlement.isEnabled()
+    assert "拓展调单规则尚未确认" in page._btn_open_extension.toolTip()
+    assert "清空或重置数据需要权限" in page._btn_reset_all.toolTip()
+    assert "真实兑奖涉及结算、赔付和余额流水" in page._btn_special_settlement.toolTip()
     assert page._btn_adjust_records.isEnabled()
     assert page._btn_copy_summary.isEnabled()
     assert page._btn_export_summary.isEnabled()
@@ -112,8 +118,9 @@ def test_special_order_page_is_tema_readonly_first_stage(session_factory) -> Non
     page._on_special_settlement()
     output = page._output.toPlainText()
     assert "当前没有调整内容，无需保存" in output
-    assert "高风险功能暂未开放" in output
-    assert "不计算赔付" in output
+    assert "重置所有数据未开放" in output
+    assert "不执行兑奖" in output
+    assert "不计算赔付金额" in output
 
 
 def test_main_window_tema_nav_direct_and_hover_only_lianxiao() -> None:
@@ -189,7 +196,8 @@ def test_order_detail_page_keeps_supported_actions_and_disables_unopened_buttons
     )
     assert all(button.text() in button_texts for button in unopened_buttons)
     assert all(not button.isEnabled() for button in unopened_buttons)
-    assert all("暂未开放" in button.toolTip() for button in unopened_buttons)
+    assert "高风险删除入口" in page._btn_clear_orders.toolTip()
+    assert "高风险开奖维护入口" in page._btn_reset_draw.toolTip()
     assert page._btn_import_orders.text() == "导入订单"
     assert page._btn_import_orders.isEnabled()
     assert "预览" in page._btn_import_orders.toolTip()

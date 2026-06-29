@@ -265,20 +265,33 @@ class SpecialOrderPage(QWidget):
             row.addWidget(button)
             if text == "保存本次调整":
                 self._btn_save_adjustment = button
+                button.setToolTip("保存本次页面调整为调单快照记录；不修改原订单、不自动兑奖、不写余额。")
             elif text == "复制当前汇总":
                 self._btn_copy_summary = button
+                button.setToolTip("复制当前特码调单汇总文本，不修改订单。")
             elif text == "导出当前汇总":
                 self._btn_export_summary = button
+                button.setToolTip("导出当前特码调单汇总文本，不修改订单。")
             elif text == "重置所有数据":
                 self._btn_reset_all = button
+                button.setEnabled(False)
+                button.setToolTip("高风险维护入口：清空或重置数据需要权限、审计和恢复策略，当前不开放。")
+                button.setStatusTip("不会清空订单、调单记录或数据库。")
             elif text == "特码兑奖":
                 self._btn_special_settlement = button
+                button.setEnabled(False)
+                button.setToolTip("真实兑奖涉及结算、赔付和余额流水；请使用订单详情的结算预览/正式结算记录。")
+                button.setStatusTip("特码调单页不执行兑奖、不计算赔付、不写余额。")
         row.addStretch(1)
         self._btn_open_extension = QPushButton("打开拓展")
         self._btn_open_extension.clicked.connect(self._on_open_extension)
+        self._btn_open_extension.setEnabled(False)
+        self._btn_open_extension.setToolTip("拓展调单规则尚未确认，当前不开放额外调单扩展。")
+        self._btn_open_extension.setStatusTip("不会打开新页面或执行额外业务。")
         row.addWidget(self._btn_open_extension)
         self._btn_adjust_records = QPushButton("调整记录")
         self._btn_adjust_records.clicked.connect(self._on_adjust_records)
+        self._btn_adjust_records.setToolTip("查看已保存的特码调单快照记录；不提供删除、恢复或重新应用。")
         row.addWidget(self._btn_adjust_records)
         return frame
 
@@ -522,13 +535,19 @@ class SpecialOrderPage(QWidget):
         self._output.clear()
 
     def _on_reset_all_data(self) -> None:
-        self._append_output("高风险功能暂未开放：重置所有数据不会执行，数据库未被修改。")
+        self._append_output(
+            "重置所有数据未开放：该操作涉及清空订单、调单记录或数据库，"
+            "需要权限、审计和恢复策略；本次未执行任何写入。"
+        )
 
     def _on_special_settlement(self) -> None:
-        self._append_output("当前仅显示调单汇总，不执行特码兑奖，不计算赔付金额，也不写余额。")
+        self._append_output(
+            "特码调单页不执行兑奖：当前仅支持查看调单汇总和保存调单快照；"
+            "请在订单详情中使用结算预览和正式结算记录，不计算赔付金额，不写余额。"
+        )
 
     def _on_open_extension(self) -> None:
-        self._append_output("打开拓展：第一阶段仅保留入口，暂不打开额外调单扩展。")
+        self._append_output("拓展调单规则尚未确认，当前不开放额外调单扩展，未打开新页面。")
 
     def _on_adjust_records(self) -> None:
         dialog = AdjustmentRecordDialog(

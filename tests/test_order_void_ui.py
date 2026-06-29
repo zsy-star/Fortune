@@ -88,6 +88,36 @@ def test_settled_and_voided_orders_disable_void_button(session_factory) -> None:
     assert not page._btn_void.isEnabled()
 
 
+def test_settled_and_voided_orders_disable_preview_and_warn_if_called(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    settled = create_order(service, customer="settled-preview", status="settled")
+    voided = create_order(service, customer="voided-preview", status="voided")
+    page = make_page(session_factory)
+
+    load_order(page, settled.id)
+    assert not page._btn_preview.isEnabled()
+    assert "不能重复结算预览" in page._btn_preview.toolTip()
+    with (
+        patch("ui.pages.order_detail_page.SettlementPreviewDialog") as dialog_cls,
+        patch("ui.pages.order_detail_page.QMessageBox.warning") as warning,
+    ):
+        page._on_settlement_preview()
+    dialog_cls.assert_not_called()
+    assert "不能重复结算预览" in warning.call_args.args[2]
+
+    load_order(page, voided.id)
+    assert not page._btn_preview.isEnabled()
+    assert "已作废" in page._btn_preview.toolTip()
+    with (
+        patch("ui.pages.order_detail_page.SettlementPreviewDialog") as dialog_cls,
+        patch("ui.pages.order_detail_page.QMessageBox.warning") as warning,
+    ):
+        page._on_settlement_preview()
+    dialog_cls.assert_not_called()
+    assert "已作废" in warning.call_args.args[2]
+
+
 def test_void_cancel_reason_input_does_not_call_service(session_factory) -> None:
     app()
     service = OrderService(session_factory)
