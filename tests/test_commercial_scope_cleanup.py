@@ -404,6 +404,39 @@ def test_unopened_feature_freeze_list_is_explicit_and_not_misleading() -> None:
     assert "已完成全部功能的版本" in documents
 
 
+def test_permission_and_accounting_design_docs_are_frozen_but_not_implemented() -> None:
+    permission_doc_path = Path("docs/permission_audit_model.md")
+    accounting_doc_path = Path("docs/accounting_ledger_model.md")
+    assert permission_doc_path.exists()
+    assert accounting_doc_path.exists()
+
+    permission_doc = permission_doc_path.read_text(encoding="utf-8")
+    accounting_doc = accounting_doc_path.read_text(encoding="utf-8")
+    readme = Path("README.md").read_text(encoding="utf-8")
+    feature_status = Path("docs/feature_status.md").read_text(encoding="utf-8")
+
+    assert "暂未实现登录、账号、角色、权限审批" in permission_doc
+    assert "当前不开放清空订单" in permission_doc
+    assert "当前不开放真实兑奖" in permission_doc
+    assert "当前不开放余额修改" in permission_doc
+    assert "审计日志不可绕过" in permission_doc
+    assert "二次确认" in permission_doc
+
+    assert "当前不写余额" in accounting_doc
+    assert "当前不做客户账户" in accounting_doc
+    assert "当前不开放真实兑奖" in accounting_doc
+    assert "当前不开放返水 / 佣金" in accounting_doc
+    assert "所有金额使用 `Decimal`" in accounting_doc
+    assert "禁止 `float`" in accounting_doc
+
+    assert "[权限与审计模型](docs/permission_audit_model.md)" in readme
+    assert "[账务 / 余额流水模型](docs/accounting_ledger_model.md)" in readme
+    assert "权限与审计模型设计 | 设计已冻结，功能未开放" in feature_status
+    assert "账务 / 余额流水模型设计 | 设计已冻结，功能未开放" in feature_status
+    assert "权限与审计模型设计 | 已完成" not in feature_status
+    assert "余额流水 / 客户账户 | 已完成" not in feature_status
+
+
 def test_repository_safety_ignores_runtime_files_and_keeps_migrations_frozen() -> None:
     gitignore = Path(".gitignore").read_text(encoding="utf-8")
     for pattern in ("data/*.db", "data/backups/", "exports/", ".pytest_cache*", "**pycache**/", "build/", "dist/"):

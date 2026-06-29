@@ -81,6 +81,8 @@ data/fortune.db
 
 - [功能状态总览](docs/feature_status.md)
 - [后续路线图](docs/roadmap.md)
+- [权限与审计模型](docs/permission_audit_model.md)
+- [账务 / 余额流水模型](docs/accounting_ledger_model.md)
 
 ## 验收与打包
 
