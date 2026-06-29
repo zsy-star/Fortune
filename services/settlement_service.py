@@ -504,13 +504,19 @@ class SettlementService:
         if isinstance(snapshot, dict):
             settlement = snapshot.get("settlement")
             if isinstance(settlement, dict) and settlement.get("total_payout_amount") not in (None, ""):
-                return Decimal(str(settlement["total_payout_amount"])).quantize(CENT)
+                try:
+                    return Decimal(str(settlement["total_payout_amount"])).quantize(CENT)
+                except Exception:
+                    return Decimal("0.00")
             items = snapshot.get("items")
             if isinstance(items, list):
                 total = Decimal("0.00")
                 for item in items:
                     if isinstance(item, dict) and item.get("payout_amount") not in (None, ""):
-                        total += Decimal(str(item["payout_amount"]))
+                        try:
+                            total += Decimal(str(item["payout_amount"]))
+                        except Exception:
+                            continue
                 return total.quantize(CENT)
         return Decimal("0.00")
 

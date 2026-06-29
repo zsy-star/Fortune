@@ -174,7 +174,7 @@ class OrderAnalysisService:
         return self._parse_zodiac_selection(selection)
 
     def _parse_zodiac_selection(self, selection: str) -> tuple[str, ...]:
-        text = (selection or "").strip()
+        text = str(selection or "").strip()
         if not text:
             return ()
         if _SELECTION_SPLIT.search(text):
@@ -187,7 +187,8 @@ class OrderAnalysisService:
         return ()
 
     def _split_selection(self, selection: str) -> list[str]:
-        return [part.strip() for part in _SELECTION_SPLIT.split(selection.strip()) if part.strip()]
+        text = str(selection or "").strip()
+        return [part.strip() for part in _SELECTION_SPLIT.split(text) if part.strip()]
 
     def _settled_payout_summary(self, session: Session, filter_key: str) -> tuple[Decimal, int]:
         stmt = (
@@ -263,7 +264,7 @@ class OrderAnalysisService:
             "",
             "说明：当前分析基于订单明细和投注金额统计。",
             "说明：已结算中奖金额只读取 SettlementRecord 快照中的第一阶段基础中奖金额。",
-            f"说明：旧结算快照无赔付字段的记录数：{old_snapshot_count}。",
+            f"说明：部分旧快照无赔付数据，未计入中奖金额统计；记录数：{old_snapshot_count}。",
             "说明：未结算订单不参与真实盈亏；当前不写余额，不计算返水、佣金。",
             "说明：盈亏字段仍不代表余额或真实净利润，仅作占位/风险参考。",
         ]

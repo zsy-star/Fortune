@@ -684,6 +684,48 @@ def test_order_import_result_report_copy_and_export(session_factory, tmp_path, m
     assert "行号,原始文本,解析状态,导入状态,地区,申报人,渠道,配置方案,投注类型,金额,条目数,历史重复提示,历史订单,是否跳过,错误原因" in first_line
 
 
+def test_order_import_legacy_report_rows_missing_fields_do_not_crash(tmp_path, monkeypatch) -> None:
+    app()
+    dialog = OrderImportDialog(import_service=OrderImportService(), settings_service=EmptySettingsService())
+    dialog._preview = SimpleNamespace(
+        rows=[
+            SimpleNamespace(line_number=1, raw_text="旧报告行", region="澳门"),
+            SimpleNamespace(
+                line_number=2,
+                raw_text="旧成功行",
+                region="香港",
+                success=True,
+                amount_total="12.5",
+                item_count=1,
+                import_status="已导入",
+            ),
+        ],
+        skipped_count=0,
+        history_duplicate_check_enabled=False,
+        history_duplicate_error="",
+    )
+    dialog._fill_preview(dialog._preview)
+
+    assert dialog._table.item(0, 3).text() == "失败"
+    assert dialog._table.item(0, 8).text() == "旧报告无此字段"
+    assert dialog._table.item(0, 9).text() == "—"
+
+    report = dialog._build_import_result_report()
+    assert "订单导入结果报告" in report
+    assert "旧报告无此字段" in report
+    assert "旧报告行\t失败" in report
+    assert "旧成功行\t成功" in report
+    assert "Traceback" not in report
+
+    csv_path = tmp_path / "legacy_import_report.csv"
+    monkeypatch.setattr(
+        "ui.dialogs.order_import_dialog.QFileDialog.getSaveFileName",
+        lambda *args, **kwargs: (str(csv_path), "CSV Files (*.csv)"),
+    )
+    dialog._on_export_import_result()
+    assert "旧报告无此字段" in csv_path.read_text(encoding="utf-8")
+
+
 def test_order_import_result_copy_before_preview_and_export_cancel_or_failure(tmp_path, monkeypatch) -> None:
     app()
     dialog = OrderImportDialog(import_service=OrderImportService())

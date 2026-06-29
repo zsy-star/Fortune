@@ -29,6 +29,10 @@ TYPE_LABELS = {
 LABEL_TYPES = {value: key for key, value in TYPE_LABELS.items()}
 
 
+def _display(value: object | None) -> str:
+    return str(value) if value not in (None, "", {}, []) else "—"
+
+
 class AdjustmentRecordDialog(QDialog):
     """Read-only adjustment record browser."""
 
@@ -149,14 +153,14 @@ class AdjustmentRecordDialog(QDialog):
         for row, record in enumerate(self._records):
             values = [
                 str(record.id),
-                TYPE_LABELS.get(record.adjustment_type, record.adjustment_type),
+                TYPE_LABELS.get(record.adjustment_type, "未知类型"),
                 record.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-                record.region,
-                record.original_total,
-                record.adjustment_total,
-                record.after_total,
-                str(record.item_count),
-                record.note or "",
+                _display(record.region),
+                _display(record.original_total),
+                _display(record.adjustment_total),
+                _display(record.after_total),
+                _display(record.item_count),
+                _display(record.note),
             ]
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)

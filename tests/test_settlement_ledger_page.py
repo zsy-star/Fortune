@@ -211,8 +211,9 @@ def test_settlement_snapshot_dialog_displays_hit_miss_and_unsupported_items() ->
     assert dialog._items_table.item(0, 3).text() == "命中"
     assert dialog._items_table.item(1, 3).text() == "未中"
     assert dialog._items_table.item(2, 3).text() == "不支持"
-    assert dialog._items_table.item(2, 5).text() == "-"
-    assert dialog._items_table.item(2, 8).text() == "暂不支持玩法"
+    assert dialog._items_table.item(2, 4).text() == "旧记录无赔率数据"
+    assert dialog._items_table.item(2, 5).text() == "旧记录无赔付数据"
+    assert dialog._items_table.item(2, 8).text() == "—"
     assert '"selection": "01"' in dialog._raw_snapshot.toPlainText()
 
 
@@ -221,8 +222,34 @@ def test_settlement_snapshot_dialog_handles_empty_or_malformed_snapshot() -> Non
     dialog = _SettlementSnapshotDialog(make_ledger_result({}))
 
     assert dialog._items_table.rowCount() == 0
-    assert "快照数据为空或格式不完整" in dialog._empty_label.text()
-    assert "快照数据为空或格式不完整" in dialog._raw_snapshot.toPlainText()
+    assert "快照格式异常，无法完整展示" in dialog._empty_label.text()
+    assert "快照格式异常，无法完整展示" in dialog._raw_snapshot.toPlainText()
+    assert "Traceback" not in dialog._raw_snapshot.toPlainText()
+
+
+def test_settlement_snapshot_dialog_supports_legacy_result_fields_and_bad_snapshot() -> None:
+    app()
+    dialog = _SettlementSnapshotDialog(
+        make_ledger_result(
+            {
+                "items": [
+                    {"bet_type": "特码", "selection": "01", "amount": "10.00", "result": "hit"},
+                    {"bet_type": "特码", "selection": "02", "amount": "10.00", "result": "miss"},
+                    {"bet_type": "旧玩法", "selection": "X", "amount": "10.00", "result": "不支持"},
+                ]
+            }
+        )
+    )
+
+    assert dialog._items_table.item(0, 3).text() == "命中"
+    assert dialog._items_table.item(1, 3).text() == "未中"
+    assert dialog._items_table.item(2, 3).text() == "不支持"
+    assert dialog._items_table.item(0, 4).text() == "旧记录无赔率数据"
+    assert dialog._items_table.item(0, 5).text() == "旧记录无赔付数据"
+
+    bad = _SettlementSnapshotDialog(make_ledger_result("not-json"))
+    assert "快照格式异常，无法完整展示" in bad._empty_label.text()
+    assert "快照格式异常，无法完整展示" in bad._raw_snapshot.toPlainText()
 
 
 def test_settlement_ledger_page_lists_only_settled_orders_with_log_summary(session_factory) -> None:

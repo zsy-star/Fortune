@@ -35,6 +35,9 @@ from services.settlement_service import SettlementService
 from ui.app_events import app_events
 
 PAGE_SIZE = 20
+MALFORMED_SNAPSHOT_TEXT = "快照格式异常，无法完整展示"
+LEGACY_NO_PAYOUT_TEXT = "旧记录无赔付数据"
+LEGACY_NO_ODDS_TEXT = "旧记录无赔率数据"
 
 
 def _money(value: Decimal) -> str:
@@ -42,7 +45,7 @@ def _money(value: Decimal) -> str:
 
 
 def _dash(value: object | None) -> str:
-    return str(value) if value not in (None, "") else "-"
+    return str(value) if value not in (None, "") else "—"
 
 
 def _format_size(size_bytes: int) -> str:
@@ -63,22 +66,29 @@ def _export_success_message(result) -> str:
 
 
 def _snapshot_json(snapshot: object) -> str:
-    if not snapshot:
-        return "快照数据为空或格式不完整。"
+    if not isinstance(snapshot, dict) or not snapshot:
+        return f"{MALFORMED_SNAPSHOT_TEXT}。"
     try:
         return json.dumps(snapshot, ensure_ascii=False, indent=2, default=str)
     except TypeError:
-        return str(snapshot)
+        return f"{MALFORMED_SNAPSHOT_TEXT}。"
 
 
 def _snapshot_result_text(item: dict) -> str:
+    result = str(item.get("result") or item.get("status") or "").strip().lower()
+    if result in {"hit", "win", "winner", "命中", "中"}:
+        return "命中"
+    if result in {"miss", "lose", "loser", "未中", "不中"}:
+        return "未中"
+    if result in {"unsupported", "不支持", "暂不支持"}:
+        return "不支持"
     if item.get("is_supported") is False:
         return "不支持"
     if item.get("is_winner") is True:
         return "命中"
     if item.get("is_winner") is False:
         return "未中"
-    return "-"
+    return "—"
 
 
 def _snapshot_has_payout(snapshot: object) -> bool:
@@ -96,7 +106,7 @@ def _snapshot_has_payout(snapshot: object) -> bool:
 
 def _payout_text(record: SettlementLedgerResult) -> str:
     if not _snapshot_has_payout(record.result_snapshot):
-        return "旧记录无赔付数据"
+        return LEGACY_NO_PAYOUT_TEXT
     return _money(record.total_payout_amount)
 
 
@@ -176,10 +186,10 @@ class _SettlementSnapshotDialog(QDialog):
         self._items_table.setRowCount(len(items))
         for row_idx, item in enumerate(items):
             if not isinstance(item, dict):
-                self._set_item_row(row_idx, ["-", "-", "-", "格式不完整", "-", "-", "-", "-", str(item)])
+                self._set_item_row(row_idx, ["—", "—", "—", MALFORMED_SNAPSHOT_TEXT, "—", "—", "—", "—", "—"])
                 continue
             reason = _dash(item.get("reason"))
-            unsupported_reason = reason if item.get("is_supported") is False else "-"
+            unsupported_reason = _dash(item.get("unsupported_reason")) if _snapshot_result_text(item) == "不支持" else "—"
             matched_or_reason = _dash(item.get("matched_number")) if item.get("matched_number") else reason
             payout_hint = self._payout_hint(item)
             self._set_item_row(
@@ -189,8 +199,8 @@ class _SettlementSnapshotDialog(QDialog):
                     _dash(item.get("selection")),
                     _dash(item.get("amount")),
                     _snapshot_result_text(item),
-                    _dash(item.get("odds")),
-                    _dash(item.get("payout_amount")),
+                    _dash(item.get("odds")) if "odds" in item else LEGACY_NO_ODDS_TEXT,
+                    _dash(item.get("payout_amount")) if "payout_amount" in item else LEGACY_NO_PAYOUT_TEXT,
                     payout_hint,
                     matched_or_reason,
                     unsupported_reason,
@@ -201,6 +211,8 @@ class _SettlementSnapshotDialog(QDialog):
         source = _dash(item.get("odds_source"))
         plan = _dash(item.get("odds_plan_name"))
         note = _dash(item.get("payout_note"))
+        if source == "—" and plan == "—" and note == "—":
+            return "—"
         return f"{source} / {plan} / {note}"
 
     def _set_item_row(self, row_idx: int, values: list[str]) -> None:
@@ -210,7 +222,7 @@ class _SettlementSnapshotDialog(QDialog):
             self._items_table.setItem(row_idx, col_idx, item)
 
     def _show_empty_snapshot(self) -> None:
-        self._empty_label.setText("快照数据为空或格式不完整。")
+        self._empty_label.setText(f"{MALFORMED_SNAPSHOT_TEXT}。")
         self._items_table.setRowCount(0)
 
 

@@ -31,6 +31,9 @@ from services.order_import_service import OrderImportService
 from services.settings_service import SettingsService
 from ui.app_events import app_events
 
+MISSING_FIELD_TEXT = "—"
+LEGACY_MISSING_FIELD_TEXT = "旧报告无此字段"
+
 
 class OrderImportDialog(QDialog):
     """订单导入预览对话框。
@@ -249,7 +252,7 @@ class OrderImportDialog(QDialog):
             "订单文件 (*.txt *.csv *.xlsx);;Text Files (*.txt);;CSV Files (*.csv);;Excel Files (*.xlsx);;All Files (*)",
         )
         if not path:
-            self._stats_label.setText("已取消选择文件；当前不会写数据库")
+            self._stats_label.setText("已取消选择文件；尚未确认导入")
             return
         self.load_file(path)
 
@@ -301,7 +304,7 @@ class OrderImportDialog(QDialog):
             self._last_import_time = None
             self._last_import_context = None
             self._update_import_button()
-            self._stats_label.setText(f"{message}；当前不会写数据库")
+            self._stats_label.setText(f"{message}；尚未确认导入")
             QMessageBox.warning(self, "订单导入预览", message)
             return
 
@@ -317,7 +320,7 @@ class OrderImportDialog(QDialog):
             self._last_import_time = None
             self._last_import_context = None
             self._fill_preview(self._preview)
-            self._stats_label.setText(f"{result.error}；当前不会写数据库")
+            self._stats_label.setText(f"{result.error}；尚未确认导入")
             QMessageBox.warning(self, "订单导入预览", result.error)
             return
 
@@ -346,31 +349,33 @@ class OrderImportDialog(QDialog):
         self._fill_preview(self._preview)
 
     def _fill_preview(self, preview: OrderImportPreview) -> None:
-        self._table.setRowCount(len(preview.rows))
-        for row_index, row in enumerate(preview.rows):
+        rows = self._preview_rows(preview)
+        self._table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
             self._fill_row(row_index, row)
         self._update_stats(preview)
 
-    def _fill_row(self, row_index: int, row: OrderImportPreviewRow) -> None:
-        import_status = row.import_status
+    def _fill_row(self, row_index: int, row: OrderImportPreviewRow | object) -> None:
+        row_success = self._row_success(row)
+        import_status = self._row_attr(row, "import_status", LEGACY_MISSING_FIELD_TEXT)
         if (
             not self._import_completed
-            and row.success
-            and row.history_duplicate_warning
+            and row_success
+            and self._row_has_text(row, "history_duplicate_warning")
             and self._chk_skip_history_duplicate.isChecked()
         ):
             import_status = "待跳过，疑似历史重复"
         values = [
-            str(row.line_number),
-            row.raw_text,
-            row.region,
-            "成功" if row.success else "失败",
-            row.bet_type_summary,
-            f"{row.amount_total:.2f}" if row.success else "0.00",
-            str(row.item_count),
+            str(self._row_attr(row, "line_number", MISSING_FIELD_TEXT)),
+            self._row_attr(row, "raw_text"),
+            self._row_attr(row, "region"),
+            "成功" if row_success else "失败",
+            self._row_attr(row, "bet_type_summary"),
+            self._row_amount_text(row) if row_success else "0.00",
+            str(self._row_attr(row, "item_count", MISSING_FIELD_TEXT)),
             self._row_error_text(row),
             import_status,
-            row.import_error,
+            self._row_attr(row, "import_error"),
         ]
         for column, value in enumerate(values):
             item = QTableWidgetItem(value)
@@ -380,7 +385,7 @@ class OrderImportDialog(QDialog):
                 else Qt.AlignmentFlag.AlignCenter
             )
             if column == 3:
-                item.setForeground(Qt.GlobalColor.darkGreen if row.success else Qt.GlobalColor.red)
+                item.setForeground(Qt.GlobalColor.darkGreen if row_success else Qt.GlobalColor.red)
             if column == 8 and import_status == "已导入":
                 item.setForeground(Qt.GlobalColor.darkGreen)
             if column == 8 and ("失败" in import_status or "跳过" in import_status):
@@ -388,47 +393,66 @@ class OrderImportDialog(QDialog):
             self._table.setItem(row_index, column, item)
 
     def _update_stats(self, preview: OrderImportPreview) -> None:
+        rows = self._preview_rows(preview)
+        success_count = sum(1 for row in rows if self._row_success(row))
+        failure_count = len(rows) - success_count
+        history_duplicate_count = sum(1 for row in rows if self._row_has_text(row, "history_duplicate_warning"))
         history_text = ""
-        if preview.history_duplicate_error:
-            history_text = f"    {preview.history_duplicate_error}"
-        elif preview.history_duplicate_check_enabled:
-            history_text = f"    历史疑似重复：{preview.history_duplicate_count}"
+        history_error = self._preview_attr(preview, "history_duplicate_error", "")
+        if history_error:
+            history_text = f"    {history_error}"
+        elif self._preview_attr(preview, "history_duplicate_check_enabled", False):
+            history_text = f"    历史疑似重复：{history_duplicate_count}"
         self._stats_label.setText(
-            f"总行数：{preview.total_count}    "
-            f"解析成功：{preview.success_count}    "
-            f"解析失败：{preview.failure_count}    "
-            f"跳过空行：{preview.skipped_count}    "
-            f"当前不会写数据库{history_text}"
+            f"总行数：{len(rows)}    "
+            f"解析成功：{success_count}    "
+            f"解析失败：{failure_count}    "
+            f"跳过空行：{self._preview_attr(preview, 'skipped_count', 0)}    "
+            f"尚未确认导入{history_text}"
         )
         self._update_import_button()
 
     def _update_import_button(self) -> None:
         if not hasattr(self, "_btn_confirm_import"):
             return
+        success_count = sum(1 for row in self._preview_rows(self._preview) if self._row_success(row))
         self._btn_confirm_import.setEnabled(
-            not self._import_completed and self._preview.success_count > 0
+            not self._import_completed and success_count > 0
         )
         if self._import_completed:
             self._btn_confirm_import.setToolTip("本次导入已完成；请重新解析或重新选择文件后再次导入")
-        elif self._preview.success_count <= 0:
+        elif success_count <= 0:
             self._btn_confirm_import.setToolTip("没有解析成功行，不能导入")
         else:
             self._btn_confirm_import.setToolTip("只导入解析成功行；失败行不会导入")
 
-    def _row_error_text(self, row: OrderImportPreviewRow) -> str:
-        parts = [part for part in (row.error, row.duplicate_warning, row.history_duplicate_warning) if part]
-        return "；".join(parts)
-
-    def _row_issue_text(self, row: OrderImportPreviewRow) -> str:
+    def _row_error_text(self, row: OrderImportPreviewRow | object) -> str:
         parts = [
             part
-            for part in (row.error, row.duplicate_warning, row.history_duplicate_warning, row.import_error)
-            if part
+            for part in (
+                self._row_attr(row, "error"),
+                self._row_attr(row, "duplicate_warning"),
+                self._row_attr(row, "history_duplicate_warning"),
+            )
+            if part and part != MISSING_FIELD_TEXT
         ]
-        return "；".join(parts)
+        return "；".join(parts) or MISSING_FIELD_TEXT
+
+    def _row_issue_text(self, row: OrderImportPreviewRow | object) -> str:
+        parts = [
+            part
+            for part in (
+                self._row_attr(row, "error"),
+                self._row_attr(row, "duplicate_warning"),
+                self._row_attr(row, "history_duplicate_warning"),
+                self._row_attr(row, "import_error"),
+            )
+            if part and part != MISSING_FIELD_TEXT
+        ]
+        return "；".join(parts) or MISSING_FIELD_TEXT
 
     def _has_duplicate_rows(self) -> bool:
-        return any(row.duplicate_warning for row in self._preview.rows)
+        return any(self._row_has_text(row, "duplicate_warning") for row in self._preview_rows(self._preview))
 
     def _on_confirm_import(self) -> None:
         if self._preview.success_count <= 0:
@@ -513,7 +537,7 @@ class OrderImportDialog(QDialog):
 
     def _on_copy_error_report(self) -> None:
         QApplication.clipboard().setText(self._build_error_report())
-        self._stats_label.setText("已复制错误报告；当前不会写数据库")
+        self._stats_label.setText("已复制错误报告；尚未确认导入")
 
     def _on_copy_import_result(self) -> None:
         report = self._build_import_result_report()
@@ -548,22 +572,30 @@ class OrderImportDialog(QDialog):
         self._stats_label.setText(f"已导出导入结果：{path}")
 
     def _build_error_report(self) -> str:
-        failed_rows = [row for row in self._preview.rows if not row.success]
+        failed_rows = [row for row in self._preview_rows(self._preview) if not self._row_success(row)]
         if not failed_rows:
             return "当前没有解析失败行"
         lines = ["订单导入预览错误报告", "行号\t原始文本\t错误原因"]
         for row in failed_rows:
-            lines.append(f"{row.line_number}\t{row.raw_text}\t{self._row_error_text(row) or '解析失败'}")
+            lines.append(
+                f"{self._row_attr(row, 'line_number', MISSING_FIELD_TEXT)}\t"
+                f"{self._row_attr(row, 'raw_text')}\t"
+                f"{self._row_error_text(row) or '解析失败'}"
+            )
         return "\n".join(lines)
 
     def _build_import_result_report(self) -> str:
-        if not self._preview.rows:
+        rows = self._preview_rows(self._preview)
+        if not rows:
             return "当前暂无导入结果"
-        imported_count = sum(1 for row in self._preview.rows if row.import_status == "已导入")
-        save_failed_count = sum(1 for row in self._preview.rows if row.import_status == "导入失败")
-        skipped_parse_failed = sum(1 for row in self._preview.rows if not row.success)
-        attempted_count = sum(1 for row in self._preview.rows if row.success)
-        skipped_history_duplicate = sum(1 for row in self._preview.rows if row.import_status == "已跳过，疑似历史重复")
+        imported_count = sum(1 for row in rows if self._row_attr(row, "import_status") == "已导入")
+        save_failed_count = sum(1 for row in rows if self._row_attr(row, "import_status") == "导入失败")
+        skipped_parse_failed = sum(1 for row in rows if not self._row_success(row))
+        attempted_count = sum(1 for row in rows if self._row_success(row))
+        skipped_history_duplicate = sum(
+            1 for row in rows if self._row_attr(row, "import_status") == "已跳过，疑似历史重复"
+        )
+        history_duplicate_count = sum(1 for row in rows if self._row_has_text(row, "history_duplicate_warning"))
         region_text = self._region_combo.currentText()
         import_time = self._last_import_time or datetime.now()
         customer_name, channel, config_plan_name = self._report_context()
@@ -576,41 +608,42 @@ class OrderImportDialog(QDialog):
             f"申报人：{customer_name}",
             f"渠道：{channel}",
             f"配置方案：{config_plan_name}",
-            f"总行数：{self._preview.total_count}",
-            f"跳过空行数：{self._preview.skipped_count}",
-            f"解析成功数：{self._preview.success_count}",
-            f"解析失败数：{self._preview.failure_count}",
+            f"总行数：{len(rows)}",
+            f"跳过空行数：{self._preview_attr(self._preview, 'skipped_count', 0)}",
+            f"解析成功数：{attempted_count}",
+            f"解析失败数：{skipped_parse_failed}",
             f"本次应导入数：{attempted_count}",
             f"成功导入数：{imported_count}",
             f"保存失败数：{save_failed_count}",
             f"跳过解析失败行数：{skipped_parse_failed}",
-            f"历史重复检测：{'已启用' if self._preview.history_duplicate_check_enabled else '未启用'}",
-            f"历史疑似重复行数：{self._preview.history_duplicate_count}",
+            f"历史重复检测：{'已启用' if self._preview_attr(self._preview, 'history_duplicate_check_enabled', False) else '未启用'}",
+            f"历史疑似重复行数：{history_duplicate_count}",
             f"跳过历史重复行数：{skipped_history_duplicate}",
             "",
             "每行明细",
             "行号\t原始文本\t解析状态\t导入状态\t地区\t申报人\t渠道\t配置方案\t投注类型\t金额\t条目数\t历史重复提示\t历史订单\t是否跳过\t错误原因\t订单ID",
         ]
-        for row in self._preview.rows:
+        for row in rows:
             lines.append(
                 "\t".join(
                     [
-                        str(row.line_number),
-                        row.raw_text,
-                        "成功" if row.success else "失败",
-                        row.import_status,
-                        row.region,
+                        str(self._row_attr(row, "line_number", MISSING_FIELD_TEXT)),
+                        self._row_attr(row, "raw_text"),
+                        "成功" if self._row_success(row) else "失败",
+                        self._row_attr(row, "import_status", LEGACY_MISSING_FIELD_TEXT),
+                        self._row_attr(row, "region"),
                         customer_name,
                         channel,
                         config_plan_name,
-                        row.bet_type_summary,
-                        f"{row.amount_total:.2f}" if row.success else "0.00",
-                        str(row.item_count),
-                        row.history_duplicate_warning,
-                        row.history_duplicate_order_no or str(row.history_duplicate_order_id or ""),
-                        "是" if row.import_status == "已跳过，疑似历史重复" else "否",
+                        self._row_attr(row, "bet_type_summary"),
+                        self._row_amount_text(row) if self._row_success(row) else "0.00",
+                        str(self._row_attr(row, "item_count", MISSING_FIELD_TEXT)),
+                        self._row_attr(row, "history_duplicate_warning"),
+                        self._row_attr(row, "history_duplicate_order_no")
+                        or str(self._row_attr(row, "history_duplicate_order_id", "")),
+                        "是" if self._row_attr(row, "import_status") == "已跳过，疑似历史重复" else "否",
                         self._row_issue_text(row),
-                        str(row.order_id or ""),
+                        str(self._row_attr(row, "order_id", "")),
                     ]
                 )
             )
@@ -649,26 +682,55 @@ class OrderImportDialog(QDialog):
                     "错误原因",
                 ]
             )
-            for row in self._preview.rows:
+            for row in self._preview_rows(self._preview):
                 writer.writerow(
                     [
-                        row.line_number,
-                        row.raw_text,
-                        "成功" if row.success else "失败",
-                        row.import_status,
-                        row.region,
+                        self._row_attr(row, "line_number", MISSING_FIELD_TEXT),
+                        self._row_attr(row, "raw_text"),
+                        "成功" if self._row_success(row) else "失败",
+                        self._row_attr(row, "import_status", LEGACY_MISSING_FIELD_TEXT),
+                        self._row_attr(row, "region"),
                         customer_name,
                         channel,
                         config_plan_name,
-                        row.bet_type_summary,
-                        f"{row.amount_total:.2f}" if row.success else "0.00",
-                        row.item_count,
-                        row.history_duplicate_warning,
-                        row.history_duplicate_order_no or str(row.history_duplicate_order_id or ""),
-                        "是" if row.import_status == "已跳过，疑似历史重复" else "否",
+                        self._row_attr(row, "bet_type_summary"),
+                        self._row_amount_text(row) if self._row_success(row) else "0.00",
+                        self._row_attr(row, "item_count", MISSING_FIELD_TEXT),
+                        self._row_attr(row, "history_duplicate_warning"),
+                        self._row_attr(row, "history_duplicate_order_no")
+                        or str(self._row_attr(row, "history_duplicate_order_id", "")),
+                        "是" if self._row_attr(row, "import_status") == "已跳过，疑似历史重复" else "否",
                         self._row_issue_text(row),
                     ]
                 )
+
+    def _preview_rows(self, preview: object) -> list[object]:
+        rows = getattr(preview, "rows", [])
+        return list(rows) if isinstance(rows, list) else []
+
+    def _preview_attr(self, preview: object, name: str, default: object = MISSING_FIELD_TEXT) -> object:
+        value = getattr(preview, name, default)
+        return value if value not in (None, "") else default
+
+    def _row_attr(self, row: object, name: str, default: object = MISSING_FIELD_TEXT) -> str:
+        value = getattr(row, name, default)
+        return str(value) if value not in (None, "") else str(default)
+
+    def _row_success(self, row: object) -> bool:
+        return bool(getattr(row, "success", False))
+
+    def _row_has_text(self, row: object, name: str) -> bool:
+        value = getattr(row, name, "")
+        return value not in (None, "")
+
+    def _row_amount_text(self, row: object) -> str:
+        value = getattr(row, "amount_total", None)
+        if value in (None, ""):
+            return MISSING_FIELD_TEXT
+        try:
+            return f"{float(value):.2f}"
+        except (TypeError, ValueError):
+            return MISSING_FIELD_TEXT
 
     def _report_context(self) -> tuple[str, str, str]:
         if self._last_import_context is not None:

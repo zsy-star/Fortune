@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import json
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -117,18 +118,19 @@ class AdjustmentRecordService:
             )
 
     def format_record_text(self, record: AdjustmentRecordResult) -> str:
-        title = f"{ADJUSTMENT_TYPE_LABELS.get(record.adjustment_type, record.adjustment_type)}调单记录"
+        type_label = ADJUSTMENT_TYPE_LABELS.get(record.adjustment_type, "未知类型")
+        title = f"{type_label}调单记录"
         lines = [
             title,
             f"记录 ID：{record.id}",
             f"保存时间：{record.created_at.strftime('%Y-%m-%d %H:%M:%S')}",
-            f"地区：{record.region}",
-            f"原金额合计：{record.original_total}",
-            f"调整金额合计：{record.adjustment_total}",
-            f"调整后合计：{record.after_total}",
-            f"条目数：{record.item_count}",
-            f"正调整数：{record.positive_count}",
-            f"负调整数：{record.negative_count}",
+            f"地区：{self._display_value(record.region)}",
+            f"原金额合计：{self._display_value(record.original_total)}",
+            f"调整金额合计：{self._display_value(record.adjustment_total)}",
+            f"调整后合计：{self._display_value(record.after_total)}",
+            f"条目数：{self._display_value(record.item_count)}",
+            f"正调整数：{self._display_value(record.positive_count)}",
+            f"负调整数：{self._display_value(record.negative_count)}",
         ]
         if record.note:
             lines.append(f"备注：{record.note}")
@@ -146,6 +148,16 @@ class AdjustmentRecordService:
 
     def _format_snapshot(self, snapshot: Any, indent: int = 0) -> list[str]:
         prefix = "  " * indent
+        if snapshot in (None, "", {}, []):
+            return [f"{prefix}—"]
+        if isinstance(snapshot, str):
+            parsed = self._parse_legacy_snapshot(snapshot)
+            if parsed is not None:
+                return self._format_snapshot(parsed, indent)
+            return [
+                f"{prefix}旧格式调单快照，仅显示原始内容",
+                f"{prefix}{snapshot}",
+            ]
         if isinstance(snapshot, dict):
             lines: list[str] = []
             for key, value in snapshot.items():
@@ -153,21 +165,35 @@ class AdjustmentRecordService:
                     lines.append(f"{prefix}{key}:")
                     lines.extend(self._format_snapshot(value, indent + 1))
                 else:
-                    lines.append(f"{prefix}{key}: {value}")
-            return lines or [f"{prefix}<空>"]
+                    lines.append(f"{prefix}{key}: {self._display_value(value)}")
+            return lines or [f"{prefix}—"]
         if isinstance(snapshot, list):
             lines = []
             for index, value in enumerate(snapshot, start=1):
                 if isinstance(value, dict):
-                    compact = "\t".join(f"{key}={item}" for key, item in value.items())
+                    compact = "\t".join(f"{key}={self._display_value(item)}" for key, item in value.items())
                     lines.append(f"{prefix}{index}. {compact}")
                 elif isinstance(value, list):
                     lines.append(f"{prefix}{index}.")
                     lines.extend(self._format_snapshot(value, indent + 1))
                 else:
-                    lines.append(f"{prefix}{index}. {value}")
-            return lines or [f"{prefix}<空>"]
-        return [f"{prefix}{snapshot}"]
+                    lines.append(f"{prefix}{index}. {self._display_value(value)}")
+            return lines or [f"{prefix}—"]
+        return [f"{prefix}{self._display_value(snapshot)}"]
+
+    def _parse_legacy_snapshot(self, snapshot: str) -> Any | None:
+        try:
+            parsed = json.loads(snapshot)
+        except (TypeError, ValueError):
+            return None
+        if isinstance(parsed, (dict, list)):
+            return parsed
+        return None
+
+    def _display_value(self, value: Any) -> str:
+        if value in (None, "", {}, []):
+            return "—"
+        return str(value)
 
     def _validate_payload(self, payload: AdjustmentRecordCreate) -> None:
         if payload.adjustment_type not in VALID_ADJUSTMENT_TYPES:
@@ -208,14 +234,14 @@ class AdjustmentRecordService:
             adjustment_type=record.adjustment_type,
             region=record.region,
             created_at=record.created_at,
-            source_filter=dict(record.source_filter or {}),
+            source_filter=record.source_filter if isinstance(record.source_filter, dict) else {},
             original_total=record.original_total,
             adjustment_total=record.adjustment_total,
             after_total=record.after_total,
             item_count=record.item_count,
             positive_count=record.positive_count,
             negative_count=record.negative_count,
-            record_snapshot=dict(record.record_snapshot or {}),
-            summary_snapshot=dict(record.summary_snapshot or {}),
+            record_snapshot=record.record_snapshot if record.record_snapshot is not None else {},
+            summary_snapshot=record.summary_snapshot if record.summary_snapshot is not None else {},
             note=record.note,
         )

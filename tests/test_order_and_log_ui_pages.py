@@ -718,7 +718,37 @@ def test_order_detail_missing_optional_snapshot_fields_does_not_crash(session_fa
     assert "投注类型：特码" in text
     assert "结果：命中" in text
     assert "金额：—" in text
+    assert "赔率：旧记录无赔率数据" in text
+    assert "中奖金额：旧记录无赔付数据" in text
     assert "命中 / 未中说明：—" in text
+
+
+def test_order_detail_legacy_result_snapshot_result_field_does_not_crash(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    order = create_single_item_order(service, selection="01", customer="旧结果字段")
+    draw = create_settlement_draw(session_factory)
+    SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+    with session_factory() as session:
+        record = session.query(SettlementRecord).filter_by(order_id=order.id).one()
+        record.result_snapshot = {
+            "items": [
+                {"bet_type": "特码", "selection": "01", "amount": "10.00", "result": "hit"},
+                {"bet_type": "特码", "selection": "02", "amount": "10.00", "result": "未中"},
+                {"bet_type": "旧玩法", "selection": "X", "amount": "10.00", "result": "unsupported"},
+            ]
+        }
+        session.commit()
+
+    page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
+    select_order_row(page, order.order_no)
+    text = page._macau_result.toPlainText()
+
+    assert "结果：命中" in text
+    assert "结果：未中" in text
+    assert "结果：不支持" in text
+    assert "旧记录无赔率数据" in text
+    assert "旧记录无赔付数据" in text
 
 
 def test_order_detail_shows_preview_detail_after_preview_dialog(session_factory, monkeypatch) -> None:
@@ -837,8 +867,9 @@ def test_order_detail_malformed_snapshot_does_not_crash(session_factory) -> None
     page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
     select_order_row(page, order.order_no)
 
-    assert "快照数据为空或格式不完整" in page._macau_result.toPlainText()
-    assert "快照数据为空或格式不完整" in page._combined_result.toPlainText()
+    assert "快照格式异常，无法完整展示" in page._macau_result.toPlainText()
+    assert "快照格式异常，无法完整展示" in page._combined_result.toPlainText()
+    assert "Traceback" not in page._macau_result.toPlainText()
 
 
 def test_order_detail_page_pagination_state(session_factory) -> None:

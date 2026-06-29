@@ -435,3 +435,65 @@ def test_adjustment_record_dialog_lists_details_copy_export_and_print(
     dialog._on_print_detail()
     assert "请复制或导出后打印" in dialog._detail.toPlainText()
     assert "已生成打印文本" in dialog._status_label.text()
+
+
+def test_adjustment_record_dialog_handles_legacy_empty_string_and_unknown_type(session_factory) -> None:
+    app()
+    with session_factory() as session:
+        session.add_all(
+            [
+                AdjustmentRecord(
+                    adjustment_type="unknown",
+                    region="澳门",
+                    source_filter={},
+                    original_total="",
+                    adjustment_total="",
+                    after_total="",
+                    item_count=0,
+                    positive_count=0,
+                    negative_count=0,
+                    record_snapshot="旧格式文本快照",
+                    summary_snapshot='{"summary": {"total": "10.00"}}',
+                    note=None,
+                ),
+                AdjustmentRecord(
+                    adjustment_type="special",
+                    region="香港",
+                    source_filter={},
+                    original_total="0.00",
+                    adjustment_total="0.00",
+                    after_total="0.00",
+                    item_count=0,
+                    positive_count=0,
+                    negative_count=0,
+                    record_snapshot=None,
+                    summary_snapshot=None,
+                    note="",
+                ),
+            ]
+        )
+        session.commit()
+
+    dialog = AdjustmentRecordDialog(service=AdjustmentRecordService(session_factory))
+    unknown_row = next(
+        row for row in range(dialog._table.rowCount()) if dialog._table.item(row, 1).text() == "未知类型"
+    )
+    dialog._table.selectRow(unknown_row)
+    text = dialog._detail.toPlainText()
+
+    assert dialog._table.rowCount() == 2
+    assert "未知类型调单记录" in text
+    assert "旧格式调单快照，仅显示原始内容" in text
+    assert "旧格式文本快照" in text
+    assert "summary:" in text
+    assert "total: 10.00" in text
+    assert "Traceback" not in text
+
+    special_row = next(
+        row for row in range(dialog._table.rowCount()) if dialog._table.item(row, 1).text() == "特码"
+    )
+    dialog._table.selectRow(special_row)
+    empty_text = dialog._detail.toPlainText()
+    assert "特码调单记录" in empty_text
+    assert "明细快照\n—" in empty_text
+    assert "统计快照\n—" in empty_text

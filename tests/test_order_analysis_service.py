@@ -179,6 +179,42 @@ def test_order_analysis_report_contains_top_info_and_safety_notes(session_factor
     assert "盈亏字段仍不代表余额或真实净利润" in report
 
 
+def test_order_analysis_ignores_legacy_settlement_snapshot_without_payout(session_factory) -> None:
+    order_service = OrderService(session_factory)
+    order = create_order(order_service, region="澳门", amount="10")
+    draw = DrawService(session_factory).create_draw(
+        LotteryDrawCreate(
+            region="澳门",
+            issue_number="OLD-PAYOUT",
+            draw_date=date(2026, 1, 2),
+            regular_numbers=[1, 2, 3, 4, 5, 6],
+            special_number=7,
+            source="test",
+        )
+    )
+    with session_factory() as session:
+        session.add(
+            SettlementRecord(
+                order_id=order.id,
+                draw_id=draw.id,
+                region="澳门",
+                issue_number="OLD-PAYOUT",
+                total_items=1,
+                hit_count=1,
+                miss_count=0,
+                unsupported_count=0,
+                total_amount=Decimal("10.00"),
+                result_snapshot={"items": [{"bet_type": "特码", "selection": "01", "result": "hit"}]},
+            )
+        )
+        session.commit()
+
+    report = OrderAnalysisService(session_factory).get_workbench(region="澳门").report_text
+
+    assert "已结算中奖金额：0.00" in report
+    assert "部分旧快照无赔付数据，未计入中奖金额统计；记录数：1" in report
+
+
 def test_order_analysis_service_does_not_write_database(session_factory) -> None:
     order_service = OrderService(session_factory)
     create_order(order_service, region="澳门", amount="10")

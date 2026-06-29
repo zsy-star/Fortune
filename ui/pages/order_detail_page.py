@@ -47,6 +47,9 @@ VOIDABLE_ORDER_STATUSES = {"active", "pending"}
 ORDER_STATUS_SETTLED = "settled"
 ORDER_STATUS_VOIDED = "voided"
 WAVE_COLORS = {"红波": "#e85d5d", "蓝波": "#4f78d8", "绿波": "#2d9d78"}
+MALFORMED_SNAPSHOT_TEXT = "快照格式异常，无法完整展示"
+LEGACY_NO_PAYOUT_TEXT = "旧记录无赔付数据"
+LEGACY_NO_ODDS_TEXT = "旧记录无赔率数据"
 WINNING_FILTER_OPTIONS = [
     ("不限中奖", None),
     ("未结算", "未结算"),
@@ -813,7 +816,7 @@ class OrderDetailPage(QWidget):
             if display_status in status_counts:
                 status_counts[display_status] += 1
 
-        payout_text = _money(total_payout) if payout_values else "—（旧记录无赔付数据）"
+        payout_text = _money(total_payout) if payout_values else f"—（{LEGACY_NO_PAYOUT_TEXT}）"
         return (
             f"订单数：{len(orders)}\n"
             f"已结算数：{status_counts['已结算']}    未结算数：{status_counts['未结算']}\n"
@@ -1007,7 +1010,7 @@ class OrderDetailPage(QWidget):
             payout_text = (
                 _money(record.total_payout_amount)
                 if self._snapshot_has_payout(record.result_snapshot)
-                else "旧记录无赔付数据"
+                else LEGACY_NO_PAYOUT_TEXT
             )
             summary = (
                 f"订单 ID：{record.order_id}\n"
@@ -1029,25 +1032,17 @@ class OrderDetailPage(QWidget):
 
     def _snapshot_item_summary(self, snapshot: object) -> str:
         if not isinstance(snapshot, dict):
-            return "快照数据为空或格式不完整"
+            return MALFORMED_SNAPSHOT_TEXT
         items = snapshot.get("items")
         if not isinstance(items, list) or not items:
-            return "快照数据为空或格式不完整"
+            return MALFORMED_SNAPSHOT_TEXT
 
         summaries: list[str] = []
-        required_keys = {"bet_type", "selection", "is_supported", "is_winner"}
         for item in items:
-            if not isinstance(item, dict) or not required_keys.issubset(item):
-                return "快照数据为空或格式不完整"
-            if item["is_supported"] is False:
-                result_text = "不支持"
-            elif item["is_winner"] is True:
-                result_text = "命中"
-            elif item["is_winner"] is False:
-                result_text = "未中"
-            else:
-                result_text = "状态未知"
-            summaries.append(f"{_dash(item['bet_type'])}/{_dash(item['selection'])}：{result_text}")
+            if not isinstance(item, dict):
+                return MALFORMED_SNAPSHOT_TEXT
+            result_text = self._settlement_item_result_text(item)
+            summaries.append(f"{_dash(item.get('bet_type'))}/{_dash(item.get('selection'))}：{result_text}")
 
         visible = summaries[:3]
         suffix = f"；另有 {len(summaries) - 3} 条" if len(summaries) > 3 else ""
@@ -1066,10 +1061,10 @@ class OrderDetailPage(QWidget):
 
     def _build_settlement_detail_text(self, snapshot: object) -> str:
         if not isinstance(snapshot, dict):
-            return "结算明细：快照数据为空或格式不完整"
+            return f"结算明细：{MALFORMED_SNAPSHOT_TEXT}"
         items = snapshot.get("items")
         if not isinstance(items, list) or not items:
-            return "结算明细：快照数据为空或格式不完整"
+            return f"结算明细：{MALFORMED_SNAPSHOT_TEXT}"
 
         lines = [
             "结算明细：",
@@ -1079,14 +1074,14 @@ class OrderDetailPage(QWidget):
         ]
         for index, item in enumerate(items, start=1):
             if not isinstance(item, dict):
-                lines.append(f"{index}. 快照明细格式不完整")
+                lines.append(f"{index}. {MALFORMED_SNAPSHOT_TEXT}")
                 continue
             result_text = self._settlement_item_result_text(item)
             reference = self._settlement_item_reference_text(item)
             reason = _dash(item.get("reason"))
             unsupported_reason = _dash(item.get("unsupported_reason"))
-            odds_text = _dash(item.get("odds"))
-            payout_text = _dash(item.get("payout_amount"))
+            odds_text = _dash(item.get("odds")) if "odds" in item else LEGACY_NO_ODDS_TEXT
+            payout_text = _dash(item.get("payout_amount")) if "payout_amount" in item else LEGACY_NO_PAYOUT_TEXT
             odds_source = _dash(item.get("odds_source"))
             odds_plan = _dash(item.get("odds_plan_name"))
             payout_note = _dash(item.get("payout_note"))
@@ -1110,6 +1105,13 @@ class OrderDetailPage(QWidget):
         return "\n".join(lines)
 
     def _settlement_item_result_text(self, item: dict[str, object]) -> str:
+        result = str(item.get("result") or item.get("status") or "").strip().lower()
+        if result in {"hit", "win", "winner", "命中", "中"}:
+            return "命中"
+        if result in {"miss", "lose", "loser", "未中", "不中"}:
+            return "未中"
+        if result in {"unsupported", "不支持", "暂不支持"}:
+            return "不支持"
         if item.get("is_supported") is False:
             return "不支持"
         if item.get("is_winner") is True:
@@ -1144,7 +1146,7 @@ class OrderDetailPage(QWidget):
         if record is None:
             return "—"
         if not self._snapshot_has_payout(record.result_snapshot):
-            return "旧记录无赔付数据"
+            return LEGACY_NO_PAYOUT_TEXT
         return _money(record.total_payout_amount)
 
     def _snapshot_has_payout(self, snapshot: object) -> bool:
