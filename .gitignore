@@ -50,6 +50,7 @@ coverage.xml
 *.py.cover
 .hypothesis/
 .pytest_cache/
+.pytest_cache*
 .pytest_tmp/
 cover/
 
@@ -210,6 +211,7 @@ marimo/_lsp/
 __marimo__/
 
 # Fortune local database and runtime files
+**pycache**/
 data/*.db
 data/*.sqlite
 data/*.sqlite3

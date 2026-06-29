@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import os
+import subprocess
 from pathlib import Path
 
 import matplotlib
@@ -10,9 +11,19 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QCheckBox, QLabel, QLineEdit, QPushButton
 
+from schemas.order_schema import OrderCreate, OrderItemCreate
+from services.adjustment_record_service import AdjustmentRecordService
 from services.log_service import LogService
 from services.draw_service import DrawService
+from services.order_import_service import OrderImportService
+from services.order_intake_service import OrderIntakeService
 from services.order_service import OrderService
+from services.settings_service import SettingsService
+from services.settlement_service import SettlementService
+from ui.dialogs.adjustment_record_dialog import AdjustmentRecordDialog
+from ui.dialogs.order_import_dialog import OrderImportDialog
+from ui.dialogs.settings_dialog import SettingsDialog
+from ui.dialogs.settlement_preview_dialog import SettlementPreviewDialog
 from ui.main_window import MainWindow
 from ui.matplotlib_setup import configure_matplotlib
 from ui.pages.lianxiao_order_page import LianxiaoOrderPage
@@ -24,6 +35,8 @@ from ui.pages.order_detail_page import OrderDetailPage
 from ui.pages.overview_page import OverviewPage
 from ui.pages.settlement_ledger_page import SettlementLedgerPage
 from ui.pages.special_order_page import SpecialOrderPage
+from ui.pages.today_draw_page import TodayDrawPage
+from ui.pages.tools_page import ToolsPage
 from ui.widgets.nav_hover_menu import NavHoverMenuButton
 from ui.windows.record_order_window import RecordOrderWindow
 from ui.windows.split_order_window import SplitOrderWindow
@@ -58,6 +71,61 @@ def test_overview_and_order_analysis_pages_create_offscreen(session_factory) -> 
 
     assert overview._recent_orders_view.toPlainText()
     assert analysis._report_view.toPlainText()
+
+
+def test_commercial_test_version_main_pages_and_dialogs_create_offscreen(session_factory) -> None:
+    app()
+    order_service = OrderService(session_factory)
+    order = order_service.create_order(
+        OrderCreate(
+            customer_name="集成验收",
+            channel="测试",
+            region="澳门",
+            raw_text="01各10",
+            source="test",
+            items=[OrderItemCreate(bet_type="特码", selection="01", amount="10")],
+        )
+    )
+
+    widgets = [
+        MainWindow(),
+        OverviewPage(order_service=order_service),
+        OrderAnalysisPage(order_service=order_service),
+        SpecialOrderPage(order_service=order_service),
+        LianxiaoOrderPage(order_service=order_service),
+        TodayDrawPage(draw_service=DrawService(session_factory)),
+        DrawHistoryPage(draw_service=DrawService(session_factory)),
+        OrderDetailPage(order_service=order_service, log_service=LogService(session_factory)),
+        SettlementLedgerPage(order_service=order_service),
+        OperationLogPage(log_service=LogService(session_factory)),
+        NumberCatalogPage(),
+        ToolsPage(),
+        SettingsDialog(settings_service=SettingsService(session_factory)),
+        RecordOrderWindow(settings_service=EmptySettingsService()),
+        SplitOrderWindow(settings_service=EmptySettingsService()),
+        OrderImportDialog(
+            import_service=OrderImportService(OrderIntakeService(session_factory)),
+            settings_service=EmptySettingsService(),
+        ),
+        AdjustmentRecordDialog(service=AdjustmentRecordService(session_factory)),
+        SettlementPreviewDialog(
+            order.id,
+            order_service=order_service,
+            draw_service=DrawService(session_factory),
+            settlement_service=SettlementService(session_factory),
+        ),
+    ]
+
+    assert all(widget is not None for widget in widgets)
+    assert widgets[0].windowTitle()
+    assert widgets[-1].is_valid()
+    for widget in widgets:
+        close = getattr(widget, "close", None)
+        if callable(close):
+            close()
+        delete_later = getattr(widget, "deleteLater", None)
+        if callable(delete_later):
+            delete_later()
 
 
 def test_lianxiao_order_page_first_stage_is_readonly(session_factory) -> None:
@@ -283,6 +351,10 @@ def test_readme_and_scope_document_describe_commercial_test_scope() -> None:
 
     for heading in ("当前测试版已完成", "当前测试版暂未开放", "后续规划"):
         assert heading in readme
+    for document in (readme, scope, feature_status):
+        assert "商用测试版 / 内部试用版" in document
+        assert "正式版、完整商业版" in document
+        assert "已完成全部功能" in document
     assert "录单窗口尚未接入数据库" not in readme
     assert "订单详情、数据总览、订单分析仍未读取真实订单数据" not in readme
     assert "订单导入、批量删除、清空订单" not in readme
@@ -293,9 +365,66 @@ def test_readme_and_scope_document_describe_commercial_test_scope() -> None:
     assert "导入订单 | 第一阶段可用" in feature_status
     assert "拆单助手保存订单 | 第一阶段可用" in feature_status
     assert "调单快照记录" in feature_status
-    assert "商用测试版范围" in scope
+    assert "商用测试版 / 内部试用版范围" in scope
     assert "不显示假业务数据" in scope
     assert "调单页面保存的调整记录仅为快照，不修改订单状态" in scope
+
+
+def test_unopened_feature_freeze_list_is_explicit_and_not_misleading() -> None:
+    documents = "\n".join(
+        Path(path).read_text(encoding="utf-8")
+        for path in ("README.md", "docs/commercial_test_scope.md", "docs/feature_status.md")
+    )
+    required_items = [
+        "余额流水 / 客户账户",
+        "返水 / 佣金",
+        "权限系统",
+        "清空订单",
+        "清空日志",
+        "批量删除",
+        "重置开奖",
+        "真实兑奖",
+        "真实修改原订单式调单",
+        "真实打印机调用",
+        "特肖模式",
+        "抄写法",
+        "各->各肖",
+        "胆拖",
+        "组选",
+        "全包",
+        "复式组合",
+        "云同步 / 在线账号",
+        "正式安装包",
+    ]
+    for item in required_items:
+        assert item in documents
+    assert "规则和保存口径未确认" in documents
+    assert "完整规则未确认前不接入正式结算" in documents
+    assert "账务模型、审计口径和回滚策略尚未设计" in documents
+    assert "已完成全部功能的版本" in documents
+
+
+def test_repository_safety_ignores_runtime_files_and_keeps_migrations_frozen() -> None:
+    gitignore = Path(".gitignore").read_text(encoding="utf-8")
+    for pattern in ("data/*.db", "data/backups/", "exports/", ".pytest_cache*", "**pycache**/", "build/", "dist/"):
+        assert pattern in gitignore
+
+    tracked_db = subprocess.run(
+        ["git", "ls-files", "data/fortune.db"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert tracked_db.stdout.strip() == ""
+
+    migration_files = sorted(path.name for path in Path("alembic/versions").glob("*.py"))
+    assert migration_files == [
+        "20260612_0001_create_data_foundation.py",
+        "20260624_0002_create_settlement_records.py",
+        "20260624_0003_create_settings_tables.py",
+        "20260626_0004_create_app_meta.py",
+        "20260628_0005_create_adjustment_records.py",
+    ]
 
 
 def test_order_analysis_dead_demo_code_removed() -> None:
