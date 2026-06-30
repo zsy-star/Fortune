@@ -62,7 +62,7 @@ ODDS_CANDIDATES: dict[str, tuple[str, ...]] = {
     SPECIAL_SUM_SIZE: ("合数", "合数大小", "特码合数大小"),
     SPECIAL_ELEMENT: ("五行", "特码五行"),
     LINKED_TAIL: ("连尾", "尾数"),
-    NON_HIT_NUMBER: ("不中",),
+    NON_HIT_NUMBER: ("N不中", "不中"),
     SIX_SPECIAL_ZODIAC: ("六肖中特",),
     REGULAR_NUMBER: ("平码",),
     PACKAGE_HALF_WAVE: ("半波", "包半波", "特码半波"),
@@ -438,12 +438,22 @@ class SettlementService:
         }
 
     def _snapshot_item(self, item: ItemSettlementResult) -> dict[str, Any]:
+        result = (
+            "unsupported"
+            if item.is_supported is False
+            else "hit"
+            if item.is_winner is True
+            else "miss"
+            if item.is_winner is False
+            else None
+        )
         return {
             "order_item_id": item.order_item_id,
             "bet_type": item.bet_type,
             "normalized_bet_type": item.normalized_bet_type,
             "selection": item.selection,
             "amount": str(item.amount),
+            "result": result,
             "is_supported": item.is_supported,
             "is_winner": item.is_winner,
             "matched_number": item.matched_number,

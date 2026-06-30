@@ -193,6 +193,25 @@ def test_full_package_not_silently_dropped() -> None:
     assert any("全包" in error for error in preview.errors)
 
 
+@pytest.mark.parametrize(
+    ("text", "selection"),
+    [
+        ("N不中 08,09,10 各100", "08,09,10"),
+        ("不中 08,09,10 各100", "08,09,10"),
+        ("5不中 08,09,10,11,12 各100", "08,09,10,11,12"),
+        ("六不中 08,09,10,11,12,13 各100", "08,09,10,11,12,13"),
+    ],
+)
+def test_non_hit_intake_saves_one_group_item(text: str, selection: str) -> None:
+    preview = _preview(text, region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == Decimal("100.00")
+    assert len(preview.order_items) == 1
+    assert preview.order_items[0].bet_type == "N不中"
+    assert preview.order_items[0].selection == selection
+    assert preview.order_items[0].amount == Decimal("100.00")
+
+
 def test_complex_play_warning_when_saveable() -> None:
     preview = _preview("连兔龙蛇各20", region="澳门")
     assert preview.can_save

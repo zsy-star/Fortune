@@ -167,6 +167,43 @@ def test_default_plan_is_used_when_declarer_has_no_binding(session_factory) -> N
     assert item.odds_source == "默认方案"
 
 
+def test_n_non_hit_prefers_n_odds_over_non_hit_fallback(session_factory) -> None:
+    settings = SettingsService(session_factory)
+    default = settings.ensure_default_plan()
+    settings.add_item(default.id, "不中", "2", "0")
+    settings.add_item(default.id, "N不中", "3", "0")
+    order = create_order(
+        OrderService(session_factory),
+        items=[OrderItemCreate(bet_type="N不中", selection="08,09,10", amount="100")],
+    )
+    draw = create_draw(DrawService(session_factory), special_number="01")
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+    item = preview.results[0]
+
+    assert item.is_winner is True
+    assert item.odds == Decimal("3.0000")
+    assert item.payout_amount == Decimal("300.00")
+
+
+def test_n_non_hit_falls_back_to_non_hit_odds(session_factory) -> None:
+    settings = SettingsService(session_factory)
+    default = settings.ensure_default_plan()
+    settings.add_item(default.id, "不中", "2", "0")
+    order = create_order(
+        OrderService(session_factory),
+        items=[OrderItemCreate(bet_type="N不中", selection="08,09,10", amount="100")],
+    )
+    draw = create_draw(DrawService(session_factory), special_number="01")
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+    item = preview.results[0]
+
+    assert item.is_winner is True
+    assert item.odds == Decimal("2.0000")
+    assert item.payout_amount == Decimal("200.00")
+
+
 def test_commit_snapshot_contains_payout_fields_without_balance_or_rebate(session_factory) -> None:
     settings = SettingsService(session_factory)
     default = settings.ensure_default_plan()

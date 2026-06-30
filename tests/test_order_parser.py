@@ -880,10 +880,38 @@ class TestBetTypePrefix:
     def test_buzhong_range(self) -> None:
         r = parse_order("不中5-24各2")
         assert r.success
-        assert r.category == "不中"
+        assert r.category == "N不中"
         assert len(r.numbers) == 20  # 5..24
         assert r.numbers[0] == 5
         assert r.numbers[-1] == 24
+        assert r.total == 2
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "N不中 08,09,10 各100",
+            "不中 08,09,10 各100",
+            "5不中 08,09,10,11,12 各100",
+            "六不中 08,09,10,11,12,13 各100",
+        ],
+    )
+    def test_non_hit_group_amount_is_not_multiplied(self, text: str) -> None:
+        r = parse_order(text)
+        assert r.success
+        assert r.category == "N不中"
+        assert r.amount == 100
+        assert r.total == 100
+
+    def test_non_hit_rejects_invalid_number(self) -> None:
+        r = parse_order("N不中 08,50 各100")
+        assert not r.success
+        assert "无法解析N不中号码列表" in r.error
+
+    def test_non_hit_deduplicates_numbers_with_group_amount(self) -> None:
+        r = parse_order("N不中 08,09,08 各100")
+        assert r.success
+        assert r.numbers == (8, 9)
+        assert r.total == 100
 
 
 class TestRecordWindowAdvancedParseOptions:
@@ -1116,8 +1144,9 @@ class TestRecordWindowAdvancedParseOptions:
         """「至」也是合法范围分隔符。"""
         r = parse_order("不中10至20各2")
         assert r.success
-        assert r.category == "不中"
+        assert r.category == "N不中"
         assert r.numbers[0] == 10
+        assert r.total == 2
 
     def test_lianwei(self) -> None:
         r = parse_order("连尾1,2,3各10")

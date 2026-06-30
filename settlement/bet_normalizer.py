@@ -77,7 +77,7 @@ BET_TYPE_ALIASES = {
     SPECIAL_ELEMENT: {"特码五行", "五行"},
     SPECIAL_ZODIAC_GROUP: {"连肖", "多生肖"},
     LINKED_TAIL: {"连尾"},
-    NON_HIT_NUMBER: {"不中"},
+    NON_HIT_NUMBER: {"不中", "N不中"},
     SIX_SPECIAL_ZODIAC: {"六肖中特"},
     REGULAR_NUMBER: {"平码"},
     PACKAGE_HALF_WAVE: {"包半波"},

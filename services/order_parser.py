@@ -323,7 +323,10 @@ def _apply_exclusion(result: ParseResult, exclude_nums: set[int]) -> None:
         result.total = 0.0
         return
     result.numbers = filtered
-    result.total = result.amount * len(filtered)
+    if result.category == "N不中":
+        result.total = result.amount
+    else:
+        result.total = result.amount * len(filtered)
 
 
 def _parse_zodiac_groups(text: str) -> list[tuple[str, tuple[int, ...]]]:
@@ -455,8 +458,12 @@ _FUSHI_PATTERN = re.compile(
 # ── bet 类型中缀: 可出现在类别名后面的投注类型关键词 ──
 _BET_TYPE_INFIX: list[str] = sorted(
     ["平特一肖", "平特一尾", "特码波色", "特码两面",
-     "包半波", "六肖中特", "特码", "平码", "连尾"],
+     "包半波", "六肖中特", "N不中", "特码", "平码", "连尾", "不中"],
     key=len, reverse=True,  # 长优先
+)
+
+_NON_HIT_PREFIX_PATTERN = re.compile(
+    rf"^(?:(?:[Nn])|(?:\d+)|(?:[{_CN_DIGIT_CHARS}]+))?不中\s*"
 )
 
 
@@ -537,6 +544,11 @@ def parse_order(
 
     # ── 投注类型前缀（覆盖默认类别）──
     bet_type_override = ""
+    non_hit_prefix = _NON_HIT_PREFIX_PATTERN.match(text)
+    if non_hit_prefix:
+        bet_type_override = "N不中"
+        text = text[non_hit_prefix.end():].strip()
+
     _BET_PREFIXES = [
         ("平特一肖", "平特一肖"),
         ("特肖", "平特一肖"),
@@ -547,14 +559,14 @@ def parse_order(
         ("包半波", "包半波"),
         ("平码", "平码"),
         ("连尾", "连尾"),
-        ("不中", "不中"),
         ("特码", "特码"),
     ]  # 长优先，避免 "特码" 截胡 "特码波色"
-    for prefix, bt in _BET_PREFIXES:
-        if text.startswith(prefix):
-            bet_type_override = bt
-            text = text[len(prefix):].strip()
-            break
+    if not bet_type_override:
+        for prefix, bt in _BET_PREFIXES:
+            if text.startswith(prefix):
+                bet_type_override = bt
+                text = text[len(prefix):].strip()
+                break
 
     # ── 0. 斜杠简写: <号码>/<金额>  最高优先级 ──
     slash_m = re.match(r"^(\d{1,2})/(\d+)$", text)
@@ -687,7 +699,7 @@ def parse_order(
             )
 
         # 0. 特殊投注类型处理
-        if bet_type_override == "不中":
+        if bet_type_override == "N不中":
             # 不中范围: 5-24 或 5至24
             range_m = re.match(r"^(\d{1,2})\s*[-至]\s*(\d{1,2})$", cat)
             if range_m:
@@ -696,12 +708,24 @@ def parse_order(
                     nums = tuple(range(lo, hi + 1))
                     return ParseResult(region=region,
                         success=True,
-                        category="不中",
+                        category="N不中",
                         numbers=nums,
                         amount=amt,
-                        total=amt * len(nums),
+                        total=amt,
                     )
-            return None
+            num_list = _parse_number_list(cat)
+            if num_list is not None:
+                return ParseResult(region=region,
+                    success=True,
+                    category="N不中",
+                    numbers=num_list,
+                    amount=amt,
+                    total=amt,
+                )
+            return ParseResult(region=region,
+                success=False,
+                error=f"无法解析N不中号码列表：{cat}",
+            )
 
         if bet_type_override in ("连尾", "平特一尾"):
             # 尾数列表: 所有尾数为指定值的号码展开

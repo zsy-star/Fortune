@@ -56,6 +56,25 @@ def test_non_hit_hits_when_all_selected_numbers_are_absent(session_factory) -> N
     assert item.draw_numbers == ("01", "02", "03", "04", "05", "06", "07")
 
 
+def test_n_non_hit_hits_with_reference_software_bet_type(session_factory) -> None:
+    order = create_order(
+        OrderService(session_factory),
+        items=[OrderItemCreate(bet_type="N不中", selection="08,09,10", amount="100")],
+    )
+    draw = create_draw(DrawService(session_factory))
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+    item = preview.results[0]
+
+    assert item.is_supported is True
+    assert item.is_winner is True
+    assert item.bet_type == "N不中"
+    assert item.normalized_bet_type == "non_hit_number"
+    assert item.amount == 100
+    assert item.selected_numbers == ("08", "09", "10")
+    assert item.hit_numbers == ()
+
+
 def test_non_hit_misses_when_any_selected_number_appears(session_factory) -> None:
     order = create_order(
         OrderService(session_factory),
@@ -72,10 +91,39 @@ def test_non_hit_misses_when_any_selected_number_appears(session_factory) -> Non
     assert "06" in item.reason
 
 
+def test_n_non_hit_misses_when_any_selected_number_appears(session_factory) -> None:
+    order = create_order(
+        OrderService(session_factory),
+        items=[OrderItemCreate(bet_type="N不中", selection="06,08,09", amount="100")],
+    )
+    draw = create_draw(DrawService(session_factory))
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+    item = preview.results[0]
+
+    assert preview.losing_items == 1
+    assert item.is_winner is False
+    assert item.hit_numbers == ("06",)
+
+
 def test_non_hit_invalid_number_is_unsupported(session_factory) -> None:
     order = create_order(
         OrderService(session_factory),
         items=[OrderItemCreate(bet_type="不中", selection="08,50", amount="10")],
+    )
+    draw = create_draw(DrawService(session_factory))
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+
+    assert preview.unsupported_items == 1
+    assert preview.results[0].is_supported is False
+    assert preview.results[0].unsupported_reason
+
+
+def test_non_hit_unparseable_selection_is_unsupported(session_factory) -> None:
+    order = create_order(
+        OrderService(session_factory),
+        items=[OrderItemCreate(bet_type="N不中", selection="abc", amount="10")],
     )
     draw = create_draw(DrawService(session_factory))
 
@@ -242,6 +290,9 @@ def test_commit_is_allowed_without_unsupported_and_writes_zero_payout_when_odds_
     snapshot = record.result_snapshot
     assert snapshot["items"][0]["draw_regular_numbers"] == ["01", "02", "03", "04", "05", "06"]
     assert snapshot["items"][1]["draw_numbers"] == ["01", "02", "03", "04", "05", "06", "07"]
+    assert snapshot["items"][1]["selected_numbers"] == ["08", "09"]
+    assert snapshot["items"][1]["hit_numbers"] == []
+    assert snapshot["items"][1]["result"] == "hit"
     assert snapshot["settlement"]["total_payout_amount"] == "0.00"
     assert snapshot["items"][0]["payout_amount"] == "0.00"
     assert snapshot["items"][1]["payout_amount"] == "0.00"
