@@ -329,15 +329,17 @@ def test_record_order_window_marks_unimplemented_options_and_footer_scope() -> N
     window._parse_timer.stop()
     checkboxes = {checkbox.text(): checkbox for checkbox in window.findChildren(QCheckBox)}
 
-    for label in ("识别地区", "智能纠错", "特肖模式", "抄写法", "各->各肖"):
+    for label in ("识别地区", "智能纠错", "特肖模式", "岁写法", "各->各肖"):
         assert label in checkboxes
+    assert "抄写法" not in checkboxes
     assert checkboxes["识别地区"].isEnabled()
     assert checkboxes["智能纠错"].isEnabled()
-    for label in ("特肖模式", "抄写法", "各->各肖"):
-        assert not checkboxes[label].isEnabled()
-        assert "需要" in checkboxes[label].toolTip()
+    for label in ("特肖模式", "岁写法", "各->各肖"):
+        assert checkboxes[label].isEnabled()
+        assert not checkboxes[label].isChecked()
+        assert checkboxes[label].toolTip()
     assert "当前测试版重点支持特码类录入和结算" in window.findChild(QLabel, "footerHint").text()
-    assert "未开放选项已禁用" in window.findChild(QLabel, "footerHint").text()
+    assert "不会触发结算或余额变动" in window.findChild(QLabel, "footerHint").text()
     assert "全面支持" not in window.findChild(QLabel, "footerHint").text()
     assert "三中三" not in window.findChild(QLabel, "footerHint").text()
     window.close()

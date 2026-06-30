@@ -21,7 +21,7 @@ from services.order_intake_mapper import (
     resolve_region,
     to_decimal_amount,
 )
-from services.order_parser import parse_lines
+from services.order_parser import ParseOptions, parse_lines
 from services.order_service import OrderService
 from settlement.bet_normalizer import BetTypeNormalizer
 from settlement.bet_normalizer import (
@@ -62,6 +62,7 @@ class OrderIntakeService:
         channel: str | None = None,
         region: str | None = None,
         source: str = "record_window",
+        parse_options: ParseOptions | None = None,
     ) -> OrderIntakePreview:
         metadata = IntakeMetadata(
             customer_name=customer_name,
@@ -71,7 +72,7 @@ class OrderIntakeService:
             source=source,
             raw_text=raw_text,
         )
-        parsed_results = parse_lines(raw_text)
+        parsed_results = parse_lines(raw_text, options=parse_options)
         return self.convert_parsed_result(parsed_results, metadata)
 
     def convert_parsed_result(
@@ -201,6 +202,7 @@ class OrderIntakeService:
         channel: str | None = None,
         region: str | None = None,
         source: str = "record_window",
+        parse_options: ParseOptions | None = None,
     ) -> OrderIntakeSaveResult:
         preview = self.preview_raw_text(
             raw_text,
@@ -209,6 +211,7 @@ class OrderIntakeService:
             channel=channel,
             region=region,
             source=source,
+            parse_options=parse_options,
         )
         if not preview.can_save:
             return OrderIntakeSaveResult(

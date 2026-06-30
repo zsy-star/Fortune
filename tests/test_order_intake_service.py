@@ -20,7 +20,7 @@ from services.order_intake_mapper import (
     to_decimal_amount,
 )
 from services.order_intake_service import OrderIntakeService
-from services.order_parser import parse_order
+from services.order_parser import ParseOptions, parse_order
 from services.settlement_service import SettlementService
 
 
@@ -140,6 +140,24 @@ def test_lianxiao_not_converted_to_single_zodiac() -> None:
     assert preview.order_items[0].selection == "兔,龙,蛇"
     assert preview.order_items[0].amount == Decimal(str(parse_order("兔龙蛇各20").total))
     assert any("结算预览" in warning for warning in preview.warnings)
+
+
+def test_special_zodiac_parse_options_save_as_pingte_zodiac() -> None:
+    preview = _preview("马蛇10", region="澳门", parse_options=ParseOptions(special_zodiac_mode=True))
+    assert preview.can_save
+    assert preview.total_amount == Decimal("20.00")
+    assert len(preview.order_items) == 1
+    assert preview.order_items[0].bet_type == "平特一肖"
+    assert preview.order_items[0].selection == "马,蛇"
+    assert preview.order_items[0].amount == Decimal("20.00")
+
+
+def test_zodiac_each_parse_options_count_zodiac_groups() -> None:
+    preview = _preview("羊马各10", region="澳门", parse_options=ParseOptions(zodiac_each_mode=True))
+    assert preview.can_save
+    assert preview.total_amount == Decimal("20.00")
+    assert preview.order_items[0].bet_type == "平特一肖"
+    assert preview.order_items[0].selection == "羊,马"
 
 
 def test_multi_zodiac_not_silently_split() -> None:

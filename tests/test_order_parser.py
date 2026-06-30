@@ -869,6 +869,7 @@ class TestBetTypePrefix:
         assert r.success
         assert r.category == "平特一肖"
         assert r.numbers == (4, 16, 28, 40)
+        assert r.total == 10
 
     def test_pingte_yiwei(self) -> None:
         r = parse_order("平特一尾1各10")
@@ -883,6 +884,73 @@ class TestBetTypePrefix:
         assert len(r.numbers) == 20  # 5..24
         assert r.numbers[0] == 5
         assert r.numbers[-1] == 24
+
+
+class TestRecordWindowAdvancedParseOptions:
+    def test_age_writing_normalizes_number_tokens(self) -> None:
+        r = parse_order("25岁、08岁各10", age_writing=True)
+        assert r.success
+        assert r.category == "纯数字"
+        assert r.numbers == (8, 25)
+        assert r.total == 20
+
+    def test_age_writing_rejects_invalid_number(self) -> None:
+        r = parse_order("50岁各10", age_writing=True)
+        assert not r.success
+        assert "岁写法号码 50 超出范围" in r.error
+
+    def test_age_writing_disabled_does_not_silently_parse(self) -> None:
+        r = parse_order("25岁各10")
+        assert not r.success
+        assert "无法识别的类别" in r.error
+
+    def test_normal_zodiac_expands_by_zodiac_numbers(self) -> None:
+        r = parse_order("羊马各10")
+        assert r.success
+        assert r.category == "多生肖"
+        assert len(r.numbers) == 9
+        assert r.total == 90
+
+    def test_zodiac_each_mode_counts_zodiac_groups(self) -> None:
+        r = parse_order("羊马各10", zodiac_each_mode=True)
+        assert r.success
+        assert r.category == "平特一肖"
+        assert [name for name, _ in r.zodiac_groups] == ["羊", "马"]
+        assert r.total == 20
+
+    def test_special_zodiac_mode_counts_single_zodiac(self) -> None:
+        r = parse_order("马10", special_zodiac_mode=True)
+        assert r.success
+        assert r.category == "平特一肖"
+        assert [name for name, _ in r.zodiac_groups] == ["马"]
+        assert r.total == 10
+
+    def test_special_zodiac_mode_counts_multiple_zodiacs(self) -> None:
+        r = parse_order("马蛇10", special_zodiac_mode=True)
+        assert r.success
+        assert r.category == "平特一肖"
+        assert [name for name, _ in r.zodiac_groups] == ["马", "蛇"]
+        assert r.total == 20
+
+    def test_special_zodiac_mode_does_not_affect_numbers(self) -> None:
+        r = parse_order("01,02各10", special_zodiac_mode=True)
+        assert r.success
+        assert r.category == "纯数字"
+        assert r.numbers == (1, 2)
+        assert r.total == 20
+
+    def test_zodiac_each_mode_does_not_affect_number_each(self) -> None:
+        r = parse_order("01,02各10", zodiac_each_mode=True)
+        assert r.success
+        assert r.category == "纯数字"
+        assert r.total == 20
+
+    def test_all_advanced_options_are_stable_together(self) -> None:
+        r = parse_order("1岁各10", age_writing=True, zodiac_each_mode=True, special_zodiac_mode=True)
+        assert r.success
+        assert r.category == "纯数字"
+        assert r.numbers == (1,)
+        assert r.total == 10
 
     def test_buzhong_zhi(self) -> None:
         """「至」也是合法范围分隔符。"""

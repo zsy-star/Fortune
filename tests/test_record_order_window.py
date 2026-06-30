@@ -204,16 +204,34 @@ class TestAdvancedOptionsFirstStage:
     def _checkboxes(self, window):
         return {checkbox.text(): checkbox for checkbox in window.findChildren(QCheckBox)}
 
-    def test_implemented_options_are_enabled_and_unimplemented_remain_disabled(self, window):
+    def test_advanced_options_are_enabled_and_default_unchecked(self, window):
         checkboxes = self._checkboxes(window)
 
         assert checkboxes["识别地区"].isEnabled()
         assert "自动识别澳门/香港" in checkboxes["识别地区"].toolTip()
         assert checkboxes["智能纠错"].isEnabled()
         assert "低风险规范化" in checkboxes["智能纠错"].toolTip()
-        for label in ("特肖模式", "抄写法", "各->各肖"):
-            assert not checkboxes[label].isEnabled()
-            assert "需要" in checkboxes[label].toolTip()
+        assert "抄写法" not in checkboxes
+        for label in ("特肖模式", "岁写法", "各->各肖"):
+            assert checkboxes[label].isEnabled()
+            assert not checkboxes[label].isChecked()
+            assert checkboxes[label].toolTip()
+
+    def test_advanced_options_parse_and_status_text(self, window):
+        checkboxes = self._checkboxes(window)
+        checkboxes["特肖模式"].setChecked(True)
+        checkboxes["岁写法"].setChecked(True)
+        checkboxes["各->各肖"].setChecked(True)
+
+        window._input_text.setPlainText("马各10")
+        window._do_parse()
+
+        assert window._parsed_results[0].category == "平特一肖"
+        assert window._parsed_results[0].total == 10
+        status = window._advanced_status.text()
+        assert "岁写法" in status
+        assert "各->各肖" in status
+        assert "特肖模式" in status
 
     def test_detect_region_hong_kong_sets_radio_and_results(self, window):
         checkboxes = self._checkboxes(window)
@@ -1225,6 +1243,34 @@ class TestSaveOrder:
         assert save_window._order_table.rowCount() == 0
         assert save_window._lbl_total.text() == "当前总额: 0"
 
+    def test_special_zodiac_mode_save_uses_order_intake_service_chain(self, save_window, session_factory):
+        """特肖模式保存仍走 OrderIntakeService，并保存为平特一肖。"""
+        from sqlalchemy import select
+
+        from models import Order, OrderItem
+
+        checkboxes = {checkbox.text(): checkbox for checkbox in save_window.findChildren(QCheckBox)}
+        checkboxes["特肖模式"].setChecked(True)
+        save_window._input_text.setPlainText("马蛇10")
+        save_window._do_parse()
+
+        with (
+            patch(
+                "ui.windows.record_order_window.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+            patch("ui.windows.record_order_window.QMessageBox.information"),
+        ):
+            save_window._on_save_order()
+
+        with session_factory() as session:
+            order = session.scalars(select(Order)).one()
+            item = session.scalars(select(OrderItem)).one()
+            assert order.total_amount == 20
+            assert item.bet_type == "平特一肖"
+            assert item.selection == "马,蛇"
+            assert item.amount == 20
+
     def test_save_multi_numbers_keeps_per_number_amount_semantics(self, save_window, session_factory):
         """01,02,03各10 保存为 3 个明细，每个金额 10，总额 30。"""
         from sqlalchemy import select
@@ -1481,6 +1527,19 @@ class TestAmountTotalSemanticsInTable:
         assert window._order_table.item(0, 5).text() == "40"
         assert window._order_table.item(1, 5).text() == "25"
         assert "65" in window._lbl_total.text()
+
+    def test_special_zodiac_result_keeps_pingte_bet_type_in_table(self, window):
+        """特肖模式添加到表格时不误转成特码号码。"""
+        checkboxes = {checkbox.text(): checkbox for checkbox in window.findChildren(QCheckBox)}
+        checkboxes["特肖模式"].setChecked(True)
+        window._input_text.setPlainText("马蛇10")
+        window._do_parse()
+        window._on_add_result()
+
+        assert window._order_table.rowCount() == 1
+        assert window._order_table.item(0, 1).text() == "平特一肖"
+        assert window._order_table.item(0, 2).text() == "马,蛇"
+        assert window._order_table.item(0, 5).text() == "20"
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -272,6 +272,46 @@ def convert_parse_result(
             errors.append(preview.error or "类别映射失败")
         return previews, order_items, warnings, errors
 
+    if category == "平特一肖" and result.zodiac_groups:
+        selection = ",".join(name for name, _ in result.zodiac_groups)
+        try:
+            normalize_bet_type("平特一肖")
+        except InvalidBetTypeError as exc:
+            message = str(exc)
+            previews.append(
+                _build_item_preview(
+                    source_line=source_line,
+                    original_bet_type=category,
+                    original_selection=selection,
+                    amount=expected_total,
+                    order_bet_type=None,
+                    order_selection=None,
+                    normalizer=normalizer,
+                    error=message,
+                )
+            )
+            errors.append(message)
+            return previews, order_items, warnings, errors
+
+        preview = _build_item_preview(
+            source_line=source_line,
+            original_bet_type=category,
+            original_selection=selection,
+            amount=expected_total,
+            order_bet_type="平特一肖",
+            order_selection=selection,
+            preview_bet_type=category,
+            normalizer=normalizer,
+        )
+        previews.append(preview)
+        if preview.is_valid:
+            order_items.append(
+                OrderItemCreate(bet_type="平特一肖", selection=selection, amount=expected_total)
+            )
+        else:
+            errors.append(preview.error or "平特一肖映射失败")
+        return previews, order_items, warnings, errors
+
     if _is_lianxiao_category(result):
         warning = "连肖玩法可保存，但当前结算预览暂不支持"
         warnings.append(warning)

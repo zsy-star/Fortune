@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 
 from schemas.order_intake_schema import IntakeMetadata, IntakeTableRow
 from services.order_intake_service import OrderIntakeService
-from services.order_parser import ParseResult, format_result, parse_lines
+from services.order_parser import ParseOptions, ParseResult, format_result, parse_lines
 from services.settings_service import SettingsService
 from ui.app_events import app_events
 from ui.unavailable import UNAVAILABLE_TOOLTIP
@@ -64,21 +64,20 @@ _CHECKBOX_LABELS = [
     "自动获取",
     "智能纠错",
     "特肖模式",
-    "抄写法",
+    "岁写法",
     "各->各肖",
 ]
 
 _FOOTER_HINT = (
     "当前测试版重点支持特码类录入和结算；"
     "其他玩法可能可录入，但暂不保证结算；"
-    "未开放选项已禁用，不会影响当前录单保存。"
+    "高级选项仅影响本窗口录单解析，不会触发结算或余额变动。"
 )
 
-_UNAVAILABLE_CHECKBOXES = {"特肖模式", "抄写法", "各->各肖"}
-_UNAVAILABLE_CHECKBOX_TOOLTIPS = {
-    "特肖模式": "需要确认特肖保存口径：按特码生肖保存，还是继续展开为特码号码。",
-    "抄写法": "需要配置抄写法输入样例和目标输出规则后开放。",
-    "各->各肖": "需要确认“各”转“各肖”的输入格式、金额含义和目标玩法后开放。",
+_ADVANCED_CHECKBOX_TOOLTIPS = {
+    "特肖模式": "生肖输入按平特一肖 / 特肖计算，按生肖个数计金额。",
+    "岁写法": "将 25岁、08岁 等写法识别为号码。",
+    "各->各肖": "生肖 + 各 + 金额按每个生肖计金额，而不是按生肖下号码数计金额。",
 }
 _SMART_CORRECTION_TOOLTIP = "低风险规范化：全角转半角、标点统一、连续空格压缩、金额符号清理。"
 _DETECT_REGION_TOOLTIP = "自动识别澳门/香港标记；同时出现两地时阻止保存。"
@@ -236,6 +235,23 @@ class RecordOrderWindow(QMainWindow):
         checkbox = getattr(self, attr_name, None)
         return bool(checkbox is not None and checkbox.isChecked())
 
+    def _advanced_parse_options(self) -> ParseOptions:
+        return ParseOptions(
+            special_zodiac_mode=self._is_checked("_chk_special_zodiac_mode"),
+            age_writing=self._is_checked("_chk_age_writing"),
+            zodiac_each_mode=self._is_checked("_chk_zodiac_each_mode"),
+        )
+
+    def _enabled_advanced_option_labels(self) -> list[str]:
+        labels: list[str] = []
+        if self._is_checked("_chk_age_writing"):
+            labels.append("岁写法")
+        if self._is_checked("_chk_zodiac_each_mode"):
+            labels.append("各->各肖")
+        if self._is_checked("_chk_special_zodiac_mode"):
+            labels.append("特肖模式")
+        return labels
+
     def _prepare_raw_text(self, raw: str) -> tuple[str, str | None]:
         """Apply enabled low-risk advanced options before parse/save.
 
@@ -269,6 +285,10 @@ class RecordOrderWindow(QMainWindow):
                 messages.append("未识别到明确地区，使用当前手动选择")
         else:
             self._last_region_conflict = ""
+
+        advanced_labels = self._enabled_advanced_option_labels()
+        if advanced_labels:
+            messages.append("已应用高级选项：" + "、".join(advanced_labels))
 
         self._set_advanced_status("；".join(messages))
         return prepared, None
@@ -340,6 +360,8 @@ class RecordOrderWindow(QMainWindow):
             self._parsed_results = []
             self._last_parse_results = []
             self._last_parse_raw = ""
+            labels = self._enabled_advanced_option_labels()
+            self._set_advanced_status(("已应用高级选项：" + "、".join(labels)) if labels else "")
             return
 
         raw, advanced_error = self._prepare_raw_text(raw)
@@ -352,7 +374,7 @@ class RecordOrderWindow(QMainWindow):
             self._output_text.setHtml(f"<pre style='margin:0;'><span style='color:red;'>{text}</span></pre>")
             return
 
-        results = parse_lines(raw)
+        results = parse_lines(raw, options=self._advanced_parse_options())
         # 回填每行的原始输入文本
         raw_lines = [l.strip() for l in raw.splitlines() if l.strip()]
         for r, line in zip(results, raw_lines):
@@ -406,12 +428,17 @@ class RecordOrderWindow(QMainWindow):
             for r in self._parsed_results:
                 row = self._order_table.rowCount()
                 self._order_table.insertRow(row)
-                # 号码用逗号拼接，如 01,02,03
-                nums_text = ",".join(f"{n:02d}" for n in r.numbers)
+                if r.category == "平特一肖" and r.zodiac_groups:
+                    bet_type_text = "平特一肖"
+                    selection_text = ",".join(name for name, _ in r.zodiac_groups)
+                else:
+                    bet_type_text = "特码"
+                    # 号码用逗号拼接，如 01,02,03
+                    selection_text = ",".join(f"{n:02d}" for n in r.numbers)
                 items = [
                     QTableWidgetItem(region),  # 区域
-                    QTableWidgetItem("特码"),  # 投注类型
-                    QTableWidgetItem(nums_text),  # 订单信息
+                    QTableWidgetItem(bet_type_text),  # 投注类型
+                    QTableWidgetItem(selection_text),  # 订单信息
                     QTableWidgetItem(""),  # 复选类型
                     QTableWidgetItem(calc_method),  # 计算方式
                     QTableWidgetItem(f"{r.total:g}"),  # 金额（总金额）
@@ -497,6 +524,7 @@ class RecordOrderWindow(QMainWindow):
                 channel=self._cmb_channel.currentText(),
                 region=self._current_region(),
                 source="record_window",
+                parse_options=self._advanced_parse_options(),
             )
             if not preview.can_save:
                 reason = "\n".join(preview.errors) if preview.errors else "预览结果不可保存"
@@ -1159,10 +1187,24 @@ class RecordOrderWindow(QMainWindow):
                 cb.setToolTip(_SMART_CORRECTION_TOOLTIP)
                 cb.stateChanged.connect(lambda _state: self._do_parse())
                 self._chk_smart_correction = cb
-            if label in _UNAVAILABLE_CHECKBOXES:
+            if label == "特肖模式":
+                cb.setObjectName("specialZodiacModeCheck")
                 cb.setChecked(False)
-                cb.setEnabled(False)
-                cb.setToolTip(_UNAVAILABLE_CHECKBOX_TOOLTIPS.get(label, UNAVAILABLE_TOOLTIP))
+                cb.setToolTip(_ADVANCED_CHECKBOX_TOOLTIPS[label])
+                cb.stateChanged.connect(lambda _state: self._do_parse())
+                self._chk_special_zodiac_mode = cb
+            if label == "岁写法":
+                cb.setObjectName("ageWritingCheck")
+                cb.setChecked(False)
+                cb.setToolTip(_ADVANCED_CHECKBOX_TOOLTIPS[label])
+                cb.stateChanged.connect(lambda _state: self._do_parse())
+                self._chk_age_writing = cb
+            if label == "各->各肖":
+                cb.setObjectName("zodiacEachModeCheck")
+                cb.setChecked(False)
+                cb.setToolTip(_ADVANCED_CHECKBOX_TOOLTIPS[label])
+                cb.stateChanged.connect(lambda _state: self._do_parse())
+                self._chk_zodiac_each_mode = cb
             if label == "自动获取":
                 cb.setObjectName("autoFetchCheck")
                 self._chk_auto_fetch = cb

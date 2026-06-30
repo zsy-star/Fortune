@@ -221,6 +221,19 @@ class ParseResult:
     fushi_lian_sizes: tuple[int, ...] = ()
 
 
+@dataclass(frozen=True)
+class ParseOptions:
+    """Optional record-window parsing switches.
+
+    These flags are intentionally opt-in so order import and split-order flows
+    keep their historical parsing behavior.
+    """
+
+    special_zodiac_mode: bool = False
+    age_writing: bool = False
+    zodiac_each_mode: bool = False
+
+
 # ======================================================================
 # 金额提取
 # ======================================================================
@@ -330,6 +343,58 @@ def _parse_zodiac_groups(text: str) -> list[tuple[str, tuple[int, ...]]]:
     return groups
 
 
+def _parse_exact_zodiac_selection(text: str) -> list[tuple[str, tuple[int, ...]]]:
+    """Parse a selection made only of zodiac names, allowing common separators."""
+    normalized = re.sub(r"[,，、/\-\s]+", "", text.strip())
+    if not normalized:
+        return []
+    groups = _parse_zodiac_groups(normalized)
+    if groups and _zodiac_consume_len(normalized) == len(normalized):
+        return groups
+    return []
+
+
+_AGE_WRITING_PATTERN = re.compile(r"(?<!\d)(\d{1,2})\s*岁")
+
+
+def _apply_age_writing(text: str, options: ParseOptions) -> tuple[str, str | None]:
+    """Normalize NN岁 tokens into lottery number tokens when enabled."""
+    if not options.age_writing:
+        return text, None
+
+    error: str | None = None
+
+    def repl(match: re.Match[str]) -> str:
+        nonlocal error
+        raw = match.group(1)
+        n = int(raw)
+        if n < 1 or n > 49:
+            error = f"岁写法号码 {raw} 超出范围 (1-49)"
+            return raw
+        return f"{n:02d}"
+
+    normalized = _AGE_WRITING_PATTERN.sub(repl, text)
+    return normalized, error
+
+
+def _build_special_zodiac_result(
+    *,
+    region: str,
+    groups: list[tuple[str, tuple[int, ...]]],
+    amount: float,
+) -> ParseResult:
+    all_nums = tuple(sorted({n for _, ns in groups for n in ns}))
+    return ParseResult(
+        region=region,
+        success=True,
+        category="平特一肖",
+        numbers=all_nums,
+        amount=amount,
+        total=amount * len(groups),
+        zodiac_groups=groups,
+    )
+
+
 def _starts_with_lianxiao(text: str) -> bool:
     """检查文本是否以连肖关键词开头。"""
     for kw in _LIANXIAO_KEYWORDS:
@@ -405,7 +470,30 @@ def _strip_bet_type_infix(category_text: str) -> tuple[str, str]:
     return category_text, ""
 
 
-def parse_order(text: str) -> ParseResult:
+def _resolve_parse_options(
+    options: ParseOptions | None,
+    *,
+    special_zodiac_mode: bool = False,
+    age_writing: bool = False,
+    zodiac_each_mode: bool = False,
+) -> ParseOptions:
+    if options is not None:
+        return options
+    return ParseOptions(
+        special_zodiac_mode=special_zodiac_mode,
+        age_writing=age_writing,
+        zodiac_each_mode=zodiac_each_mode,
+    )
+
+
+def parse_order(
+    text: str,
+    *,
+    options: ParseOptions | None = None,
+    special_zodiac_mode: bool = False,
+    age_writing: bool = False,
+    zodiac_each_mode: bool = False,
+) -> ParseResult:
     """解析一行订单文本，返回展开结果。
 
     Args:
@@ -414,9 +502,19 @@ def parse_order(text: str) -> ParseResult:
     Returns:
         ParseResult — 成功时包含号码列表和金额；失败时 success=False。
     """
+    options = _resolve_parse_options(
+        options,
+        special_zodiac_mode=special_zodiac_mode,
+        age_writing=age_writing,
+        zodiac_each_mode=zodiac_each_mode,
+    )
     text = text.strip()
     if not text:
         return ParseResult(success=False, error="输入为空")
+
+    text, age_error = _apply_age_writing(text, options)
+    if age_error:
+        return ParseResult(success=False, error=age_error)
 
     # ── 提取排除号码: "兔各30 不要04,16" → 排除 04,16 ──
     exclude_nums: set[int] = set()
@@ -441,6 +539,7 @@ def parse_order(text: str) -> ParseResult:
     bet_type_override = ""
     _BET_PREFIXES = [
         ("平特一肖", "平特一肖"),
+        ("特肖", "平特一肖"),
         ("平特一尾", "平特一尾"),
         ("特码波色", "特码波色"),
         ("特码两面", "特码两面"),
@@ -570,6 +669,23 @@ def parse_order(text: str) -> ParseResult:
 
     def _try_match(cat: str, amt: float) -> ParseResult | None:
         """尝试所有匹配策略，成功返回 ParseResult，失败返回 None。"""
+        groups_for_special = _parse_exact_zodiac_selection(cat)
+        use_zodiac_each = (
+            options.zodiac_each_mode
+            and sep_m is not None
+            and sep_m.group() == "各"
+            and len(groups_for_special) >= 1
+        )
+        if (
+            groups_for_special
+            and (bet_type_override == "平特一肖" or use_zodiac_each or options.special_zodiac_mode)
+        ):
+            return _build_special_zodiac_result(
+                region=region,
+                groups=groups_for_special,
+                amount=amt,
+            )
+
         # 0. 特殊投注类型处理
         if bet_type_override == "不中":
             # 不中范围: 5-24 或 5至24
@@ -792,7 +908,14 @@ def _normalize_line(text: str) -> str | None:
     return t
 
 
-def parse_lines(text: str) -> list[ParseResult]:
+def parse_lines(
+    text: str,
+    *,
+    options: ParseOptions | None = None,
+    special_zodiac_mode: bool = False,
+    age_writing: bool = False,
+    zodiac_each_mode: bool = False,
+) -> list[ParseResult]:
     """解析多行文本，支持上下文标题行和口语自然语言清洗。
 
     标题行格式: [地域]投注类型   如 "澳平特一肖"、"港特码"
@@ -803,6 +926,12 @@ def parse_lines(text: str) -> list[ParseResult]:
         01号一10元                                    →  01各10
         共计40                                        →  (丢弃)
     """
+    options = _resolve_parse_options(
+        options,
+        special_zodiac_mode=special_zodiac_mode,
+        age_writing=age_writing,
+        zodiac_each_mode=zodiac_each_mode,
+    )
     results: list[ParseResult] = []
     ctx_region = ""
     ctx_bet_type = ""
@@ -877,7 +1006,7 @@ def parse_lines(text: str) -> list[ParseResult]:
             for sub in sub_parts:
                 sub = sub.strip()
                 if sub:
-                    r = parse_order(sub)
+                    r = parse_order(sub, options=options)
                     if r.success and sub != line:
                         r.original_text = sub.strip()
                     results.append(r)
@@ -957,6 +1086,11 @@ def format_result(result: ParseResult) -> str:
         return _format_fushi(result, amount_display)
 
     groups = result.zodiac_groups
+    if result.category == "平特一肖" and groups:
+        names = "、".join(name for name, _ in groups)
+        total_display = f"{result.total:g}" if result.total != int(result.total) else f"{int(result.total)}"
+        return f"{prefix}平特一肖：{names} 各{amount_display}元，合计{total_display}元"
+
     if len(groups) >= 2:
         # 多生肖：每个生肖一行，均加前缀
         lines = [f"{prefix}{_fmt_nums(nums)} 各{amount_display}元" for _, nums in groups]
