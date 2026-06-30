@@ -887,6 +887,166 @@ class TestBetTypePrefix:
 
 
 class TestRecordWindowAdvancedParseOptions:
+    @pytest.mark.parametrize(
+        ("text", "category", "total", "numbers_count"),
+        [
+            ("01各10", "纯数字", 10, 1),
+            ("01,02,03各10", "纯数字", 30, 3),
+            ("马各10", "马", 50, 5),
+            ("羊马各10", "多生肖", 90, 9),
+            ("红波各10", "红波", 170, 17),
+            ("红单各10", "红单", 80, 8),
+            ("大各10", "大", 250, 25),
+            ("单各10", "单", 250, 25),
+        ],
+    )
+    def test_real_samples_keep_default_parse_behavior(
+        self,
+        text: str,
+        category: str,
+        total: int,
+        numbers_count: int,
+    ) -> None:
+        r = parse_order(text)
+        assert r.success
+        assert r.category == category
+        assert r.total == total
+        assert len(r.numbers) == numbers_count
+
+    @pytest.mark.parametrize(
+        ("text", "expected_zodiacs", "total"),
+        [
+            ("羊马各10", ["羊", "马"], 20),
+            ("鼠牛虎各5", ["鼠", "牛", "虎"], 15),
+            ("鼠、牛、虎各5", ["鼠", "牛", "虎"], 15),
+        ],
+    )
+    def test_zodiac_each_real_samples_count_zodiac_groups(
+        self,
+        text: str,
+        expected_zodiacs: list[str],
+        total: int,
+    ) -> None:
+        r = parse_order(text, zodiac_each_mode=True)
+        assert r.success
+        assert r.category == "平特一肖"
+        assert [name for name, _ in r.zodiac_groups] == expected_zodiacs
+        assert r.total == total
+
+    @pytest.mark.parametrize(
+        ("text", "category", "total"),
+        [
+            ("01,02各10", "纯数字", 20),
+            ("红波各10", "红波", 170),
+        ],
+    )
+    def test_zodiac_each_real_samples_do_not_affect_non_zodiac(
+        self,
+        text: str,
+        category: str,
+        total: int,
+    ) -> None:
+        r = parse_order(text, zodiac_each_mode=True)
+        assert r.success
+        assert r.category == category
+        assert r.total == total
+
+    @pytest.mark.parametrize(
+        ("text", "expected_zodiacs", "total"),
+        [
+            ("马10", ["马"], 10),
+            ("马蛇10", ["马", "蛇"], 20),
+            ("龙-羊-猴各80", ["龙", "羊", "猴"], 240),
+        ],
+    )
+    def test_special_zodiac_mode_real_samples_count_zodiac_groups(
+        self,
+        text: str,
+        expected_zodiacs: list[str],
+        total: int,
+    ) -> None:
+        r = parse_order(text, special_zodiac_mode=True)
+        assert r.success
+        assert r.category == "平特一肖"
+        assert [name for name, _ in r.zodiac_groups] == expected_zodiacs
+        assert r.total == total
+
+    @pytest.mark.parametrize(
+        ("text", "category", "total"),
+        [
+            ("01各10", "纯数字", 10),
+            ("红波各10", "红波", 170),
+        ],
+    )
+    def test_special_zodiac_mode_real_samples_do_not_affect_non_zodiac(
+        self,
+        text: str,
+        category: str,
+        total: int,
+    ) -> None:
+        r = parse_order(text, special_zodiac_mode=True)
+        assert r.success
+        assert r.category == category
+        assert r.total == total
+
+    @pytest.mark.parametrize(
+        ("text", "numbers", "total"),
+        [
+            ("25岁各10", (25,), 10),
+            ("08岁各10", (8,), 10),
+            ("1岁各10", (1,), 10),
+            ("25岁、08岁各10", (8, 25), 20),
+        ],
+    )
+    def test_age_writing_real_samples_normalize_numbers(
+        self,
+        text: str,
+        numbers: tuple[int, ...],
+        total: int,
+    ) -> None:
+        r = parse_order(text, age_writing=True)
+        assert r.success
+        assert r.category == "纯数字"
+        assert r.numbers == numbers
+        assert r.total == total
+
+    @pytest.mark.parametrize("text", ["50岁各10", "00岁各10"])
+    def test_age_writing_real_samples_reject_invalid_numbers(self, text: str) -> None:
+        r = parse_order(text, age_writing=True)
+        assert not r.success
+        assert "岁写法号码" in r.error
+
+    @pytest.mark.parametrize(
+        ("text", "category", "total", "zodiacs", "numbers"),
+        [
+            ("25岁、08岁各10", "纯数字", 20, [], (8, 25)),
+            ("羊马各10", "平特一肖", 20, ["羊", "马"], ()),
+            ("马蛇10", "平特一肖", 20, ["马", "蛇"], ()),
+            ("01各10", "纯数字", 10, [], (1,)),
+        ],
+    )
+    def test_all_advanced_switches_real_samples_are_stable(
+        self,
+        text: str,
+        category: str,
+        total: int,
+        zodiacs: list[str],
+        numbers: tuple[int, ...],
+    ) -> None:
+        r = parse_order(
+            text,
+            age_writing=True,
+            zodiac_each_mode=True,
+            special_zodiac_mode=True,
+        )
+        assert r.success
+        assert r.category == category
+        assert r.total == total
+        if zodiacs:
+            assert [name for name, _ in r.zodiac_groups] == zodiacs
+        if numbers:
+            assert r.numbers == numbers
+
     def test_age_writing_normalizes_number_tokens(self) -> None:
         r = parse_order("25岁、08岁各10", age_writing=True)
         assert r.success

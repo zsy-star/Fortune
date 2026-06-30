@@ -233,6 +233,18 @@ class TestAdvancedOptionsFirstStage:
         assert "各->各肖" in status
         assert "特肖模式" in status
 
+    def test_age_writing_preview_result_can_enter_table(self, window):
+        checkboxes = self._checkboxes(window)
+        checkboxes["岁写法"].setChecked(True)
+        window._input_text.setPlainText("25岁、08岁各10")
+        window._do_parse()
+        window._on_add_result()
+
+        assert window._order_table.rowCount() == 1
+        assert window._order_table.item(0, 1).text() == "特码"
+        assert window._order_table.item(0, 2).text() == "08,25"
+        assert window._order_table.item(0, 5).text() == "20"
+
     def test_detect_region_hong_kong_sets_radio_and_results(self, window):
         checkboxes = self._checkboxes(window)
         checkboxes["识别地区"].setChecked(True)
@@ -1208,6 +1220,20 @@ class TestSaveOrder:
         assert "无法提取末尾金额" in warning.call_args.args[2]
         assert _order_counts(session_factory) == (0, 0)
 
+    def test_mixed_success_and_failed_lines_block_whole_save(self, save_window, session_factory):
+        """存在失败行时，不保存任何已成功解析的行。"""
+        save_window._input_text.setPlainText("01/10\n50/10")
+        save_window._do_parse()
+        assert any(r.success for r in save_window._last_parse_results)
+        assert any(not r.success for r in save_window._last_parse_results)
+
+        with patch("ui.windows.record_order_window.QMessageBox.warning") as warning:
+            save_window._on_save_order()
+
+        warning.assert_called_once()
+        assert "超出范围" in warning.call_args.args[2]
+        assert _order_counts(session_factory) == (0, 0)
+
     def test_save_01_10_success_writes_order_and_clears_parse_state(self, save_window, session_factory):
         """01/10 解析成功后可保存到临时数据库。"""
         from sqlalchemy import select
@@ -1270,6 +1296,77 @@ class TestSaveOrder:
             assert item.bet_type == "平特一肖"
             assert item.selection == "马,蛇"
             assert item.amount == 20
+
+    def test_advanced_adjusted_table_save_preserves_amount_region_channel_declarer_and_events(
+        self,
+        qapp,
+        session_factory,
+    ):
+        """高级选项预览进表格后，人工调整保存仍以表格当前数据为准。"""
+        from sqlalchemy import select
+
+        from models import Order, OrderItem
+        from services.order_intake_service import OrderIntakeService
+        from services.settings_service import SettingsService
+        from ui.windows.record_order_window import RecordOrderWindow
+
+        settings = SettingsService(session_factory)
+        plan = settings.ensure_default_plan()
+        settings.add_declarer("验收申报人", plan.id)
+        window = RecordOrderWindow(
+            order_intake_service=OrderIntakeService(session_factory),
+            settings_service=settings,
+        )
+        event_counts = {"orders": 0, "logs": 0}
+
+        def on_orders_changed():
+            event_counts["orders"] += 1
+
+        def on_logs_changed():
+            event_counts["logs"] += 1
+
+        app_events.orders_changed.connect(on_orders_changed)
+        app_events.logs_changed.connect(on_logs_changed)
+        try:
+            window._parse_timer.stop()
+            if hasattr(window, "_chk_auto_fetch"):
+                window._chk_auto_fetch.setChecked(False)
+            checkboxes = {checkbox.text(): checkbox for checkbox in window.findChildren(QCheckBox)}
+            checkboxes["特肖模式"].setChecked(True)
+            window._radio_hk.setChecked(True)
+            window._cmb_channel.setCurrentText("现金")
+            window._cmb_declarer.setCurrentText("验收申报人")
+            window._input_text.setPlainText("马蛇10")
+            window._do_parse()
+            window._on_add_result()
+            window._order_table.item(0, 5).setText("30")
+
+            with (
+                patch(
+                    "ui.windows.record_order_window.QMessageBox.question",
+                    return_value=QMessageBox.StandardButton.Yes,
+                ),
+                patch("ui.windows.record_order_window.QMessageBox.information"),
+            ):
+                window._on_save_order()
+        finally:
+            app_events.orders_changed.disconnect(on_orders_changed)
+            app_events.logs_changed.disconnect(on_logs_changed)
+            window.close()
+            window.deleteLater()
+
+        with session_factory() as session:
+            order = session.scalars(select(Order)).one()
+            item = session.scalars(select(OrderItem)).one()
+            assert order.region == "香港"
+            assert order.channel == "现金"
+            assert order.customer_name == "验收申报人"
+            assert order.source == "record_window_adjusted"
+            assert order.total_amount == 30
+            assert item.bet_type == "平特一肖"
+            assert item.selection == "马,蛇"
+            assert item.amount == 30
+        assert event_counts == {"orders": 1, "logs": 1}
 
     def test_save_multi_numbers_keeps_per_number_amount_semantics(self, save_window, session_factory):
         """01,02,03各10 保存为 3 个明细，每个金额 10，总额 30。"""

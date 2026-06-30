@@ -152,12 +152,33 @@ def test_special_zodiac_parse_options_save_as_pingte_zodiac() -> None:
     assert preview.order_items[0].amount == Decimal("20.00")
 
 
+def test_default_multi_zodiac_intake_keeps_previous_total_and_bet_type() -> None:
+    preview = _preview("羊马各10", region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == Decimal("90.00")
+    assert preview.order_items[0].bet_type == "连肖"
+    assert preview.order_items[0].selection == "羊,马"
+    assert preview.order_items[0].amount == Decimal("90.00")
+
+
 def test_zodiac_each_parse_options_count_zodiac_groups() -> None:
     preview = _preview("羊马各10", region="澳门", parse_options=ParseOptions(zodiac_each_mode=True))
     assert preview.can_save
     assert preview.total_amount == Decimal("20.00")
     assert preview.order_items[0].bet_type == "平特一肖"
     assert preview.order_items[0].selection == "羊,马"
+
+
+def test_age_writing_parse_options_are_opt_in_for_intake() -> None:
+    disabled = _preview("25岁各10", region="澳门")
+    assert not disabled.can_save
+    assert disabled.invalid_items == 1
+
+    enabled = _preview("25岁各10", region="澳门", parse_options=ParseOptions(age_writing=True))
+    assert enabled.can_save
+    assert enabled.total_amount == Decimal("10.00")
+    assert enabled.order_items[0].bet_type == "特码"
+    assert enabled.order_items[0].selection == "25"
 
 
 def test_multi_zodiac_not_silently_split() -> None:

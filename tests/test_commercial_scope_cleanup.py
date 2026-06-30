@@ -346,6 +346,20 @@ def test_record_order_window_marks_unimplemented_options_and_footer_scope() -> N
     window.deleteLater()
 
 
+def test_record_order_advanced_option_docs_match_current_scope() -> None:
+    feature_status = Path("docs/feature_status.md").read_text(encoding="utf-8")
+    manual_script = Path("docs/manual_test_script.md").read_text(encoding="utf-8")
+
+    assert "| 特肖模式 | 第一阶段可用 |" in feature_status
+    assert "| 岁写法 | 第一阶段可用 |" in feature_status
+    assert "| 各->各肖 | 第一阶段可用 |" in feature_status
+    assert "| 抄写法 | 暂未开放 |" not in feature_status
+    assert "录单高级选项验收样例" in manual_script
+    for sample in ("羊马各10", "鼠、牛、虎各5", "龙-羊-猴各80", "25岁、08岁各10"):
+        assert sample in manual_script
+    assert "特肖模式、抄写法、各->各肖仍禁用" not in manual_script
+
+
 def test_readme_and_scope_document_describe_commercial_test_scope() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
     scope = Path("docs/commercial_test_scope.md").read_text(encoding="utf-8")
