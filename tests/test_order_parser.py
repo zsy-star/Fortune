@@ -30,6 +30,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
 from services.order_parser import ParseResult, format_result, parse_lines, parse_order
@@ -912,6 +914,87 @@ class TestBetTypePrefix:
         assert r.success
         assert r.numbers == (8, 9)
         assert r.total == 100
+
+
+class TestFuxuanParser:
+    def test_number_fuxuan_4_choose_3(self) -> None:
+        r = parse_order("复3 01,02,03,04 各10")
+        assert r.success
+        assert r.category == "几中几复选"
+        assert r.numbers == (1, 2, 3, 4)
+        assert r.fuxuan_type == "复3"
+        assert r.amount == Decimal("10")
+        assert r.total == Decimal("40")
+
+    def test_number_fuxuan_token_after_selection(self) -> None:
+        r = parse_order("01,02,03,04,05 复2 各10")
+        assert r.success
+        assert r.category == "几中几复选"
+        assert r.numbers == (1, 2, 3, 4, 5)
+        assert r.fuxuan_type == "复2"
+        assert r.total == Decimal("100")
+
+    def test_number_fuxuan_large_combination_count(self) -> None:
+        r = parse_order("复3 01,02,03,04,05,06,07,08,09,10 各2")
+        assert r.success
+        assert r.category == "几中几复选"
+        assert r.numbers == (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+        assert r.total == Decimal("240")
+
+    def test_number_fuxuan_explicit_prefix(self) -> None:
+        r = parse_order("几中几复选 01,02,03,04 复3 各10")
+        assert r.success
+        assert r.category == "几中几复选"
+        assert r.fuxuan_type == "复3"
+        assert r.total == Decimal("40")
+
+    def test_number_fuxuan_rejects_invalid_number(self) -> None:
+        r = parse_order("复3 01,02,50 各10")
+        assert not r.success
+        assert "无法解析复选投注内容" in r.error
+
+    def test_number_fuxuan_rejects_k_greater_than_number_count(self) -> None:
+        r = parse_order("复4 01,02,03 各10")
+        assert not r.success
+        assert "不能大于号码个数" in r.error
+
+    def test_number_fuxuan_rejects_k_less_than_2(self) -> None:
+        r = parse_order("复1 01,02,03 各10")
+        assert not r.success
+        assert "至少为 2" in r.error
+
+    def test_lianxiao_fuxuan_5_choose_4(self) -> None:
+        r = parse_order("兔狗虎蛇龙 复4 各10")
+        assert r.success
+        assert r.category == "连肖复选"
+        assert [name for name, _ in r.zodiac_groups] == ["兔", "狗", "虎", "蛇", "龙"]
+        assert r.fuxuan_type == "复4"
+        assert r.total == Decimal("50")
+
+    def test_lianxiao_fuxuan_token_before_selection(self) -> None:
+        r = parse_order("复3 鼠牛虎兔 各5")
+        assert r.success
+        assert r.category == "连肖复选"
+        assert [name for name, _ in r.zodiac_groups] == ["鼠", "牛", "虎", "兔"]
+        assert r.fuxuan_type == "复3"
+        assert r.total == Decimal("20")
+
+    def test_lianxiao_fuxuan_explicit_prefix_with_separators(self) -> None:
+        r = parse_order("连肖复选 兔、狗、虎、蛇、龙 复4 各10")
+        assert r.success
+        assert r.category == "连肖复选"
+        assert [name for name, _ in r.zodiac_groups] == ["兔", "狗", "虎", "蛇", "龙"]
+        assert r.total == Decimal("50")
+
+    def test_lianxiao_fuxuan_rejects_invalid_zodiac(self) -> None:
+        r = parse_order("连肖复选 兔狗猫 复2 各10")
+        assert not r.success
+        assert "无法解析连肖复选生肖列表" in r.error
+
+    def test_lianxiao_fuxuan_rejects_k_greater_than_zodiac_count(self) -> None:
+        r = parse_order("兔狗 复3 各10")
+        assert not r.success
+        assert "不能大于生肖个数" in r.error
 
 
 class TestRecordWindowAdvancedParseOptions:

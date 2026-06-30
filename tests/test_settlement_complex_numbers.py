@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
 import pytest
 
@@ -132,6 +133,63 @@ def test_non_hit_unparseable_selection_is_unsupported(session_factory) -> None:
     assert preview.unsupported_items == 1
     assert preview.results[0].is_supported is False
     assert preview.results[0].unsupported_reason
+
+
+@pytest.mark.parametrize(
+    ("bet_type", "selection", "amount", "note"),
+    [
+        ("几中几复选", "01,02,03,04", "40", "复选类型=复3"),
+        ("连肖复选", "兔,狗,虎,蛇,龙", "50", "复选类型=复4"),
+    ],
+)
+def test_fuxuan_settlement_is_unsupported(
+    session_factory,
+    bet_type: str,
+    selection: str,
+    amount: str,
+    note: str,
+) -> None:
+    order = create_order(
+        OrderService(session_factory),
+        items=[OrderItemCreate(bet_type=bet_type, selection=selection, amount=amount, note=note)],
+    )
+    draw = create_draw(DrawService(session_factory))
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+    item = preview.results[0]
+
+    assert preview.unsupported_items == 1
+    assert item.is_supported is False
+    assert item.is_winner is None
+    assert item.unsupported_reason == "复选类玩法结算规则待确认"
+    assert item.reason == "复选类玩法结算规则待确认"
+    assert item.payout_amount == Decimal("0.00")
+    assert item.odds is None
+    assert item.draw_numbers == ("01", "02", "03", "04", "05", "06", "07")
+
+
+def test_commit_is_blocked_for_fuxuan_unsupported_item(session_factory) -> None:
+    order_service = OrderService(session_factory)
+    order = create_order(
+        order_service,
+        items=[
+            OrderItemCreate(
+                bet_type="几中几复选",
+                selection="01,02,03,04",
+                amount="40",
+                note="复选类型=复3",
+            )
+        ],
+    )
+    draw = create_draw(DrawService(session_factory))
+
+    with pytest.raises(SettlementDataError, match="存在暂不支持玩法"):
+        SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+
+    after = order_service.get_order(order.id)
+    assert after.raw_text == "complex number settlement"
+    assert after.status == "active"
+    assert SettlementService(session_factory).count_settlement_records() == 0
 
 
 def test_six_special_zodiac_hits_when_special_zodiac_is_selected(session_factory) -> None:

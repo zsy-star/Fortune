@@ -63,6 +63,9 @@ UNSUPPORTED_BET_TYPES = {
     "特串",
 }
 
+FUXUAN_UNSUPPORTED_BET_TYPES = {"几中几复选", "连肖复选"}
+FUXUAN_UNSUPPORTED_REASON = "复选类玩法结算规则待确认"
+
 BET_TYPE_ALIASES = {
     SPECIAL_NUMBER: {"特码", "特号", "号码", "特码号码", "单号投注", "纯数字"},
     SPECIAL_ZODIAC: {"特码生肖", "生肖", "一肖"},
@@ -122,6 +125,8 @@ class BetTypeNormalizer:
         if not raw_selection:
             raise InvalidSelectionError("投注内容不能为空")
 
+        if original_bet_type in FUXUAN_UNSUPPORTED_BET_TYPES:
+            raise UnsupportedBetTypeError(FUXUAN_UNSUPPORTED_REASON)
         if original_bet_type in UNSUPPORTED_BET_TYPES:
             raise UnsupportedBetTypeError(f"暂不支持玩法：{original_bet_type}")
 

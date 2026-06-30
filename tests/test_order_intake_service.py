@@ -212,6 +212,58 @@ def test_non_hit_intake_saves_one_group_item(text: str, selection: str) -> None:
     assert preview.order_items[0].amount == Decimal("100.00")
 
 
+def test_number_fuxuan_intake_saves_one_summary_item_with_note() -> None:
+    preview = _preview("复3 01,02,03,04 各10", region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == Decimal("40.00")
+    assert len(preview.order_items) == 1
+    item = preview.order_items[0]
+    assert item.bet_type == "几中几复选"
+    assert item.selection == "01,02,03,04"
+    assert item.amount == Decimal("40.00")
+    assert item.note == "复选类型=复3"
+    assert any("复选类玩法" in warning for warning in preview.warnings)
+    row = _first_valid_item(preview)
+    assert row.original_bet_type == "几中几复选"
+    assert row.order_selection == "01,02,03,04"
+    assert row.normalized_bet_type is None
+
+
+def test_lianxiao_fuxuan_intake_saves_one_summary_item_with_note() -> None:
+    preview = _preview("兔狗虎蛇龙 复4 各10", region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == Decimal("50.00")
+    assert len(preview.order_items) == 1
+    item = preview.order_items[0]
+    assert item.bet_type == "连肖复选"
+    assert item.selection == "兔,狗,虎,蛇,龙"
+    assert item.amount == Decimal("50.00")
+    assert item.note == "复选类型=复4"
+    assert any("复选类玩法" in warning for warning in preview.warnings)
+
+
+def test_fuxuan_intake_save_and_read_preserves_fuxuan_type_note(session_factory) -> None:
+    service = OrderIntakeService(session_factory)
+    save_result = service.parse_and_save(
+        "复2 01,02,03,04,05 各10",
+        region="澳门",
+        source="test",
+        customer_name="复选保存测试",
+        channel="微信",
+    )
+    assert save_result.success
+    assert save_result.order is not None
+    assert save_result.order.total_amount == Decimal("100.00")
+
+    detail = service._order_service.get_order(save_result.order.id)
+    assert detail is not None
+    assert len(detail.items) == 1
+    assert detail.items[0].bet_type == "几中几复选"
+    assert detail.items[0].selection == "01,02,03,04,05"
+    assert detail.items[0].amount == Decimal("100.00")
+    assert detail.items[0].note == "复选类型=复2"
+
+
 def test_complex_play_warning_when_saveable() -> None:
     preview = _preview("连兔龙蛇各20", region="澳门")
     assert preview.can_save

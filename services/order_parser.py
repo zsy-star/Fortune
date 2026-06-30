@@ -6,8 +6,10 @@
 from __future__ import annotations
 
 import itertools
+import math
 import re
 from dataclasses import dataclass, field
+from decimal import Decimal
 
 # ======================================================================
 # 工具函数
@@ -219,6 +221,8 @@ class ParseResult:
     zodiac_groups: list[tuple[str, tuple[int, ...]]] = field(default_factory=list)
     # 复试连肖专用：用户指定的连数列表，如 (3, 4, 5)
     fushi_lian_sizes: tuple[int, ...] = ()
+    # 复选类玩法专用：复2、复3、复4 等
+    fuxuan_type: str = ""
 
 
 @dataclass(frozen=True)
@@ -465,6 +469,7 @@ _BET_TYPE_INFIX: list[str] = sorted(
 _NON_HIT_PREFIX_PATTERN = re.compile(
     rf"^(?:(?:[Nn])|(?:\d+)|(?:[{_CN_DIGIT_CHARS}]+))?不中\s*"
 )
+_FUXUAN_TOKEN_PATTERN = re.compile(r"复\s*(\d+)")
 
 
 def _strip_bet_type_infix(category_text: str) -> tuple[str, str]:
@@ -475,6 +480,125 @@ def _strip_bet_type_infix(category_text: str) -> tuple[str, str]:
             if remaining:  # 剥离后还有内容（如 "蛇"、"红波"）
                 return remaining, bt
     return category_text, ""
+
+
+def _decimal_amount(value: float | int | str | Decimal) -> Decimal:
+    return Decimal(str(value))
+
+
+def _unique_zodiac_groups(
+    groups: list[tuple[str, tuple[int, ...]]],
+) -> list[tuple[str, tuple[int, ...]]]:
+    seen: set[str] = set()
+    unique: list[tuple[str, tuple[int, ...]]] = []
+    for name, numbers in groups:
+        if name in seen:
+            continue
+        seen.add(name)
+        unique.append((name, numbers))
+    return unique
+
+
+def _build_fuxuan_result(
+    *,
+    region: str,
+    category: str,
+    numbers: tuple[int, ...],
+    amount: float | Decimal,
+    k: int,
+    zodiac_groups: list[tuple[str, tuple[int, ...]]] | None = None,
+) -> ParseResult:
+    count = len(zodiac_groups) if zodiac_groups is not None else len(numbers)
+    combo_count = math.comb(count, k)
+    amount_decimal = _decimal_amount(amount)
+    return ParseResult(
+        region=region,
+        success=True,
+        category=category,
+        numbers=numbers,
+        amount=amount_decimal,
+        total=amount_decimal * combo_count,
+        zodiac_groups=zodiac_groups or [],
+        fuxuan_type=f"复{k}",
+    )
+
+
+def _parse_fuxuan_category(
+    *,
+    region: str,
+    category_text: str,
+    amount: float | Decimal,
+) -> ParseResult | None:
+    text = category_text.strip()
+    if not text:
+        return None
+
+    explicit_type = ""
+    for prefix, category in (
+        ("几中几复选", "几中几复选"),
+        ("复式组合", "几中几复选"),
+        ("连肖复选", "连肖复选"),
+    ):
+        if text.startswith(prefix):
+            explicit_type = category
+            text = text[len(prefix):].strip()
+            break
+
+    matches = list(_FUXUAN_TOKEN_PATTERN.finditer(text))
+    if not matches:
+        return None
+    if len(matches) > 1:
+        return ParseResult(region=region, success=False, error=f"复选格式只能包含一个复选类型：{category_text}")
+
+    match = matches[0]
+    k = int(match.group(1))
+    selection_text = f"{text[:match.start()]} {text[match.end():]}".strip()
+    if k < 2:
+        return ParseResult(region=region, success=False, error=f"复选数量必须至少为 2：复{k}")
+    if not selection_text:
+        return ParseResult(region=region, success=False, error=f"复选投注内容不能为空：{category_text}")
+
+    if explicit_type != "连肖复选":
+        numbers = _parse_number_list(selection_text)
+        if numbers is not None:
+            if k > len(numbers):
+                return ParseResult(
+                    region=region,
+                    success=False,
+                    error=f"复选数量复{k}不能大于号码个数 {len(numbers)}",
+                )
+            return _build_fuxuan_result(
+                region=region,
+                category="几中几复选",
+                numbers=numbers,
+                amount=amount,
+                k=k,
+            )
+        if explicit_type == "几中几复选":
+            return ParseResult(region=region, success=False, error=f"无法解析几中几复选号码列表：{selection_text}")
+
+    if explicit_type != "几中几复选":
+        groups = _unique_zodiac_groups(_parse_exact_zodiac_selection(selection_text))
+        if groups:
+            if k > len(groups):
+                return ParseResult(
+                    region=region,
+                    success=False,
+                    error=f"复选数量复{k}不能大于生肖个数 {len(groups)}",
+                )
+            all_numbers = tuple(sorted({n for _, nums in groups for n in nums}))
+            return _build_fuxuan_result(
+                region=region,
+                category="连肖复选",
+                numbers=all_numbers,
+                amount=amount,
+                k=k,
+                zodiac_groups=groups,
+            )
+        if explicit_type == "连肖复选":
+            return ParseResult(region=region, success=False, error=f"无法解析连肖复选生肖列表：{selection_text}")
+
+    return ParseResult(region=region, success=False, error=f"无法解析复选投注内容：{selection_text}")
 
 
 def _resolve_parse_options(
@@ -676,6 +800,14 @@ def parse_order(
 
     if not category_text:
         return ParseResult(region=region, success=False, error="未找到类别描述（分隔符之前为空）")
+
+    fuxuan_result = _parse_fuxuan_category(
+        region=region,
+        category_text=category_text,
+        amount=amount,
+    )
+    if fuxuan_result is not None:
+        return fuxuan_result
 
     # ── 2-4. 类别匹配（支持前缀剥离，如「张三 兔」→ 忽略「张三」匹配「兔」）──
 

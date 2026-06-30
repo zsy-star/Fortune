@@ -29,6 +29,8 @@ SUPPORTED_BET_TYPES: frozenset[str] = frozenset(
         "特码波色",
         "六肖中特",
         "包半波",
+        "几中几复选",
+        "连肖复选",
     }
 )
 

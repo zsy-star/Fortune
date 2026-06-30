@@ -351,6 +351,58 @@ def convert_parse_result(
             errors.append(preview.error or "N不中映射失败")
         return previews, order_items, warnings, errors
 
+    if category in {"几中几复选", "连肖复选"}:
+        warning = "复选类玩法可保存，但正式结算规则待确认"
+        warnings.append(warning)
+        if category == "连肖复选":
+            selection = ",".join(name for name, _ in result.zodiac_groups)
+        else:
+            selection = ",".join(f"{number:02d}" for number in result.numbers)
+        fuxuan_note = f"复选类型={result.fuxuan_type}" if result.fuxuan_type else None
+        try:
+            normalize_bet_type(category)
+        except InvalidBetTypeError as exc:
+            message = str(exc)
+            previews.append(
+                _build_item_preview(
+                    source_line=source_line,
+                    original_bet_type=category,
+                    original_selection=selection,
+                    amount=expected_total,
+                    order_bet_type=None,
+                    order_selection=None,
+                    normalizer=normalizer,
+                    warning=warning,
+                    error=message,
+                )
+            )
+            errors.append(message)
+            return previews, order_items, warnings, errors
+
+        preview = _build_item_preview(
+            source_line=source_line,
+            original_bet_type=category,
+            original_selection=selection,
+            amount=expected_total,
+            order_bet_type=category,
+            order_selection=selection,
+            normalizer=normalizer,
+            warning=warning,
+        )
+        previews.append(preview)
+        if preview.is_valid:
+            order_items.append(
+                OrderItemCreate(
+                    bet_type=category,
+                    selection=selection,
+                    amount=expected_total,
+                    note=fuxuan_note,
+                )
+            )
+        else:
+            errors.append(preview.error or f"{category}映射失败")
+        return previews, order_items, warnings, errors
+
     if _is_lianxiao_category(result):
         warning = "连肖玩法可保存，但当前结算预览暂不支持"
         warnings.append(warning)
