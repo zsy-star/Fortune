@@ -44,6 +44,7 @@ from ui.pages import (
     OverviewPage,
 
     SettlementLedgerPage,
+    CustomerAccountPage,
 
     SpecialOrderPage,
 
@@ -79,6 +80,7 @@ _STACK_PAGE_CLASSES = [
     OrderDetailPage,
 
     SettlementLedgerPage,
+    CustomerAccountPage,
 
     DrawHistoryPage,
 
@@ -106,6 +108,8 @@ _NAV_LABELS = [
 
     "结算历史",
 
+    "客户账户",
+
     "开奖历史",
 
     "辅助工具",
@@ -116,7 +120,7 @@ _NAV_LABELS = [
 
 ]
 
-_NAV_STACK_MAP = [0, 1, 4, 5, 6, 7, 8, 9, 10]
+_NAV_STACK_MAP = [0, 1, 4, 5, 6, 7, 8, 9, 10, 11]
 
 
 
@@ -289,7 +293,7 @@ class MainWindow(QMainWindow):
 
 
     def _on_nav_clicked(self, nav_id: int) -> None:
-        mapping = {0: 0, 1: 1, 2: _SPECIAL_ORDER_STACK, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8, 8: 9, 9: 10}
+        mapping = {0: 0, 1: 1, 2: _SPECIAL_ORDER_STACK, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8, 8: 9, 9: 10, 10: 11}
         stack_idx = mapping.get(nav_id)
         if stack_idx is not None:
             self._stack.setCurrentIndex(stack_idx)

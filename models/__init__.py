@@ -2,6 +2,7 @@
 
 from models.base import Base
 from models.adjustment_record import AdjustmentRecord
+from models.accounting import AccountLedgerEntry, CustomerAccount
 from models.app_meta import AppMeta
 from models.lottery_draw import LotteryDraw
 from models.operation_log import OperationLog
@@ -12,7 +13,9 @@ from models.settings import DeclarerSetting, OddsRebateItem, OddsRebatePlan
 __all__ = [
     "Base",
     "AdjustmentRecord",
+    "AccountLedgerEntry",
     "AppMeta",
+    "CustomerAccount",
     "LotteryDraw",
     "OperationLog",
     "Order",

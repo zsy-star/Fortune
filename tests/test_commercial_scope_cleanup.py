@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication, QCheckBox, QLabel, QLineEdit, QPushB
 
 from schemas.order_schema import OrderCreate, OrderItemCreate
 from services.adjustment_record_service import AdjustmentRecordService
+from services.accounting_service import AccountLedgerService, CustomerAccountService
 from services.log_service import LogService
 from services.draw_service import DrawService
 from services.order_import_service import OrderImportService
@@ -34,6 +35,7 @@ from ui.pages.order_analysis_page import OrderAnalysisPage
 from ui.pages.order_detail_page import OrderDetailPage
 from ui.pages.overview_page import OverviewPage
 from ui.pages.settlement_ledger_page import SettlementLedgerPage
+from ui.pages.customer_account_page import CustomerAccountPage
 from ui.pages.special_order_page import SpecialOrderPage
 from ui.pages.today_draw_page import TodayDrawPage
 from ui.pages.tools_page import ToolsPage
@@ -97,6 +99,10 @@ def test_commercial_test_version_main_pages_and_dialogs_create_offscreen(session
         DrawHistoryPage(draw_service=DrawService(session_factory)),
         OrderDetailPage(order_service=order_service, log_service=LogService(session_factory)),
         SettlementLedgerPage(order_service=order_service),
+        CustomerAccountPage(
+            account_service=CustomerAccountService(session_factory),
+            ledger_service=AccountLedgerService(session_factory),
+        ),
         OperationLogPage(log_service=LogService(session_factory)),
         NumberCatalogPage(),
         ToolsPage(),
@@ -419,7 +425,7 @@ def test_unopened_feature_freeze_list_is_explicit_and_not_misleading() -> None:
         for path in ("README.md", "docs/commercial_test_scope.md", "docs/feature_status.md")
     )
     required_items = [
-        "余额流水 / 客户账户",
+        "客户账户 / 余额流水",
         "返水 / 佣金",
         "权限系统",
         "清空订单",
@@ -443,11 +449,11 @@ def test_unopened_feature_freeze_list_is_explicit_and_not_misleading() -> None:
         assert item in documents
     assert "未冻结规则的写法不强行识别" in documents
     assert "完整规则未确认前不接入正式结算" in documents
-    assert "账务模型、审计口径和回滚策略尚未设计" in documents
+    assert "不自动接入结算兑奖" in documents
     assert "功能边界" in documents
 
 
-def test_permission_and_accounting_design_docs_are_frozen_but_not_implemented() -> None:
+def test_permission_design_is_frozen_and_accounting_first_stage_is_bounded() -> None:
     permission_doc_path = Path("docs/permission_audit_model.md")
     accounting_doc_path = Path("docs/accounting_ledger_model.md")
     assert permission_doc_path.exists()
@@ -465,19 +471,22 @@ def test_permission_and_accounting_design_docs_are_frozen_but_not_implemented() 
     assert "审计日志不可绕过" in permission_doc
     assert "二次确认" in permission_doc
 
-    assert "当前不写余额" in accounting_doc
-    assert "当前不做客户账户" in accounting_doc
+    assert "客户账户 / 余额流水第一阶段已开放" in accounting_doc
+    assert "已支持手工加款、手工扣款" in accounting_doc
+    assert "余额不能直接覆盖" in accounting_doc
+    assert "当前不自动把正式结算中奖金额入账" in accounting_doc
     assert "当前不开放真实兑奖" in accounting_doc
-    assert "当前不开放返水 / 佣金" in accounting_doc
+    assert "当前不做返水 / 佣金" in accounting_doc
     assert "所有金额使用 `Decimal`" in accounting_doc
     assert "禁止 `float`" in accounting_doc
 
     assert "[权限与审计模型](docs/permission_audit_model.md)" in readme
     assert "[账务 / 余额流水模型](docs/accounting_ledger_model.md)" in readme
     assert "权限与审计模型设计 | 设计已冻结，功能未开放" in feature_status
-    assert "账务 / 余额流水模型设计 | 设计已冻结，功能未开放" in feature_status
+    assert "余额流水 / 客户账户 | 第一阶段可用" in feature_status
+    assert "账务 / 余额流水模型 | 第一阶段可用" in feature_status
     assert "权限与审计模型设计 | 已完成" not in feature_status
-    assert "余额流水 / 客户账户 | 已完成" not in feature_status
+    assert "余额流水 / 客户账户 | 暂未开放" not in feature_status
 
 
 def test_repository_safety_ignores_runtime_files_and_keeps_migrations_frozen() -> None:
@@ -500,6 +509,7 @@ def test_repository_safety_ignores_runtime_files_and_keeps_migrations_frozen() -
         "20260624_0003_create_settings_tables.py",
         "20260626_0004_create_app_meta.py",
         "20260628_0005_create_adjustment_records.py",
+        "20260701_0006_create_customer_accounts.py",
     ]
 
 

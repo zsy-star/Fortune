@@ -11,6 +11,7 @@ from ui.pages.tools_page import ToolsPage
 from ui.pages.operation_log_page import OperationLogPage
 from ui.pages.record_order_page import RecordOrderPage
 from ui.pages.settlement_ledger_page import SettlementLedgerPage
+from ui.pages.customer_account_page import CustomerAccountPage
 from ui.pages.number_catalog_page import NumberCatalogPage
 
 __all__ = [
@@ -25,5 +26,6 @@ __all__ = [
     "OperationLogPage",
     "RecordOrderPage",
     "SettlementLedgerPage",
+    "CustomerAccountPage",
     "NumberCatalogPage",
 ]
