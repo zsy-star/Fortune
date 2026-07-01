@@ -192,6 +192,63 @@ def test_commit_is_blocked_for_fuxuan_unsupported_item(session_factory) -> None:
     assert SettlementService(session_factory).count_settlement_records() == 0
 
 
+@pytest.mark.parametrize(
+    ("bet_type", "selection", "amount", "note"),
+    [
+        ("二中二", "(01-02)", "10", "连码组合数=1;连码组大小=2"),
+        ("三中三", "(01-02-03)", "10", "连码组合数=1;连码组大小=3"),
+        ("三中二", "(01-02-03)", "10", "连码组合数=1;连码组大小=3"),
+    ],
+)
+def test_lianma_settlement_is_unsupported(
+    session_factory,
+    bet_type: str,
+    selection: str,
+    amount: str,
+    note: str,
+) -> None:
+    order = create_order(
+        OrderService(session_factory),
+        items=[OrderItemCreate(bet_type=bet_type, selection=selection, amount=amount, note=note)],
+    )
+    draw = create_draw(DrawService(session_factory))
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+    item = preview.results[0]
+
+    assert preview.unsupported_items == 1
+    assert item.is_supported is False
+    assert item.is_winner is None
+    assert item.unsupported_reason == "连码类玩法结算规则待确认"
+    assert item.reason == "连码类玩法结算规则待确认"
+    assert item.payout_amount == Decimal("0.00")
+    assert item.odds is None
+
+
+def test_commit_is_blocked_for_lianma_unsupported_item(session_factory) -> None:
+    order_service = OrderService(session_factory)
+    order = create_order(
+        order_service,
+        items=[
+            OrderItemCreate(
+                bet_type="二中二",
+                selection="(01-02)-(03-04)",
+                amount="20",
+                note="连码组合数=2;连码组大小=2",
+            )
+        ],
+    )
+    draw = create_draw(DrawService(session_factory))
+
+    with pytest.raises(SettlementDataError, match="存在暂不支持玩法"):
+        SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+
+    after = order_service.get_order(order.id)
+    assert after.raw_text == "complex number settlement"
+    assert after.status == "active"
+    assert SettlementService(session_factory).count_settlement_records() == 0
+
+
 def test_six_special_zodiac_hits_when_special_zodiac_is_selected(session_factory) -> None:
     order = create_order(
         OrderService(session_factory),

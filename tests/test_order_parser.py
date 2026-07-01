@@ -1023,6 +1023,104 @@ class TestFuxuanParser:
         assert "不能大于生肖个数" in r.error
 
 
+class TestLianmaParser:
+    def test_erzhonger_single_group(self) -> None:
+        r = parse_order("二中二 01,02 各10")
+        assert r.success
+        assert r.category == "二中二"
+        assert r.lianma_groups == ((1, 2),)
+        assert r.amount == Decimal("10")
+        assert r.total == Decimal("10")
+
+    def test_erzhonger_bracket_multi_group(self) -> None:
+        r = parse_order("二中二 (01-02)-(03-04) 各10")
+        assert r.success
+        assert r.category == "二中二"
+        assert r.lianma_groups == ((1, 2), (3, 4))
+        assert r.total == Decimal("20")
+
+    def test_erzhonger_suffix_without_separator(self) -> None:
+        r = parse_order("01,02二中二10")
+        assert r.success
+        assert r.category == "二中二"
+        assert r.lianma_groups == ((1, 2),)
+        assert r.total == Decimal("10")
+
+    def test_erzhonger_suffix_with_spaces(self) -> None:
+        r = parse_order("01-02 二中二 各10")
+        assert r.success
+        assert r.category == "二中二"
+        assert r.lianma_groups == ((1, 2),)
+        assert r.total == Decimal("10")
+
+    def test_erzhonger_rejects_three_numbers_without_fuxuan_semantics(self) -> None:
+        r = parse_order("二中二 01,02,03 各10")
+        assert not r.success
+        assert "每组必须 2 个号码" in r.error
+
+    def test_lianma_rejects_duplicate_number_inside_group(self) -> None:
+        r = parse_order("二中二 (01-01) 各10")
+        assert not r.success
+        assert "不能重复" in r.error
+
+    def test_lianma_rejects_invalid_number(self) -> None:
+        r = parse_order("二中二 (01-50) 各10")
+        assert not r.success
+        assert "超出范围" in r.error
+
+    def test_sanzhongsan_single_group(self) -> None:
+        r = parse_order("三中三 01,02,03 各10")
+        assert r.success
+        assert r.category == "三中三"
+        assert r.lianma_groups == ((1, 2, 3),)
+        assert r.total == Decimal("10")
+
+    def test_sanzhongsan_bracket_multi_group(self) -> None:
+        r = parse_order("三中三 (01-02-03)-(04-05-06) 各10")
+        assert r.success
+        assert r.category == "三中三"
+        assert r.lianma_groups == ((1, 2, 3), (4, 5, 6))
+        assert r.total == Decimal("20")
+
+    def test_sanzhongsan_suffix_without_separator(self) -> None:
+        r = parse_order("01,02,03三中三10")
+        assert r.success
+        assert r.category == "三中三"
+        assert r.lianma_groups == ((1, 2, 3),)
+        assert r.total == Decimal("10")
+
+    def test_sanzhongsan_rejects_wrong_group_size(self) -> None:
+        r = parse_order("三中三 (01-02) 各10")
+        assert not r.success
+        assert "每组必须 3 个号码" in r.error
+
+    def test_sanzhonger_single_group(self) -> None:
+        r = parse_order("三中二 01,02,03 各10")
+        assert r.success
+        assert r.category == "三中二"
+        assert r.lianma_groups == ((1, 2, 3),)
+        assert r.total == Decimal("10")
+
+    def test_sanzhonger_bracket_multi_group(self) -> None:
+        r = parse_order("三中二 (01-02-03)-(04-05-06) 各10")
+        assert r.success
+        assert r.category == "三中二"
+        assert r.lianma_groups == ((1, 2, 3), (4, 5, 6))
+        assert r.total == Decimal("20")
+
+    def test_sanzhonger_suffix_without_separator(self) -> None:
+        r = parse_order("01,02,03三中二10")
+        assert r.success
+        assert r.category == "三中二"
+        assert r.lianma_groups == ((1, 2, 3),)
+        assert r.total == Decimal("10")
+
+    def test_sanzhonger_rejects_wrong_group_size(self) -> None:
+        r = parse_order("三中二 (01-02) 各10")
+        assert not r.success
+        assert "每组必须 3 个号码" in r.error
+
+
 class TestRecordWindowAdvancedParseOptions:
     @pytest.mark.parametrize(
         ("text", "category", "total", "numbers_count"),

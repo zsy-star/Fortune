@@ -321,6 +321,84 @@ def test_fuxuan_intake_save_and_read_preserves_fuxuan_type_note(session_factory)
     assert detail.items[0].note == "复选类型=复2"
 
 
+def test_lianma_intake_saves_stable_selection_and_note() -> None:
+    preview = _preview("二中二 (01-02)-(03-04) 各10", region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == Decimal("20.00")
+    assert len(preview.order_items) == 1
+    item = preview.order_items[0]
+    assert item.bet_type == "二中二"
+    assert item.selection == "(01-02)-(03-04)"
+    assert item.amount == Decimal("20.00")
+    assert item.note == "连码组合数=2;连码组大小=2"
+    assert any("连码类玩法" in warning for warning in preview.warnings)
+    row = _first_valid_item(preview)
+    assert row.original_bet_type == "二中二"
+    assert row.order_selection == "(01-02)-(03-04)"
+    assert row.normalized_bet_type is None
+
+
+@pytest.mark.parametrize(
+    ("text", "bet_type", "selection", "amount", "note"),
+    [
+        ("三中三 01,02,03 各10", "三中三", "(01-02-03)", Decimal("10.00"), "连码组合数=1;连码组大小=3"),
+        (
+            "三中三 (01-02-03)-(04-05-06) 各10",
+            "三中三",
+            "(01-02-03)-(04-05-06)",
+            Decimal("20.00"),
+            "连码组合数=2;连码组大小=3",
+        ),
+        ("三中二 01,02,03 各10", "三中二", "(01-02-03)", Decimal("10.00"), "连码组合数=1;连码组大小=3"),
+        (
+            "三中二 (01-02-03)-(04-05-06) 各10",
+            "三中二",
+            "(01-02-03)-(04-05-06)",
+            Decimal("20.00"),
+            "连码组合数=2;连码组大小=3",
+        ),
+    ],
+)
+def test_lianma_intake_amount_preview(
+    text: str,
+    bet_type: str,
+    selection: str,
+    amount: Decimal,
+    note: str,
+) -> None:
+    preview = _preview(text, region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == amount
+    assert len(preview.order_items) == 1
+    assert preview.order_items[0].bet_type == bet_type
+    assert preview.order_items[0].selection == selection
+    assert preview.order_items[0].amount == amount
+    assert preview.order_items[0].note == note
+
+
+def test_lianma_intake_save_and_read_preserves_note(session_factory) -> None:
+    service = OrderIntakeService(session_factory)
+    save_result = service.parse_and_save(
+        "二中二 (01-02)-(03-04) 各10",
+        region="澳门",
+        source="test",
+        customer_name="连码保存测试",
+        channel="微信",
+    )
+    assert save_result.success
+    assert save_result.order is not None
+    assert save_result.order.total_amount == Decimal("20.00")
+    assert save_result.order.item_count == 1
+
+    detail = service._order_service.get_order(save_result.order.id)
+    assert detail is not None
+    assert len(detail.items) == 1
+    assert detail.items[0].bet_type == "二中二"
+    assert detail.items[0].selection == "(01-02)-(03-04)"
+    assert detail.items[0].amount == Decimal("20.00")
+    assert detail.items[0].note == "连码组合数=2;连码组大小=2"
+
+
 def test_complex_play_warning_when_saveable() -> None:
     preview = _preview("连兔龙蛇各20", region="澳门")
     assert preview.can_save

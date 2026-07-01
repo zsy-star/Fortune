@@ -38,6 +38,7 @@ _SUM_LABELS = frozenset({"合单", "合双", "合大", "合小"})
 _TAIL_PATTERN = re.compile(r"^尾[0-9]$")
 _HEAD_PATTERN = re.compile(r"^[0-4]头$")
 _UNSUPPORTED_SAVE_CATEGORIES = frozenset({"全包"})
+_LIANMA_CATEGORIES = frozenset({"二中二", "三中三", "三中二"})
 
 
 class IntakeConversionError(Exception):
@@ -163,6 +164,10 @@ def _build_item_preview(
         order_bet_type=order_bet_type,
         order_selection=order_selection,
     )
+
+
+def _format_lianma_selection(groups: tuple[tuple[int, ...], ...]) -> str:
+    return "-".join("(" + "-".join(f"{number:02d}" for number in group) + ")" for group in groups)
 
 
 def convert_parse_result(
@@ -349,6 +354,57 @@ def convert_parse_result(
             )
         else:
             errors.append(preview.error or "N不中映射失败")
+        return previews, order_items, warnings, errors
+
+    if category in _LIANMA_CATEGORIES:
+        warning = "连码类玩法可保存，但正式结算规则待确认"
+        warnings.append(warning)
+        groups = result.lianma_groups
+        selection = _format_lianma_selection(groups) if groups else ",".join(f"{number:02d}" for number in result.numbers)
+        group_size = len(groups[0]) if groups else 0
+        note = f"连码组合数={len(groups)};连码组大小={group_size}" if groups else None
+        try:
+            normalize_bet_type(category)
+        except InvalidBetTypeError as exc:
+            message = str(exc)
+            previews.append(
+                _build_item_preview(
+                    source_line=source_line,
+                    original_bet_type=category,
+                    original_selection=selection,
+                    amount=expected_total,
+                    order_bet_type=None,
+                    order_selection=None,
+                    normalizer=normalizer,
+                    warning=warning,
+                    error=message,
+                )
+            )
+            errors.append(message)
+            return previews, order_items, warnings, errors
+
+        preview = _build_item_preview(
+            source_line=source_line,
+            original_bet_type=category,
+            original_selection=selection,
+            amount=expected_total,
+            order_bet_type=category,
+            order_selection=selection,
+            normalizer=normalizer,
+            warning=warning,
+        )
+        previews.append(preview)
+        if preview.is_valid:
+            order_items.append(
+                OrderItemCreate(
+                    bet_type=category,
+                    selection=selection,
+                    amount=expected_total,
+                    note=note,
+                )
+            )
+        else:
+            errors.append(preview.error or f"{category}映射失败")
         return previews, order_items, warnings, errors
 
     if category in {"几中几复选", "连肖复选"}:

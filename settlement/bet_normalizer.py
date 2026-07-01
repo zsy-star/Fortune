@@ -65,6 +65,8 @@ UNSUPPORTED_BET_TYPES = {
 
 FUXUAN_UNSUPPORTED_BET_TYPES = {"几中几复选", "连肖复选"}
 FUXUAN_UNSUPPORTED_REASON = "复选类玩法结算规则待确认"
+LIANMA_UNSUPPORTED_BET_TYPES = {"二中二", "三中三", "三中二"}
+LIANMA_UNSUPPORTED_REASON = "连码类玩法结算规则待确认"
 
 BET_TYPE_ALIASES = {
     SPECIAL_NUMBER: {"特码", "特号", "号码", "特码号码", "单号投注", "纯数字"},
@@ -127,6 +129,8 @@ class BetTypeNormalizer:
 
         if original_bet_type in FUXUAN_UNSUPPORTED_BET_TYPES:
             raise UnsupportedBetTypeError(FUXUAN_UNSUPPORTED_REASON)
+        if original_bet_type in LIANMA_UNSUPPORTED_BET_TYPES:
+            raise UnsupportedBetTypeError(LIANMA_UNSUPPORTED_REASON)
         if original_bet_type in UNSUPPORTED_BET_TYPES:
             raise UnsupportedBetTypeError(f"暂不支持玩法：{original_bet_type}")
 

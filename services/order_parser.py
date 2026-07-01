@@ -223,6 +223,8 @@ class ParseResult:
     fushi_lian_sizes: tuple[int, ...] = ()
     # 复选类玩法专用：复2、复3、复4 等
     fuxuan_type: str = ""
+    # 连码类玩法专用：((1, 2), (3, 4)) 等括号组合
+    lianma_groups: tuple[tuple[int, ...], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -500,6 +502,7 @@ _NON_HIT_PREFIX_PATTERN = re.compile(
     rf"^(?:(?:[Nn])|(?:\d+)|(?:[{_CN_DIGIT_CHARS}]+))?不中\s*"
 )
 _FUXUAN_TOKEN_PATTERN = re.compile(r"复\s*(\d+)")
+_LIANMA_TYPES: dict[str, int] = {"二中二": 2, "三中三": 3, "三中二": 3}
 
 
 def _strip_bet_type_infix(category_text: str) -> tuple[str, str]:
@@ -514,6 +517,93 @@ def _strip_bet_type_infix(category_text: str) -> tuple[str, str]:
 
 def _decimal_amount(value: float | int | str | Decimal) -> Decimal:
     return Decimal(str(value))
+
+
+def _format_lianma_selection(groups: tuple[tuple[int, ...], ...]) -> str:
+    return "-".join("(" + "-".join(f"{number:02d}" for number in group) + ")" for group in groups)
+
+
+def _parse_lianma_group_text(group_text: str, group_size: int) -> tuple[int, ...] | str:
+    raw_tokens = [token for token in re.split(r"[,，、\-\s]+", group_text.strip()) if token]
+    if len(raw_tokens) != group_size:
+        return f"连码每组必须 {group_size} 个号码：{group_text}"
+    numbers: list[int] = []
+    for token in raw_tokens:
+        if not token.isdigit():
+            return f"连码号码格式无效：{group_text}"
+        number = int(token)
+        if number < 1 or number > 49:
+            return f"连码号码 {token} 超出范围 (01-49)"
+        numbers.append(number)
+    if len(set(numbers)) != len(numbers):
+        return f"连码单组内不能重复号码：{group_text}"
+    return tuple(numbers)
+
+
+def _parse_lianma_groups(selection_text: str, group_size: int) -> tuple[tuple[int, ...], ...] | str:
+    text = selection_text.strip()
+    if not text:
+        return "连码投注内容不能为空"
+
+    bracket_matches = list(re.finditer(r"\(([^()]*)\)", text))
+    if bracket_matches:
+        leftover = re.sub(r"\([^()]*\)", "", text).strip()
+        if re.sub(r"[\-—,，、\s]+", "", leftover):
+            return f"连码括号组合格式无效：{selection_text}"
+        groups: list[tuple[int, ...]] = []
+        for match in bracket_matches:
+            parsed = _parse_lianma_group_text(match.group(1), group_size)
+            if isinstance(parsed, str):
+                return parsed
+            groups.append(parsed)
+        return tuple(groups)
+
+    parsed = _parse_lianma_group_text(text, group_size)
+    if isinstance(parsed, str):
+        return parsed
+    return (parsed,)
+
+
+def _parse_lianma_category(
+    *,
+    region: str,
+    category_text: str,
+    amount: float | Decimal,
+) -> ParseResult | None:
+    text = category_text.strip()
+    if not text:
+        return None
+
+    bet_type = ""
+    selection_text = ""
+    for candidate in sorted(_LIANMA_TYPES, key=len, reverse=True):
+        if text.startswith(candidate):
+            bet_type = candidate
+            selection_text = text[len(candidate):].strip()
+            break
+        if text.endswith(candidate):
+            bet_type = candidate
+            selection_text = text[: -len(candidate)].strip()
+            break
+    if not bet_type:
+        return None
+
+    group_size = _LIANMA_TYPES[bet_type]
+    groups = _parse_lianma_groups(selection_text, group_size)
+    if isinstance(groups, str):
+        return ParseResult(region=region, success=False, error=groups)
+
+    amount_decimal = _decimal_amount(amount)
+    flattened = tuple(sorted({number for group in groups for number in group}))
+    return ParseResult(
+        region=region,
+        success=True,
+        category=bet_type,
+        numbers=flattened,
+        amount=amount_decimal,
+        total=amount_decimal * len(groups),
+        lianma_groups=groups,
+    )
 
 
 def _unique_zodiac_groups(
@@ -830,6 +920,14 @@ def parse_order(
 
     if not category_text:
         return ParseResult(region=region, success=False, error="未找到类别描述（分隔符之前为空）")
+
+    lianma_result = _parse_lianma_category(
+        region=region,
+        category_text=category_text,
+        amount=amount,
+    )
+    if lianma_result is not None:
+        return lianma_result
 
     fuxuan_result = _parse_fuxuan_category(
         region=region,
