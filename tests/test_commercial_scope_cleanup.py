@@ -347,6 +347,8 @@ def test_record_order_window_marks_unimplemented_options_and_footer_scope() -> N
 
 
 def test_record_order_advanced_option_docs_match_current_scope() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+    scope = Path("docs/commercial_test_scope.md").read_text(encoding="utf-8")
     feature_status = Path("docs/feature_status.md").read_text(encoding="utf-8")
     manual_script = Path("docs/manual_test_script.md").read_text(encoding="utf-8")
 
@@ -354,10 +356,19 @@ def test_record_order_advanced_option_docs_match_current_scope() -> None:
     assert "| 岁写法 | 第一阶段可用 |" in feature_status
     assert "| 各->各肖 | 第一阶段可用 |" in feature_status
     assert "| 抄写法 | 暂未开放 |" not in feature_status
+    for document in (readme, scope, feature_status, manual_script):
+        assert "特肖模式、抄写法、各->各肖仍禁用" not in document
+        assert "特肖模式、抄写法、各->各肖；规则和保存口径未确认，保持禁用" not in document
+        assert "仍禁用：特肖模式、抄写法、各->各肖" not in document
+    for document in (readme, scope):
+        assert "特肖模式、岁写法、各->各肖" in document
+        assert "只影响录单解析、预览和保存口径" in document
+        assert "不自动结算" in document
+        assert "不写余额" in document
+        assert "不涉及真实兑奖" in document
     assert "录单高级选项验收样例" in manual_script
     for sample in ("羊马各10", "鼠、牛、虎各5", "龙-羊-猴各80", "25岁、08岁各10"):
         assert sample in manual_script
-    assert "特肖模式、抄写法、各->各肖仍禁用" not in manual_script
 
 
 def test_readme_and_scope_document_describe_commercial_test_scope() -> None:
@@ -403,7 +414,7 @@ def test_unopened_feature_freeze_list_is_explicit_and_not_misleading() -> None:
         "真实修改原订单式调单",
         "真实打印机调用",
         "特肖模式",
-        "抄写法",
+        "岁写法",
         "各->各肖",
         "胆拖",
         "组选",
@@ -414,7 +425,7 @@ def test_unopened_feature_freeze_list_is_explicit_and_not_misleading() -> None:
     ]
     for item in required_items:
         assert item in documents
-    assert "规则和保存口径未确认" in documents
+    assert "未冻结规则的写法不强行识别" in documents
     assert "完整规则未确认前不接入正式结算" in documents
     assert "账务模型、审计口径和回滚策略尚未设计" in documents
     assert "已完成全部功能的版本" in documents
