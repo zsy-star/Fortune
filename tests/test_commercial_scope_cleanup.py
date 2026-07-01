@@ -351,16 +351,17 @@ def test_record_order_advanced_option_docs_match_current_scope() -> None:
     scope = Path("docs/commercial_test_scope.md").read_text(encoding="utf-8")
     feature_status = Path("docs/feature_status.md").read_text(encoding="utf-8")
     manual_script = Path("docs/manual_test_script.md").read_text(encoding="utf-8")
+    acceptance = Path("docs/commercial_acceptance_checklist.md").read_text(encoding="utf-8")
 
     assert "| 特肖模式 | 第一阶段可用 |" in feature_status
     assert "| 岁写法 | 第一阶段可用 |" in feature_status
     assert "| 各->各肖 | 第一阶段可用 |" in feature_status
     assert "| 抄写法 | 暂未开放 |" not in feature_status
-    for document in (readme, scope, feature_status, manual_script):
+    for document in (readme, scope, feature_status, manual_script, acceptance):
         assert "特肖模式、抄写法、各->各肖仍禁用" not in document
         assert "特肖模式、抄写法、各->各肖；规则和保存口径未确认，保持禁用" not in document
         assert "仍禁用：特肖模式、抄写法、各->各肖" not in document
-    for document in (readme, scope):
+    for document in (readme, scope, acceptance):
         assert "特肖模式、岁写法、各->各肖" in document
         assert "只影响录单解析、预览和保存口径" in document
         assert "不自动结算" in document
@@ -375,17 +376,30 @@ def test_readme_and_scope_document_describe_commercial_test_scope() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
     scope = Path("docs/commercial_test_scope.md").read_text(encoding="utf-8")
     feature_status = Path("docs/feature_status.md").read_text(encoding="utf-8")
+    manual_script = Path("docs/manual_test_script.md").read_text(encoding="utf-8")
+    acceptance = Path("docs/commercial_acceptance_checklist.md").read_text(encoding="utf-8")
+    roadmap = Path("docs/roadmap.md").read_text(encoding="utf-8")
 
     for heading in ("当前测试版已完成", "当前测试版暂未开放", "后续规划"):
         assert heading in readme
-    for document in (readme, scope, feature_status):
+    for document in (readme, scope, feature_status, manual_script, acceptance, roadmap):
         assert "商用测试版 / 内部试用版" in document
-        assert "正式版、完整商业版" in document
-        assert "已完成全部功能" in document
+        assert "正式版、完整商业版" not in document
+        assert "完整商业版" not in document
+        assert "已完成全部功能" not in document
+        assert "真实盈亏" not in document
+        assert "余额已实现" not in document
     assert "录单窗口尚未接入数据库" not in readme
     assert "订单详情、数据总览、订单分析仍未读取真实订单数据" not in readme
     assert "订单导入、批量删除、清空订单" not in readme
     assert "拆单助手仅做文本整理，不识别复杂玩法、不保存订单、不写数据库" not in readme
+    for document in (readme, scope, feature_status, manual_script, acceptance):
+        assert "订单导入只预览" not in document
+        assert "只预览不写库" not in document
+        assert "拆单助手只做文本整理" not in document
+        assert "拆单助手不能保存订单" not in document
+        assert "调单保存未开放" not in document
+        assert "赔付金额暂未计算" not in document
     assert "导入订单 | 暂未开放" not in feature_status
     assert "拆单助手保存订单 | 暂未开放" not in feature_status
     assert "赔付金额 / 中奖金额 | 暂未开放" not in feature_status
@@ -395,6 +409,8 @@ def test_readme_and_scope_document_describe_commercial_test_scope() -> None:
     assert "商用测试版 / 内部试用版范围" in scope
     assert "不显示假业务数据" in scope
     assert "调单页面保存的调整记录仅为快照，不修改订单状态" in scope
+    assert "能预览订单并保存勾选的解析成功行" in acceptance
+    assert "导入订单为第一阶段可用，只保存确认导入的成功行" in acceptance
 
 
 def test_unopened_feature_freeze_list_is_explicit_and_not_misleading() -> None:
@@ -428,7 +444,7 @@ def test_unopened_feature_freeze_list_is_explicit_and_not_misleading() -> None:
     assert "未冻结规则的写法不强行识别" in documents
     assert "完整规则未确认前不接入正式结算" in documents
     assert "账务模型、审计口径和回滚策略尚未设计" in documents
-    assert "已完成全部功能的版本" in documents
+    assert "功能边界" in documents
 
 
 def test_permission_and_accounting_design_docs_are_frozen_but_not_implemented() -> None:
