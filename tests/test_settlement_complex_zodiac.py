@@ -9,6 +9,7 @@ from models import Order, OrderItem, SettlementRecord
 from schemas.draw_schema import LotteryDrawCreate
 from schemas.order_schema import OrderCreate, OrderItemCreate
 from services.draw_service import DrawService
+from services.order_intake_service import OrderIntakeService
 from services.order_service import OrderService
 from services.settlement_service import SettlementService
 from settlement.exceptions import SettlementDataError
@@ -149,6 +150,39 @@ def test_lianxiao_misses_when_special_zodiac_is_not_selected(session_factory) ->
     assert preview.unsupported_items == 0
     assert item.is_winner is False
     assert item.draw_special_zodiac == "马"
+
+
+def test_lianxiao_group_amount_from_intake_flows_to_preview_and_snapshot(session_factory) -> None:
+    intake = OrderIntakeService(session_factory)
+    save_result = intake.parse_and_save(
+        "连肖 龙羊猴 各30",
+        region="澳门",
+        source="test",
+        customer_name="连肖金额口径",
+        channel="微信",
+    )
+    assert save_result.success
+    assert save_result.order is not None
+    assert save_result.order.total_amount == Decimal("30.00")
+    draw = create_draw(DrawService(session_factory))
+
+    service = SettlementService(session_factory)
+    preview = service.preview_order(save_result.order.id, draw.id)
+    item = preview.results[0]
+
+    assert item.bet_type == "连肖"
+    assert item.selection == "龙,羊,猴"
+    assert item.amount == Decimal("30.00")
+    assert preview.total_payout_amount == Decimal("0.00")
+
+    service.commit_order_settlement(save_result.order.id, draw.id)
+    record = service.get_settlement_record_by_order_id(save_result.order.id)
+    assert record is not None
+    snapshot_item = record.result_snapshot["items"][0]
+    assert snapshot_item["bet_type"] == "连肖"
+    assert snapshot_item["selection"] == "龙,羊,猴"
+    assert snapshot_item["amount"] == "30.00"
+    assert record.result_snapshot["settlement"]["total_payout_amount"] == "0.00"
 
 
 def test_lianxiao_invalid_selection_is_unsupported(session_factory) -> None:

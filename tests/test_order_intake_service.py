@@ -139,7 +139,64 @@ def test_lianxiao_not_converted_to_single_zodiac() -> None:
     assert preview.order_items[0].bet_type == "连肖"
     assert preview.order_items[0].selection == "兔,龙,蛇"
     assert preview.order_items[0].amount == Decimal(str(parse_order("兔龙蛇各20").total))
-    assert any("结算预览" in warning for warning in preview.warnings)
+    assert any("整组金额" in warning for warning in preview.warnings)
+
+
+def test_explicit_lianxiao_intake_uses_group_amount() -> None:
+    preview = _preview("连肖 龙羊猴 各30", region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == Decimal("30.00")
+    assert len(preview.order_items) == 1
+    item = preview.order_items[0]
+    assert item.bet_type == "连肖"
+    assert item.selection == "龙,羊,猴"
+    assert item.amount == Decimal("30.00")
+    row = _first_valid_item(preview)
+    assert row.original_bet_type == "连肖"
+    assert row.normalized_bet_type == "special_zodiac_group"
+    assert row.normalized_selection == "龙,羊,猴"
+
+
+def test_explicit_lianxiao_long_selection_is_not_multiplied() -> None:
+    preview = _preview("连肖 狗鼠龙羊猴 各10", region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == Decimal("10.00")
+    assert len(preview.order_items) == 1
+    assert preview.order_items[0].bet_type == "连肖"
+    assert preview.order_items[0].selection == "狗,鼠,龙,羊,猴"
+    assert preview.order_items[0].amount == Decimal("10.00")
+
+
+def test_lianxiao_suffix_intake_uses_group_amount() -> None:
+    preview = _preview("龙羊猴连肖30", region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == Decimal("30.00")
+    assert len(preview.order_items) == 1
+    assert preview.order_items[0].bet_type == "连肖"
+    assert preview.order_items[0].selection == "龙,羊,猴"
+    assert preview.order_items[0].amount == Decimal("30.00")
+
+
+def test_explicit_lianxiao_save_and_read_keeps_one_group_item(session_factory) -> None:
+    service = OrderIntakeService(session_factory)
+    save_result = service.parse_and_save(
+        "连肖 龙羊猴 各30",
+        region="澳门",
+        source="test",
+        customer_name="连肖保存测试",
+        channel="微信",
+    )
+    assert save_result.success
+    assert save_result.order is not None
+    assert save_result.order.total_amount == Decimal("30.00")
+    assert save_result.order.item_count == 1
+
+    detail = service._order_service.get_order(save_result.order.id)
+    assert detail is not None
+    assert len(detail.items) == 1
+    assert detail.items[0].bet_type == "连肖"
+    assert detail.items[0].selection == "龙,羊,猴"
+    assert detail.items[0].amount == Decimal("30.00")
 
 
 def test_special_zodiac_parse_options_save_as_pingte_zodiac() -> None:
@@ -268,7 +325,7 @@ def test_complex_play_warning_when_saveable() -> None:
     preview = _preview("连兔龙蛇各20", region="澳门")
     assert preview.can_save
     assert preview.order_items[0].bet_type == "连肖"
-    assert any("结算预览" in warning for warning in preview.warnings)
+    assert any("简化口径" in warning for warning in preview.warnings)
 
 
 def test_convert_parse_result_integration_with_parser() -> None:

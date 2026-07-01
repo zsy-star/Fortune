@@ -432,6 +432,30 @@ class TestLianXiao:
         assert r.zodiac_groups[0][0] == "兔"
         assert r.zodiac_groups[1][0] == "龙"
         assert r.zodiac_groups[2][0] == "蛇"
+        assert r.amount == Decimal("10")
+        assert r.total == Decimal("10")
+
+    def test_explicit_lianxiao_word_prefix_group_amount(self) -> None:
+        r = parse_order("连肖 龙羊猴 各30")
+        assert r.success
+        assert r.category == "连肖"
+        assert [name for name, _ in r.zodiac_groups] == ["龙", "羊", "猴"]
+        assert r.amount == Decimal("30")
+        assert r.total == Decimal("30")
+
+    def test_lianxiao_suffix_group_amount(self) -> None:
+        r = parse_order("龙羊猴连肖30")
+        assert r.success
+        assert r.category == "连肖"
+        assert [name for name, _ in r.zodiac_groups] == ["龙", "羊", "猴"]
+        assert r.total == Decimal("30")
+
+    def test_explicit_lianxiao_long_selection_group_amount(self) -> None:
+        r = parse_order("连肖 狗鼠龙羊猴 各10")
+        assert r.success
+        assert r.category == "连肖"
+        assert [name for name, _ in r.zodiac_groups] == ["狗", "鼠", "龙", "羊", "猴"]
+        assert r.total == Decimal("10")
 
     def test_explicit_tuo(self) -> None:
         r = parse_order("拖马虎各5")
@@ -447,6 +471,7 @@ class TestLianXiao:
         r = parse_order("鼠牛虎二连各10")
         assert r.success
         assert "肖" in r.category
+        assert r.total == Decimal("10")
 
     def test_tail_you(self) -> None:
         r = parse_order("马虎有各10")
@@ -465,6 +490,7 @@ class TestMultiZodiac:
         assert r.success
         assert r.category == "多生肖"
         assert len(r.zodiac_groups) == 3
+        assert r.total == 120
 
     def test_two_zodiacs(self) -> None:
         r = parse_order("马虎各5")
@@ -628,7 +654,7 @@ class TestPrefixStripping:
 
 
 class TestAmountTotalSemantics:
-    """amount = 每个号码的投注金额, total = amount × 号码数量。"""
+    """大多数展开玩法 total = amount × 号码数量；连肖、N不中等整组玩法例外。"""
 
     def test_single_number_slash(self) -> None:
         r = parse_order("01/10")
@@ -657,9 +683,9 @@ class TestAmountTotalSemantics:
 
     def test_lianxiao(self) -> None:
         r = parse_order("连兔龙蛇各10")
-        assert r.amount == 10.0
-        # total = 10 × 合并去重后的号码数
-        assert r.total == r.amount * len(r.numbers)
+        assert r.amount == Decimal("10")
+        assert len(r.numbers) == 12
+        assert r.total == Decimal("10")
 
 
 # ======================================================================

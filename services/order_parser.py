@@ -189,7 +189,7 @@ _RULES.sort(key=lambda r: r.priority)
 # 连肖关键词
 # ======================================================================
 
-_LIANXIAO_KEYWORDS: tuple[str, ...] = ("连", "拖", "托", "有", "友", "胆")
+_LIANXIAO_KEYWORDS: tuple[str, ...] = ("连肖", "连", "拖", "托", "有", "友", "胆")
 
 # 「数字 + 连肖关键词」格式: 生肖们 + 可选中文数字 + 连/拖/托/有/友
 _CN_DIGIT_MAP: dict[str, int] = {
@@ -198,7 +198,7 @@ _CN_DIGIT_MAP: dict[str, int] = {
 }
 _CN_DIGIT_CHARS: str = "".join(_CN_DIGIT_MAP.keys())
 # 剩余部分必须完全匹配: 可选中文数字 + 任一连肖关键词
-_TUO_TAIL_PATTERN = re.compile(rf"^([{_CN_DIGIT_CHARS}]?)([拖托连有友])$")
+_TUO_TAIL_PATTERN = re.compile(rf"^([{_CN_DIGIT_CHARS}]?)(连肖|[拖托连有友])$")
 
 # ======================================================================
 # 解析结果
@@ -327,7 +327,7 @@ def _apply_exclusion(result: ParseResult, exclude_nums: set[int]) -> None:
         result.total = 0.0
         return
     result.numbers = filtered
-    if result.category == "N不中":
+    if result.category == "N不中" or _is_lianxiao_result_category(result.category):
         result.total = result.amount
     else:
         result.total = result.amount * len(filtered)
@@ -359,6 +359,36 @@ def _parse_exact_zodiac_selection(text: str) -> list[tuple[str, tuple[int, ...]]
     if groups and _zodiac_consume_len(normalized) == len(normalized):
         return groups
     return []
+
+
+def _lianxiao_category(keyword: str) -> str:
+    if keyword in {"连", "连肖"}:
+        return "连肖"
+    return f"{keyword}肖"
+
+
+def _is_lianxiao_result_category(category: str) -> bool:
+    return category in {"连肖", "拖肖", "托肖", "有肖", "友肖", "胆肖"}
+
+
+def _build_lianxiao_result(
+    *,
+    region: str,
+    category: str,
+    groups: list[tuple[str, tuple[int, ...]]],
+    amount: float | Decimal,
+) -> ParseResult:
+    amount_decimal = _decimal_amount(amount)
+    all_nums = tuple(sorted({n for _, ns in groups for n in ns}))
+    return ParseResult(
+        region=region,
+        success=True,
+        category=category,
+        numbers=all_nums,
+        amount=amount_decimal,
+        total=amount_decimal,
+        zodiac_groups=groups,
+    )
 
 
 _AGE_WRITING_PATTERN = re.compile(r"(?<!\d)(\d{1,2})\s*岁")
@@ -884,16 +914,13 @@ def parse_order(
             # 去除中间的关键词（如「胆马拖兔」→ 马兔）
             for kw2 in _LIANXIAO_KEYWORDS:
                 zodiac_text = zodiac_text.replace(kw2, "")
-            groups_inner = _parse_zodiac_groups(zodiac_text)
+            groups_inner = _parse_exact_zodiac_selection(zodiac_text)
             if groups_inner:
-                all_nums = tuple(sorted({n for _, ns in groups_inner for n in ns}))
-                return ParseResult(region=region,
-                    success=True,
-                    category=f"{kw}肖",
-                    numbers=all_nums,
+                return _build_lianxiao_result(
+                    region=region,
+                    category=_lianxiao_category(kw),
+                    groups=groups_inner,
                     amount=amt,
-                    total=amt * len(all_nums),
-                    zodiac_groups=groups_inner,
                 )
             return None  # 连肖关键词后无有效生肖
 
@@ -903,14 +930,11 @@ def parse_order(
             remaining_inner = cat[_zodiac_consume_len(cat):]
             kw_m = _TUO_TAIL_PATTERN.match(remaining_inner)
             suffix = kw_m.group(2) if kw_m else "连"
-            all_nums = tuple(sorted({n for _, ns in tuo_groups for n in ns}))
-            return ParseResult(region=region,
-                success=True,
-                category=f"{suffix}肖",
-                numbers=all_nums,
+            return _build_lianxiao_result(
+                region=region,
+                category=_lianxiao_category(suffix),
+                groups=tuo_groups,
                 amount=amt,
-                total=amt * len(all_nums),
-                zodiac_groups=tuo_groups,
             )
 
         # 3. 精确别名匹配

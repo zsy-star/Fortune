@@ -404,7 +404,7 @@ def convert_parse_result(
         return previews, order_items, warnings, errors
 
     if _is_lianxiao_category(result):
-        warning = "连肖玩法可保存，但当前结算预览暂不支持"
+        warning = "连肖按整组金额保存，当前结算仍为简化口径"
         warnings.append(warning)
         selection = ",".join(name for name, _ in result.zodiac_groups)
         if not selection:
