@@ -1121,6 +1121,59 @@ class TestLianmaParser:
         assert "每组必须 3 个号码" in r.error
 
 
+class TestPingWeiParser:
+    def test_pingwei_comma_list(self) -> None:
+        r = parse_order("平尾 1,3,4,6 各1000")
+        assert r.success
+        assert r.category == "平尾"
+        assert r.pingwei_tails == (1, 3, 4, 6)
+        assert r.amount == Decimal("1000")
+        assert r.total == Decimal("4000")
+
+    def test_pingwei_dash_list(self) -> None:
+        r = parse_order("平尾 1-3-4-6 各1000")
+        assert r.success
+        assert r.category == "平尾"
+        assert r.pingwei_tails == (1, 3, 4, 6)
+        assert r.total == Decimal("4000")
+
+    def test_pingwei_suffix_with_separator(self) -> None:
+        r = parse_order("1,3,4,6 平尾 各1000")
+        assert r.success
+        assert r.category == "平尾"
+        assert r.pingwei_tails == (1, 3, 4, 6)
+        assert r.total == Decimal("4000")
+
+    def test_pingwei_suffix_without_separator(self) -> None:
+        r = parse_order("1-3-4-6平尾1000")
+        assert r.success
+        assert r.category == "平尾"
+        assert r.pingwei_tails == (1, 3, 4, 6)
+        assert r.total == Decimal("4000")
+
+    def test_pingwei_rejects_invalid_tail(self) -> None:
+        r = parse_order("平尾 1,10 各100")
+        assert not r.success
+        assert "超出范围" in r.error
+
+    def test_pingwei_rejects_negative_tail(self) -> None:
+        r = parse_order("平尾 -1 各100")
+        assert not r.success
+        assert "无效" in r.error
+
+    def test_pingwei_deduplicates_and_sorts_tails(self) -> None:
+        r = parse_order("平尾 4,1,4,3 各100")
+        assert r.success
+        assert r.pingwei_tails == (1, 3, 4)
+        assert r.total == Decimal("300")
+
+    def test_lianwei_is_not_parsed_as_pingwei(self) -> None:
+        r = parse_order("连尾 1,2 各10")
+        assert r.success
+        assert r.category == "连尾"
+        assert r.category != "平尾"
+
+
 class TestRecordWindowAdvancedParseOptions:
     @pytest.mark.parametrize(
         ("text", "category", "total", "numbers_count"),

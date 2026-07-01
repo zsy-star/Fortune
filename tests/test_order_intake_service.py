@@ -399,6 +399,71 @@ def test_lianma_intake_save_and_read_preserves_note(session_factory) -> None:
     assert detail.items[0].note == "连码组合数=2;连码组大小=2"
 
 
+def test_pingwei_intake_saves_one_summary_item() -> None:
+    preview = _preview("平尾 1,3,4,6 各1000", region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == Decimal("4000.00")
+    assert len(preview.order_items) == 1
+    item = preview.order_items[0]
+    assert item.bet_type == "平尾"
+    assert item.selection == "1,3,4,6"
+    assert item.amount == Decimal("4000.00")
+    assert item.note == "平尾尾数个数=4"
+    assert any("平尾" in warning for warning in preview.warnings)
+    row = _first_valid_item(preview)
+    assert row.original_bet_type == "平尾"
+    assert row.order_selection == "1,3,4,6"
+    assert row.normalized_bet_type is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "平尾 1-3-4-6 各1000",
+        "1,3,4,6 平尾 各1000",
+        "1-3-4-6平尾1000",
+    ],
+)
+def test_pingwei_intake_supported_formats(text: str) -> None:
+    preview = _preview(text, region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == Decimal("4000.00")
+    assert len(preview.order_items) == 1
+    assert preview.order_items[0].bet_type == "平尾"
+    assert preview.order_items[0].selection == "1,3,4,6"
+
+
+def test_pingwei_intake_deduplicates_tails() -> None:
+    preview = _preview("平尾 4,1,4,3 各100", region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == Decimal("300.00")
+    assert preview.order_items[0].selection == "1,3,4"
+    assert preview.order_items[0].note == "平尾尾数个数=3"
+
+
+def test_pingwei_intake_save_and_read_preserves_summary_item(session_factory) -> None:
+    service = OrderIntakeService(session_factory)
+    save_result = service.parse_and_save(
+        "平尾 1,3,4,6 各1000",
+        region="澳门",
+        source="test",
+        customer_name="平尾保存测试",
+        channel="微信",
+    )
+    assert save_result.success
+    assert save_result.order is not None
+    assert save_result.order.total_amount == Decimal("4000.00")
+    assert save_result.order.item_count == 1
+
+    detail = service._order_service.get_order(save_result.order.id)
+    assert detail is not None
+    assert len(detail.items) == 1
+    assert detail.items[0].bet_type == "平尾"
+    assert detail.items[0].selection == "1,3,4,6"
+    assert detail.items[0].amount == Decimal("4000.00")
+    assert detail.items[0].note == "平尾尾数个数=4"
+
+
 def test_complex_play_warning_when_saveable() -> None:
     preview = _preview("连兔龙蛇各20", region="澳门")
     assert preview.can_save

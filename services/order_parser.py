@@ -225,6 +225,8 @@ class ParseResult:
     fuxuan_type: str = ""
     # 连码类玩法专用：((1, 2), (3, 4)) 等括号组合
     lianma_groups: tuple[tuple[int, ...], ...] = ()
+    # 平尾专用：标准尾数列表，如 (1, 3, 4, 6)
+    pingwei_tails: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -517,6 +519,56 @@ def _strip_bet_type_infix(category_text: str) -> tuple[str, str]:
 
 def _decimal_amount(value: float | int | str | Decimal) -> Decimal:
     return Decimal(str(value))
+
+
+def _parse_tail_digit_list(text: str) -> tuple[int, ...] | str:
+    if re.search(r"(^|[,，、\s])-+\d", text.strip()):
+        return f"平尾尾数无效：{text}"
+    tokens = [token for token in re.split(r"[,，、\-\s]+", text.strip()) if token]
+    if not tokens:
+        return "平尾尾数不能为空"
+    tails: list[int] = []
+    for token in tokens:
+        if not token.isdigit():
+            return f"平尾尾数格式无效：{text}"
+        tail = int(token)
+        if tail < 0 or tail > 9:
+            return f"平尾尾数 {token} 超出范围 (0-9)"
+        tails.append(tail)
+    return tuple(sorted(set(tails)))
+
+
+def _parse_pingwei_category(
+    *,
+    region: str,
+    category_text: str,
+    amount: float | Decimal,
+) -> ParseResult | None:
+    text = category_text.strip()
+    if not text:
+        return None
+
+    selection_text = ""
+    if text.startswith("平尾"):
+        selection_text = text[len("平尾"):].strip()
+    elif text.endswith("平尾"):
+        selection_text = text[: -len("平尾")].strip()
+    else:
+        return None
+
+    parsed = _parse_tail_digit_list(selection_text)
+    if isinstance(parsed, str):
+        return ParseResult(region=region, success=False, error=parsed)
+    amount_decimal = _decimal_amount(amount)
+    return ParseResult(
+        region=region,
+        success=True,
+        category="平尾",
+        numbers=parsed,
+        amount=amount_decimal,
+        total=amount_decimal * len(parsed),
+        pingwei_tails=parsed,
+    )
 
 
 def _format_lianma_selection(groups: tuple[tuple[int, ...], ...]) -> str:
@@ -920,6 +972,14 @@ def parse_order(
 
     if not category_text:
         return ParseResult(region=region, success=False, error="未找到类别描述（分隔符之前为空）")
+
+    pingwei_result = _parse_pingwei_category(
+        region=region,
+        category_text=category_text,
+        amount=amount,
+    )
+    if pingwei_result is not None:
+        return pingwei_result
 
     lianma_result = _parse_lianma_category(
         region=region,

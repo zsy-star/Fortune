@@ -356,6 +356,56 @@ def convert_parse_result(
             errors.append(preview.error or "N不中映射失败")
         return previews, order_items, warnings, errors
 
+    if category == "平尾":
+        warning = "平尾可保存，但正式结算规则待确认"
+        warnings.append(warning)
+        tails = result.pingwei_tails or result.numbers
+        selection = ",".join(str(tail) for tail in tails)
+        note = f"平尾尾数个数={len(tails)}" if tails else None
+        try:
+            normalize_bet_type("平尾")
+        except InvalidBetTypeError as exc:
+            message = str(exc)
+            previews.append(
+                _build_item_preview(
+                    source_line=source_line,
+                    original_bet_type=category,
+                    original_selection=selection,
+                    amount=expected_total,
+                    order_bet_type=None,
+                    order_selection=None,
+                    normalizer=normalizer,
+                    warning=warning,
+                    error=message,
+                )
+            )
+            errors.append(message)
+            return previews, order_items, warnings, errors
+
+        preview = _build_item_preview(
+            source_line=source_line,
+            original_bet_type=category,
+            original_selection=selection,
+            amount=expected_total,
+            order_bet_type="平尾",
+            order_selection=selection,
+            normalizer=normalizer,
+            warning=warning,
+        )
+        previews.append(preview)
+        if preview.is_valid:
+            order_items.append(
+                OrderItemCreate(
+                    bet_type="平尾",
+                    selection=selection,
+                    amount=expected_total,
+                    note=note,
+                )
+            )
+        else:
+            errors.append(preview.error or "平尾映射失败")
+        return previews, order_items, warnings, errors
+
     if category in _LIANMA_CATEGORIES:
         warning = "连码类玩法可保存，但正式结算规则待确认"
         warnings.append(warning)

@@ -23,6 +23,7 @@ SUPPORTED_BET_TYPES: frozenset[str] = frozenset(
         "二中特",
         "特串",
         "平码",
+        "平尾",
         "不中",
         "N不中",
         "特码两面",
