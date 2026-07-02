@@ -41,7 +41,8 @@ def test_settings_dialog_explains_payout_odds_and_rebate_boundary(session_factor
     texts = "\n".join(edit.toPlainText() for edit in dialog.findChildren(QPlainTextEdit))
 
     assert "基础中奖金额" in texts
-    assert "返水、余额和客户账户不参与计算" in texts
+    assert "\u8fd4\u6c34\u914d\u7f6e\u4f5c\u4e3a\u7edf\u8ba1\u9879\u4fdd\u7559" in texts
+    assert "\u4e0d\u5165\u8d26\u3001\u4e0d\u4ed8\u6b3e\u3001\u4e0d\u5f62\u6210\u5ba2\u6237\u4f59\u989d" in texts
     assert "优先读取申报人绑定方案" in texts
 
 

@@ -1,107 +1,58 @@
-# 账务 / 余额流水模型
+# 客户账户 / 余额流水不纳入产品范围
 
-本文记录 Fortune 客户账户与余额流水的第一阶段口径。当前版本状态为：商用测试版 / 内部试用版。
+本文记录 Fortune 当前的产品定位边界。当前版本状态为：商用测试版 / 内部试用版。
 
-## 当前状态
+## 定位
 
-- 客户账户 / 余额流水第一阶段已开放。
-- 已支持客户账户创建、余额查询、流水查询。
-- 已支持手工加款、手工扣款。
-- 余额不能直接覆盖，只能通过余额流水变动。
-- 每次余额变动会写 `OperationLog`。
-- 当前不自动把正式结算中奖金额入账。
-- 当前不开放真实兑奖。
-- 当前不做返水 / 佣金。
-- 当前不做权限审批。
-- 当前不开放清空、重置类账务维护。
+Fortune 是单机记账本、号码录入工具、订单统计工具、开奖核对工具、中奖金额快照工具、返水金额计算工具和结算统计工具。
 
-## 已新增核心对象
+Fortune 不是收款系统、付款系统、客户余额系统、钱包系统、支付系统、真实兑奖入账系统或真实资金流水系统。
 
-| 对象 | 职责 |
-| --- | --- |
-| 客户账户 | 保存客户身份、账户状态和当前余额摘要。 |
-| 余额流水 | 记录所有余额变动，作为余额变动的唯一事实来源。 |
-| 结算记录 | 保存订单结算结果、命中明细和基础中奖金额快照。 |
-| 操作日志 | 记录手工加款、手工扣款和后续账务动作的审计摘要。 |
+## 已移除范围
 
-## 表结构口径
+- 不做客户账户。
+- 不做客户余额。
+- 不做余额流水。
+- 不做手工加款。
+- 不做手工扣款。
+- 不做真实兑奖入账。
+- 不做结算中奖金额自动入账。
+- 不做冲正 / 回滚 UI。
+- 不涉及真实资金支付。
 
-### customer_accounts
+## 保留范围
 
-- `id`
-- `customer_name`
-- `display_name`
-- `balance`
-- `status`
-- `note`
-- `created_at`
-- `updated_at`
+- 保留赔率配置。
+- 保留返水配置。
+- 保留申报人绑定赔率 / 返水方案。
+- 保留结算预览。
+- 保留正式结算记录。
+- 保留结算快照中的中奖金额。
+- 保留结算快照中的返水金额，如当前规则可计算。
+- 保留结算历史、订单详情和订单分析中的统计展示。
 
-### account_ledger_entries
+## 返水定义
 
-- `id`
-- `customer_id`
-- `customer_name`
-- `direction`：`in` / `out`
-- `amount`
-- `balance_before`
-- `balance_after`
-- `entry_type`
-- `source_type`
-- `source_id`
-- `order_id`
-- `settlement_record_id`
-- `adjustment_record_id`
-- `reason`
-- `operator`
-- `created_at`
-- `audit_log_id`
-- `is_reversed`
-- `reversed_by_id`
+返水 = 按投注额 / 有效投注额计算出来的返还金额。
 
-## 第一阶段已开放流水类型
+本项目中的返水只是结算统计项和快照字段：
 
-- 手工加款：`manual_credit`，方向为 `in`。
-- 手工扣款：`manual_debit`，方向为 `out`。
-- 手工冲正：`manual_reversal`，用于反向冲正已写入流水。
+- 可以用于结算预览、正式结算、结算历史、订单详情和订单分析展示。
+- 不入账。
+- 不付款。
+- 不生成真实流水。
+- 不形成客户余额。
+- 不代表已经收款或付款。
 
-## 账务原则
+建议统计口径：
 
-- 所有金额使用 `Decimal`。
-- 禁止 `float`。
-- 金额必须大于 0。
-- 手工加款 / 扣款必须填写原因。
-- 本阶段默认不允许余额扣成负数。
-- `balance_before` / `balance_after` 必须由服务层在同一事务内计算。
-- 余额字段不能作为人工覆盖入口，只能由流水服务变动。
-- 流水写入、余额更新和操作日志写入必须事务化。
+- 投注本金 = 订单总额或有效投注额。
+- 中奖金额 = 命中项金额 x 赔率。
+- 返水金额 = 有效投注额 x 返水比例。
+- 统计结算金额 = 中奖金额 + 返水金额 - 投注本金。
 
-## 与现有系统关系
+## 数据库迁移说明
 
-- `SettlementRecord` 目前只保存基础中奖金额快照。
-- 正式结算不会自动创建客户账户，也不会自动写余额流水。
-- `Order` 当前仍是订单事实来源，本阶段不修改历史订单。
-- `AdjustmentRecord` 当前只是调单快照，不影响余额。
-- `OperationLog` 会记录手工加款 / 扣款的客户、金额、变动前后余额、原因和操作人。
-
-## 仍未开放
-
-- 真实兑奖。
-- 结算中奖金额自动入账。
-- 投注自动扣款。
-- 返水 / 佣金。
-- 权限 / 登录 / 角色 / 审批。
-- 清空账务流水。
-- 直接覆盖余额。
-- 根据历史订单自动推算余额。
-## 2026-07-02：真实兑奖 / 结算中奖金额入账第一阶段
-
-- 已开放已正式结算订单的“兑奖入账”入口。
-- 入账金额只读取 `SettlementRecord.result_snapshot` 中保存的中奖金额快照，优先读取 `summary.total_payout_amount`，并兼容当前快照的 `settlement.total_payout_amount`。
-- 入账不重新计算赔率，不重新读取当前赔率配置。
-- 入账会自动按订单 `customer_name` / 申报人创建或读取客户账户。
-- 入账流水字段：`direction=in`、`entry_type=settlement_payout`、`source_type=settlement_record`、`source_id=settlement_record.id`、`order_id=order.id`、`settlement_record_id=settlement_record.id`、`reason=结算中奖金额入账`。
-- `settlement_records` 增加入账状态字段：`payout_posted_at`、`payout_ledger_entry_id`、`payout_posted_amount`，用于防止同一结算记录重复入账。
-- 入账成功会写 `OperationLog`，`module=accounting`、`action=ledger/settlement_payout`。
-- 中奖金额为 0、订单缺少客户/申报人、旧快照缺少总中奖金额时不会自动入账。
-- 当前仍不做返水 / 佣金，不做权限审批，不做冲正 / 回滚 UI，不开放清空或重置。
+- `20260701_0006_create_customer_accounts.py` 和 `20260702_0007_add_settlement_payout_posting.py` 已经可能被真实库应用，必须保留迁移历史。
+- `20260702_0008_remove_accounting_ledger_and_payout_posting.py` 用于清理客户账户、余额流水和真实兑奖入账相关结构。
+- `odds_rebate_plans` 和 `odds_rebate_items` 属于赔率 / 返水配置体系，继续保留。

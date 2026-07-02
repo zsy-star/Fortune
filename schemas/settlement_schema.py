@@ -111,18 +111,3 @@ class SettlementLedgerResult:
     order_updated_at: datetime
     operation_log_description: str | None = None
     total_payout_amount: Decimal = Decimal("0.00")
-    payout_posted_at: datetime | None = None
-    payout_ledger_entry_id: int | None = None
-    payout_posted_amount: Decimal | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class SettlementPayoutPostResult:
-    success: bool
-    customer_name: str
-    payout_amount: Decimal
-    balance_before: Decimal
-    balance_after: Decimal
-    ledger_entry_id: int
-    settlement_record_id: int
-    message: str

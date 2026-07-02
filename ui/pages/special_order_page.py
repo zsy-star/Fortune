@@ -280,8 +280,8 @@ class SpecialOrderPage(QWidget):
             elif text == "特码兑奖":
                 self._btn_special_settlement = button
                 button.setEnabled(False)
-                button.setToolTip("真实兑奖涉及结算、赔付和余额流水；请使用订单详情的结算预览/正式结算记录。")
-                button.setStatusTip("特码调单页不执行兑奖、不计算赔付、不写余额。")
+                button.setToolTip("真实兑奖入账不属于当前产品范围；请使用订单详情查看结算预览、正式结算记录和中奖金额快照。")
+                button.setStatusTip("特码调单页只保存调单快照，不执行付款、不写余额。")
         row.addStretch(1)
         self._btn_open_extension = QPushButton("打开拓展")
         self._btn_open_extension.clicked.connect(self._on_open_extension)

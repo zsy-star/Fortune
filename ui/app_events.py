@@ -7,7 +7,6 @@ class AppEvents(QObject):
     orders_changed = Signal()
     logs_changed = Signal()
     settlements_changed = Signal()
-    ledger_changed = Signal()
     draws_changed = Signal()
     settings_changed = Signal()
     app_data_reloaded = Signal()

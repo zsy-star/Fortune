@@ -41,13 +41,14 @@ def test_alembic_upgrade_head_from_empty_sqlite_creates_current_key_tables(
     try:
         tables = set(inspect(engine).get_table_names())
         assert set(KEY_TABLES).issubset(tables)
-        assert {"customer_accounts", "account_ledger_entries"}.issubset(tables)
+        assert {"customer_accounts", "account_ledger_entries"}.isdisjoint(tables)
+        assert {"odds_rebate_plans", "odds_rebate_items"}.issubset(tables)
         settlement_columns = {column["name"] for column in inspect(engine).get_columns("settlement_records")}
         assert {
             "payout_posted_at",
             "payout_ledger_entry_id",
             "payout_posted_amount",
-        }.issubset(settlement_columns)
+        }.isdisjoint(settlement_columns)
 
         with engine.connect() as connection:
             version = connection.execute(text("select version_num from alembic_version")).scalar_one()
@@ -75,7 +76,8 @@ def test_app_meta_is_created_by_alembic_upgrade_head(tmp_path, monkeypatch) -> N
 def test_alembic_head_contains_orm_key_tables() -> None:
     orm_tables = set(Base.metadata.tables)
     assert set(KEY_TABLES).issubset(orm_tables)
-    assert {"customer_accounts", "account_ledger_entries"}.issubset(orm_tables)
+    assert {"customer_accounts", "account_ledger_entries"}.isdisjoint(orm_tables)
+    assert {"odds_rebate_plans", "odds_rebate_items"}.issubset(orm_tables)
 
 
 def test_read_only_migration_check_script_does_not_modify_database(

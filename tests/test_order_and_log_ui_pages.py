@@ -8,9 +8,9 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QDate, QItemSelectionModel
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication
 
-from models import AccountLedgerEntry, Order, SettlementRecord
+from models import Order, SettlementRecord
 from schemas.draw_schema import LotteryDrawCreate
 from schemas.order_schema import OrderCreate, OrderItemCreate
 from schemas.settlement_schema import ItemSettlementResult, OrderSettlementPreview
@@ -561,40 +561,6 @@ def test_order_detail_selected_settlement_summary_uses_snapshot(session_factory)
     assert "中奖金额：0.00" in macau_text
     assert "订单 ID" not in page._hong_kong_result.toPlainText()
     assert page._combined_result.toPlainText() == macau_text
-
-
-def test_order_detail_payout_post_button_posts_after_confirmation(session_factory, monkeypatch) -> None:
-    app()
-    service = OrderService(session_factory)
-    order = create_single_item_order(service, selection="01", customer="订单详情兑奖客户")
-    draw = create_settlement_draw(session_factory)
-    SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
-    with session_factory() as session:
-        record = session.query(SettlementRecord).filter_by(order_id=order.id).one()
-        record.result_snapshot = {
-            "summary": {"total_payout_amount": "33.00"},
-            "settlement": {"total_payout_amount": "33.00"},
-            "items": [],
-        }
-        session.commit()
-
-    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
-    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
-    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: None)
-
-    page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
-    select_order_row(page, order.order_no)
-    assert page._btn_post_payout.isEnabled()
-
-    page._on_post_payout_to_ledger()
-
-    with session_factory() as session:
-        entries = session.query(AccountLedgerEntry).all()
-        record = session.query(SettlementRecord).filter_by(order_id=order.id).one()
-        assert len(entries) == 1
-        assert entries[0].entry_type == "settlement_payout"
-        assert entries[0].amount == Decimal("33.00")
-        assert record.payout_ledger_entry_id == entries[0].id
 
 
 def test_order_detail_snapshot_displays_unsupported_reason(session_factory) -> None:

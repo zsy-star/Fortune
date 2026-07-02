@@ -161,7 +161,6 @@ class OrderDetailPage(QWidget):
         app_events.orders_changed.connect(self._on_orders_changed)
         app_events.draws_changed.connect(self._on_draws_changed)
         app_events.settings_changed.connect(self._on_settings_changed)
-        app_events.ledger_changed.connect(self._on_ledger_changed)
         self.reload_data()
 
     def showEvent(self, event) -> None:  # noqa: N802
@@ -188,14 +187,6 @@ class OrderDetailPage(QWidget):
             self._reload_declarer_filter_options()
         except Exception as exc:
             self._status_label.setText(f"设置数据已变更，但申报人筛选刷新失败：{exc}")
-
-    def _on_ledger_changed(self) -> None:
-        if self._selected_order_id is None:
-            return
-        try:
-            self._load_detail(self._selected_order_id)
-        except Exception as exc:
-            self._status_label.setText(f"账务流水已变更，但订单详情刷新失败：{exc}")
 
     def _build_toolbar(self) -> QFrame:
         frame = QFrame()
@@ -463,18 +454,9 @@ class OrderDetailPage(QWidget):
         self._btn_void.setEnabled(False)
         self._btn_void.setToolTip("请选择未结算且未作废的订单后作废；作废会二次确认并写操作日志")
         self._btn_void.clicked.connect(self._on_void_order)
-        self._btn_post_payout = QPushButton("兑奖入账")
-        self._btn_post_payout.setEnabled(False)
-        self._btn_post_payout.setToolTip("已正式结算且有中奖金额的订单，可将结算快照中奖金额写入客户余额流水")
-        self._btn_post_payout.clicked.connect(self._on_post_payout_to_ledger)
         detail_header.addWidget(self._detail_info, stretch=1)
         detail_header.addWidget(self._btn_preview)
         detail_header.addWidget(self._btn_void)
-        detail_header.addWidget(self._btn_post_payout)
-
-        self._payout_status_label = QLabel("兑奖入账：请选择订单")
-        self._payout_status_label.setObjectName("payoutPostingStatus")
-        self._payout_status_label.setWordWrap(True)
 
         self._raw_text = QPlainTextEdit()
         self._raw_text.setReadOnly(True)
@@ -487,7 +469,6 @@ class OrderDetailPage(QWidget):
         self._item_table.horizontalHeader().setStretchLastSection(True)
 
         layout.addLayout(detail_header)
-        layout.addWidget(self._payout_status_label)
         layout.addWidget(self._raw_text)
         layout.addWidget(self._item_table, stretch=1)
         return panel
@@ -984,10 +965,6 @@ class OrderDetailPage(QWidget):
         self._btn_preview.setToolTip("请选择未结算且未作废的订单后进行结算预览")
         self._btn_void.setEnabled(False)
         self._btn_void.setToolTip("请选择未结算且未作废的订单后作废；作废会二次确认并写操作日志")
-        self._btn_post_payout.setEnabled(False)
-        self._btn_post_payout.setText("兑奖入账")
-        self._btn_post_payout.setToolTip("请选择已正式结算且有中奖金额的订单")
-        self._payout_status_label.setText("兑奖入账：请选择订单")
         self._clear_result_panels()
 
     def _reload_draws(self) -> None:
@@ -1066,7 +1043,6 @@ class OrderDetailPage(QWidget):
                 f"不支持数：{record.unsupported_count}\n"
                 f"总明细数：{record.total_items}    总金额：{_money(record.total_amount)}    "
                 f"总中奖金额：{payout_text}\n"
-                f"{self._payout_posting_summary(record)}\n"
                 f"{self._build_settlement_detail_text(record.result_snapshot)}"
             )
 
@@ -1076,7 +1052,6 @@ class OrderDetailPage(QWidget):
             self._macau_result.setPlainText(summary)
         elif detail.region == "香港":
             self._hong_kong_result.setPlainText(summary)
-        self._update_payout_posting_controls(detail, record if not lookup_error else None)
         self._combined_result.setPlainText(summary)
 
     def _snapshot_item_summary(self, snapshot: object) -> str:
@@ -1201,9 +1176,6 @@ class OrderDetailPage(QWidget):
     def _snapshot_has_payout(self, snapshot: object) -> bool:
         if not isinstance(snapshot, dict):
             return False
-        summary = snapshot.get("summary")
-        if isinstance(summary, dict) and "total_payout_amount" in summary:
-            return True
         settlement = snapshot.get("settlement")
         if isinstance(settlement, dict) and "total_payout_amount" in settlement:
             return True
@@ -1224,63 +1196,6 @@ class OrderDetailPage(QWidget):
         if isinstance(value, (list, tuple)):
             return ",".join(str(item) for item in value)
         return str(value)
-
-    def _snapshot_has_postable_payout_total(self, snapshot: object) -> bool:
-        if not isinstance(snapshot, dict):
-            return False
-        summary = snapshot.get("summary")
-        if isinstance(summary, dict) and summary.get("total_payout_amount") not in (None, ""):
-            return True
-        settlement = snapshot.get("settlement")
-        return isinstance(settlement, dict) and settlement.get("total_payout_amount") not in (None, "")
-
-    def _payout_posting_summary(self, record: SettlementLedgerResult | None) -> str:
-        if record is None:
-            return "兑奖入账状态：未入账（无结算记录）"
-        if record.payout_ledger_entry_id:
-            posted_at = record.payout_posted_at.strftime("%Y-%m-%d %H:%M:%S") if record.payout_posted_at else "-"
-            amount = _money(record.payout_posted_amount or record.total_payout_amount)
-            return (
-                "兑奖入账状态：已入账    "
-                f"流水ID：{record.payout_ledger_entry_id}    入账金额：{amount}    入账时间：{posted_at}"
-            )
-        if not self._snapshot_has_postable_payout_total(record.result_snapshot):
-            return "兑奖入账状态：旧快照无法入账"
-        if record.total_payout_amount <= Decimal("0.00"):
-            return "兑奖入账状态：无需入账（中奖金额为 0）"
-        return "兑奖入账状态：未入账"
-
-    def _payout_posting_state(
-        self,
-        detail: OrderDetailResult | None,
-        record: SettlementLedgerResult | None,
-    ) -> tuple[bool, str]:
-        if detail is None:
-            return False, "请选择订单"
-        if detail.status != ORDER_STATUS_SETTLED:
-            return False, "未结算订单不能兑奖入账"
-        if record is None:
-            return False, "无结算记录，不能兑奖入账"
-        if record.payout_ledger_entry_id is not None:
-            return False, f"已入账，流水 ID：{record.payout_ledger_entry_id}"
-        if not str(detail.customer_name or "").strip():
-            return False, "缺少客户/申报人，不能自动入账"
-        if not self._snapshot_has_postable_payout_total(record.result_snapshot):
-            return False, "旧结算快照无中奖金额，不能自动入账"
-        if record.total_payout_amount <= Decimal("0.00"):
-            return False, "中奖金额为 0，无需入账"
-        return True, f"可入账：客户 {_dash(detail.customer_name)}，中奖金额 {_money(record.total_payout_amount)}"
-
-    def _update_payout_posting_controls(
-        self,
-        detail: OrderDetailResult | None,
-        record: SettlementLedgerResult | None,
-    ) -> None:
-        enabled, message = self._payout_posting_state(detail, record)
-        self._btn_post_payout.setEnabled(enabled)
-        self._btn_post_payout.setText("已入账" if record and record.payout_ledger_entry_id else "兑奖入账")
-        self._btn_post_payout.setToolTip(message)
-        self._payout_status_label.setText(f"兑奖入账：{message}")
 
     def _preview_to_snapshot(self, preview: OrderSettlementPreview) -> dict[str, object]:
         return {
@@ -1323,69 +1238,6 @@ class OrderDetailPage(QWidget):
                 for item in preview.results
             ]
         }
-
-    def _on_post_payout_to_ledger(self) -> None:
-        if self._selected_order_id is None:
-            QMessageBox.warning(self, "兑奖入账", "请先选择订单。")
-            return
-        detail = self._order_service.get_order(self._selected_order_id)
-        if detail is None:
-            QMessageBox.warning(self, "兑奖入账", "订单不存在或已被删除。")
-            self.reload_data()
-            return
-        record = self._settlement_service.get_settlement_record_by_order_id(detail.id)
-        enabled, message = self._payout_posting_state(detail, record)
-        if not enabled:
-            self._update_payout_posting_controls(detail, record)
-            QMessageBox.warning(self, "兑奖入账", message)
-            return
-        assert record is not None
-        choice = QMessageBox.question(
-            self,
-            "确认兑奖入账",
-            (
-                "将按正式结算快照写入客户余额流水，不能重复入账。\n\n"
-                f"客户：{_dash(detail.customer_name)}\n"
-                f"订单 ID：{detail.id}\n"
-                f"结算记录 ID：{record.id}\n"
-                f"中奖金额：{_money(record.total_payout_amount)}"
-            ),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if choice != QMessageBox.StandardButton.Yes:
-            self._status_label.setText("已取消兑奖入账。")
-            return
-        try:
-            result = self._settlement_service.post_payout_to_ledger(
-                order_id=detail.id,
-                operator="系统操作员",
-            )
-        except Exception as exc:
-            QMessageBox.warning(self, "兑奖入账", f"兑奖入账失败：{exc}")
-            fresh_record = self._settlement_service.get_settlement_record_by_order_id(detail.id)
-            self._update_payout_posting_controls(detail, fresh_record)
-            return
-
-        fresh_record = self._settlement_service.get_settlement_record_by_order_id(detail.id)
-        if fresh_record is not None:
-            self._settlement_records[detail.id] = fresh_record
-        fresh_detail = self._order_service.get_order(detail.id)
-        if fresh_detail is not None:
-            self._render_detail(fresh_detail)
-            self._update_result_panels(fresh_detail)
-        app_events.settlements_changed.emit()
-        app_events.ledger_changed.emit()
-        app_events.logs_changed.emit()
-        info = (
-            f"{result.message}\n"
-            f"客户：{result.customer_name}\n"
-            f"流水 ID：{result.ledger_entry_id}\n"
-            f"入账金额：{_money(result.payout_amount)}\n"
-            f"余额：{_money(result.balance_before)} -> {_money(result.balance_after)}"
-        )
-        self._status_label.setText(f"兑奖入账成功：流水 ID {result.ledger_entry_id}")
-        QMessageBox.information(self, "兑奖入账", info)
 
     def _on_settlement_preview(self) -> None:
         if self._selected_order_id is None:

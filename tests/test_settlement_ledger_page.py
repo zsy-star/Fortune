@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QDate
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QWidget
 
-from models import AccountLedgerEntry, OperationLog, Order, SettlementRecord
+from models import OperationLog, Order, SettlementRecord
 from schemas.draw_schema import LotteryDrawCreate
 from schemas.order_schema import OrderCreate, OrderItemCreate
 from schemas.settlement_schema import SettlementLedgerResult
@@ -130,8 +130,6 @@ def test_settlement_ledger_page_exposes_snapshot_detail_entry(session_factory) -
 
     assert page._btn_snapshot_detail.text() == "查看结算快照详情"
     assert page._btn_snapshot_detail.isEnabled()
-    assert page._btn_post_payout.text() == "兑奖入账"
-    assert not page._btn_post_payout.isEnabled()
 
 
 def test_settlement_ledger_snapshot_detail_requires_selected_record(session_factory, monkeypatch) -> None:
@@ -167,63 +165,6 @@ def test_settlement_ledger_snapshot_detail_opens_selected_record(session_factory
     assert len(opened) == 1
     assert opened[0].order_id == order.id
     assert opened[0].result_snapshot["items"][0]["selection"] == "01"
-
-
-def test_settlement_ledger_payout_post_button_posts_after_confirmation(session_factory, monkeypatch) -> None:
-    app()
-    order_service = OrderService(session_factory)
-    order = create_order(order_service, customer="兑奖客户", region="澳门", amount="10")
-    settle_order(session_factory, order.id, order.order_no)
-    with session_factory() as session:
-        record = session.query(SettlementRecord).filter_by(order_id=order.id).one()
-        record.result_snapshot = {
-            "summary": {"total_payout_amount": "25.00"},
-            "settlement": {"total_payout_amount": "25.00"},
-            "items": [],
-        }
-        session.commit()
-
-    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
-    monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
-    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: None)
-
-    page = make_page(session_factory)
-    page._table.selectRow(0)
-    assert page._btn_post_payout.isEnabled()
-
-    page._on_post_payout_to_ledger()
-
-    with session_factory() as session:
-        entries = session.query(AccountLedgerEntry).all()
-        record = session.query(SettlementRecord).filter_by(order_id=order.id).one()
-        assert len(entries) == 1
-        assert entries[0].entry_type == "settlement_payout"
-        assert entries[0].amount == Decimal("25.00")
-        assert record.payout_ledger_entry_id == entries[0].id
-
-
-def test_settlement_ledger_payout_post_cancel_does_not_write_ledger(session_factory, monkeypatch) -> None:
-    app()
-    order_service = OrderService(session_factory)
-    order = create_order(order_service, customer="取消兑奖客户", region="澳门", amount="10")
-    settle_order(session_factory, order.id, order.order_no)
-    with session_factory() as session:
-        record = session.query(SettlementRecord).filter_by(order_id=order.id).one()
-        record.result_snapshot = {
-            "summary": {"total_payout_amount": "15.00"},
-            "settlement": {"total_payout_amount": "15.00"},
-            "items": [],
-        }
-        session.commit()
-
-    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.No)
-    page = make_page(session_factory)
-    page._table.selectRow(0)
-
-    page._on_post_payout_to_ledger()
-
-    with session_factory() as session:
-        assert session.query(AccountLedgerEntry).count() == 0
 
 
 def test_settlement_snapshot_dialog_displays_hit_miss_and_unsupported_items() -> None:
@@ -329,9 +270,8 @@ def test_settlement_ledger_page_lists_only_settled_orders_with_log_summary(sessi
     assert page._table.item(0, 6).text() == "10.00"
     assert page._table.item(0, 7).text() == "0.00"
     assert page._table.item(0, 9).text() != "-"
-    assert page._table.item(0, 10).text() == "无需入账"
-    assert page._table.item(0, 13).text() == "中1 / 未0 / 不支持0"
-    assert settled.order_no in page._table.item(0, 14).toolTip()
+    assert page._table.item(0, 10).text() == "中1 / 未0 / 不支持0"
+    assert settled.order_no in page._table.item(0, 11).toolTip()
     assert active.order_no not in [page._table.item(row, 2).text() for row in range(page._table.rowCount())]
 
 

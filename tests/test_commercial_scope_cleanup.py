@@ -13,7 +13,6 @@ from PySide6.QtWidgets import QApplication, QCheckBox, QLabel, QLineEdit, QPushB
 
 from schemas.order_schema import OrderCreate, OrderItemCreate
 from services.adjustment_record_service import AdjustmentRecordService
-from services.accounting_service import AccountLedgerService, CustomerAccountService
 from services.log_service import LogService
 from services.draw_service import DrawService
 from services.order_import_service import OrderImportService
@@ -35,7 +34,6 @@ from ui.pages.order_analysis_page import OrderAnalysisPage
 from ui.pages.order_detail_page import OrderDetailPage
 from ui.pages.overview_page import OverviewPage
 from ui.pages.settlement_ledger_page import SettlementLedgerPage
-from ui.pages.customer_account_page import CustomerAccountPage
 from ui.pages.special_order_page import SpecialOrderPage
 from ui.pages.today_draw_page import TodayDrawPage
 from ui.pages.tools_page import ToolsPage
@@ -99,10 +97,6 @@ def test_commercial_test_version_main_pages_and_dialogs_create_offscreen(session
         DrawHistoryPage(draw_service=DrawService(session_factory)),
         OrderDetailPage(order_service=order_service, log_service=LogService(session_factory)),
         SettlementLedgerPage(order_service=order_service),
-        CustomerAccountPage(
-            account_service=CustomerAccountService(session_factory),
-            ledger_service=AccountLedgerService(session_factory),
-        ),
         OperationLogPage(log_service=LogService(session_factory)),
         NumberCatalogPage(),
         ToolsPage(),
@@ -182,7 +176,7 @@ def test_special_order_page_is_tema_readonly_first_stage(session_factory) -> Non
     assert not page._btn_special_settlement.isEnabled()
     assert "拓展调单规则尚未确认" in page._btn_open_extension.toolTip()
     assert "清空或重置数据需要权限" in page._btn_reset_all.toolTip()
-    assert "真实兑奖涉及结算、赔付和余额流水" in page._btn_special_settlement.toolTip()
+    assert "\u771f\u5b9e\u5151\u5956\u5165\u8d26\u4e0d\u5c5e\u4e8e\u5f53\u524d\u4ea7\u54c1\u8303\u56f4" in page._btn_special_settlement.toolTip()
     assert page._btn_adjust_records.isEnabled()
     assert page._btn_copy_summary.isEnabled()
     assert page._btn_export_summary.isEnabled()
@@ -353,70 +347,47 @@ def test_record_order_window_marks_unimplemented_options_and_footer_scope() -> N
 
 
 def test_record_order_advanced_option_docs_match_current_scope() -> None:
-    readme = Path("README.md").read_text(encoding="utf-8")
-    scope = Path("docs/commercial_test_scope.md").read_text(encoding="utf-8")
-    feature_status = Path("docs/feature_status.md").read_text(encoding="utf-8")
-    manual_script = Path("docs/manual_test_script.md").read_text(encoding="utf-8")
-    acceptance = Path("docs/commercial_acceptance_checklist.md").read_text(encoding="utf-8")
+    documents = [
+        Path("README.md").read_text(encoding="utf-8"),
+        Path("docs/commercial_test_scope.md").read_text(encoding="utf-8"),
+        Path("docs/feature_status.md").read_text(encoding="utf-8"),
+        Path("docs/manual_test_script.md").read_text(encoding="utf-8"),
+        Path("docs/commercial_acceptance_checklist.md").read_text(encoding="utf-8"),
+    ]
+    combined = "\n".join(documents)
 
-    assert "| 特肖模式 | 第一阶段可用 |" in feature_status
-    assert "| 岁写法 | 第一阶段可用 |" in feature_status
-    assert "| 各->各肖 | 第一阶段可用 |" in feature_status
-    assert "| 抄写法 | 暂未开放 |" not in feature_status
-    for document in (readme, scope, feature_status, manual_script, acceptance):
-        assert "特肖模式、抄写法、各->各肖仍禁用" not in document
-        assert "特肖模式、抄写法、各->各肖；规则和保存口径未确认，保持禁用" not in document
-        assert "仍禁用：特肖模式、抄写法、各->各肖" not in document
-    for document in (readme, scope, acceptance):
-        assert "特肖模式、岁写法、各->各肖" in document
-        assert "只影响录单解析、预览和保存口径" in document
-        assert "不自动结算" in document
-        assert "不写余额" in document
-        assert "不涉及真实兑奖" in document
-    assert "录单高级选项验收样例" in manual_script
-    for sample in ("羊马各10", "鼠、牛、虎各5", "龙-羊-猴各80", "25岁、08岁各10"):
-        assert sample in manual_script
+    for phrase in ("\u7279\u8096\u6a21\u5f0f", "\u5c81\u5199\u6cd5", "\u5404->\u5404\u8096"):
+        assert phrase in combined
+    assert "\u53ea\u5f71\u54cd\u5f55\u5355\u89e3\u6790" in combined
+    assert "\u9ad8\u7ea7\u9009\u9879\u7981\u7528" not in combined
+    assert "\u7279\u8096\u6a21\u5f0f\u7981\u7528" not in combined
+    assert "\u5c81\u5199\u6cd5\u7981\u7528" not in combined
+    assert "\u5404->\u5404\u8096\u7981\u7528" not in combined
 
 
 def test_readme_and_scope_document_describe_commercial_test_scope() -> None:
-    readme = Path("README.md").read_text(encoding="utf-8")
-    scope = Path("docs/commercial_test_scope.md").read_text(encoding="utf-8")
-    feature_status = Path("docs/feature_status.md").read_text(encoding="utf-8")
-    manual_script = Path("docs/manual_test_script.md").read_text(encoding="utf-8")
-    acceptance = Path("docs/commercial_acceptance_checklist.md").read_text(encoding="utf-8")
-    roadmap = Path("docs/roadmap.md").read_text(encoding="utf-8")
+    documents = [
+        Path("README.md").read_text(encoding="utf-8"),
+        Path("docs/commercial_test_scope.md").read_text(encoding="utf-8"),
+        Path("docs/feature_status.md").read_text(encoding="utf-8"),
+        Path("docs/manual_test_script.md").read_text(encoding="utf-8"),
+        Path("docs/commercial_acceptance_checklist.md").read_text(encoding="utf-8"),
+        Path("docs/roadmap.md").read_text(encoding="utf-8"),
+    ]
+    combined = "\n".join(documents)
 
-    for heading in ("当前测试版已完成", "当前测试版暂未开放", "后续规划"):
-        assert heading in readme
-    for document in (readme, scope, feature_status, manual_script, acceptance, roadmap):
-        assert "商用测试版 / 内部试用版" in document
-        assert "正式版、完整商业版" not in document
-        assert "完整商业版" not in document
-        assert "已完成全部功能" not in document
-        assert "真实盈亏" not in document
-        assert "余额已实现" not in document
-    assert "录单窗口尚未接入数据库" not in readme
-    assert "订单详情、数据总览、订单分析仍未读取真实订单数据" not in readme
-    assert "订单导入、批量删除、清空订单" not in readme
-    assert "拆单助手仅做文本整理，不识别复杂玩法、不保存订单、不写数据库" not in readme
-    for document in (readme, scope, feature_status, manual_script, acceptance):
-        assert "订单导入只预览" not in document
-        assert "只预览不写库" not in document
-        assert "拆单助手只做文本整理" not in document
-        assert "拆单助手不能保存订单" not in document
-        assert "调单保存未开放" not in document
-        assert "赔付金额暂未计算" not in document
-    assert "导入订单 | 暂未开放" not in feature_status
-    assert "拆单助手保存订单 | 暂未开放" not in feature_status
-    assert "赔付金额 / 中奖金额 | 暂未开放" not in feature_status
-    assert "导入订单 | 第一阶段可用" in feature_status
-    assert "拆单助手保存订单 | 第一阶段可用" in feature_status
-    assert "调单快照记录" in feature_status
-    assert "商用测试版 / 内部试用版范围" in scope
-    assert "不显示假业务数据" in scope
-    assert "调单页面保存的调整记录仅为快照，不修改订单状态" in scope
-    assert "能预览订单并保存勾选的解析成功行" in acceptance
-    assert "导入订单为第一阶段可用，只保存确认导入的成功行" in acceptance
+    for document in documents:
+        assert "\u5546\u7528\u6d4b\u8bd5\u7248 / \u5185\u90e8\u8bd5\u7528\u7248" in document
+        assert "\u6b63\u5f0f\u7248" not in document
+        assert "\u5b8c\u6574\u5546\u4e1a\u7248" not in document
+        assert "\u5df2\u5b8c\u6210\u5168\u90e8\u529f\u80fd" not in document
+        assert "\u4f59\u989d\u5df2\u5b9e\u73b0" not in document
+    for phrase in ("\u8ba2\u5355\u5bfc\u5165", "\u62c6\u5355\u52a9\u624b", "\u8c03\u5355\u5feb\u7167", "\u4e2d\u5956\u91d1\u989d", "\u8fd4\u6c34"):
+        assert phrase in combined
+    assert "\u8ba2\u5355\u5bfc\u5165\u53ea\u9884\u89c8" not in combined
+    assert "\u62c6\u5355\u52a9\u624b\u53ea\u505a\u6587\u672c\u6574\u7406" not in combined
+    assert "\u8c03\u5355\u4fdd\u5b58\u672a\u5f00\u653e" not in combined
+    assert "\u8d54\u4ed8\u91d1\u989d\u6682\u672a\u8ba1\u7b97" not in combined
 
 
 def test_unopened_feature_freeze_list_is_explicit_and_not_misleading() -> None:
@@ -425,69 +396,60 @@ def test_unopened_feature_freeze_list_is_explicit_and_not_misleading() -> None:
         for path in ("README.md", "docs/commercial_test_scope.md", "docs/feature_status.md")
     )
     required_items = [
-        "客户账户 / 余额流水",
-        "返水 / 佣金",
-        "权限系统",
-        "清空订单",
-        "清空日志",
-        "批量删除",
-        "重置开奖",
-        "真实兑奖",
-        "真实修改原订单式调单",
-        "真实打印机调用",
-        "特肖模式",
-        "岁写法",
-        "各->各肖",
-        "胆拖",
-        "组选",
-        "全包",
-        "复式组合",
-        "云同步 / 在线账号",
-        "正式安装包",
+        "\u5ba2\u6237\u8d26\u6237",
+        "\u5ba2\u6237\u4f59\u989d",
+        "\u4f59\u989d\u6d41\u6c34",
+        "\u771f\u5b9e\u5151\u5956\u5165\u8d26",
+        "\u6743\u9650\u7cfb\u7edf",
+        "\u6e05\u7a7a\u8ba2\u5355",
+        "\u6e05\u7a7a\u65e5\u5fd7",
+        "\u6279\u91cf\u5220\u9664",
+        "\u91cd\u7f6e\u5f00\u5956",
+        "\u771f\u5b9e\u4fee\u6539\u539f\u8ba2\u5355\u5f0f\u8c03\u5355",
+        "\u771f\u5b9e\u6253\u5370\u673a\u8c03\u7528",
+        "\u4e91\u540c\u6b65 / \u5728\u7ebf\u8d26\u53f7",
+        "\u6b63\u5f0f\u5b89\u88c5\u5305",
+        "\u80c6\u62d6",
+        "\u7ec4\u9009",
+        "\u5168\u5305",
     ]
     for item in required_items:
         assert item in documents
-    assert "未冻结规则的写法不强行识别" in documents
-    assert "完整规则未确认前不接入正式结算" in documents
-    assert "不自动接入结算兑奖" in documents
-    assert "功能边界" in documents
+    assert "\u4e0d\u505a\u5ba2\u6237\u8d26\u6237" in documents
+    assert "\u4e0d\u505a\u4f59\u989d\u6d41\u6c34" in documents
+    assert "\u4e0d\u505a\u771f\u5b9e\u5151\u5956\u5165\u8d26" in documents
+    assert "\u8fd4\u6c34" in documents
+    assert "\u7edf\u8ba1\u9879" in documents
+    assert "\u4e0d\u5165\u8d26" in documents
+    assert "\u8fd4\u6c34 / \u4f63\u91d1 | \u6682\u672a\u5f00\u653e" not in documents
 
 
-def test_permission_design_is_frozen_and_accounting_first_stage_is_bounded() -> None:
+def test_permission_design_is_frozen_and_accounting_is_out_of_product_scope() -> None:
     permission_doc_path = Path("docs/permission_audit_model.md")
     accounting_doc_path = Path("docs/accounting_ledger_model.md")
     assert permission_doc_path.exists()
     assert accounting_doc_path.exists()
 
-    permission_doc = permission_doc_path.read_text(encoding="utf-8")
     accounting_doc = accounting_doc_path.read_text(encoding="utf-8")
     readme = Path("README.md").read_text(encoding="utf-8")
     feature_status = Path("docs/feature_status.md").read_text(encoding="utf-8")
 
-    assert "暂未实现登录、账号、角色、权限审批" in permission_doc
-    assert "当前不开放清空订单" in permission_doc
-    assert "当前不开放真实兑奖" in permission_doc
-    assert "当前不开放余额修改" in permission_doc
-    assert "审计日志不可绕过" in permission_doc
-    assert "二次确认" in permission_doc
+    for text in (accounting_doc, readme, feature_status):
+        assert "\u4e0d\u505a\u5ba2\u6237\u4f59\u989d" in text
+        assert "\u4e0d\u505a\u4f59\u989d\u6d41\u6c34" in text
+        assert "\u4e0d\u505a\u771f\u5b9e\u5151\u5956\u5165\u8d26" in text
+        assert "\u4e0d\u6d89\u53ca\u771f\u5b9e\u8d44\u91d1\u652f\u4ed8" in text
+        assert "\u8fd4\u6c34" in text
+        assert "\u7edf\u8ba1\u9879" in text
+        assert "\u4e0d\u5165\u8d26" in text
 
-    assert "客户账户 / 余额流水第一阶段已开放" in accounting_doc
-    assert "已支持手工加款、手工扣款" in accounting_doc
-    assert "余额不能直接覆盖" in accounting_doc
-    assert "当前不自动把正式结算中奖金额入账" in accounting_doc
-    assert "当前不开放真实兑奖" in accounting_doc
-    assert "当前不做返水 / 佣金" in accounting_doc
-    assert "所有金额使用 `Decimal`" in accounting_doc
-    assert "禁止 `float`" in accounting_doc
-
-    assert "[权限与审计模型](docs/permission_audit_model.md)" in readme
-    assert "[账务 / 余额流水模型](docs/accounting_ledger_model.md)" in readme
-    assert "权限与审计模型设计 | 设计已冻结，功能未开放" in feature_status
-    assert "余额流水 / 客户账户 | 第一阶段可用" in feature_status
-    assert "账务 / 余额流水模型 | 第一阶段可用" in feature_status
-    assert "权限与审计模型设计 | 已完成" not in feature_status
-    assert "余额流水 / 客户账户 | 暂未开放" not in feature_status
-
+    assert "\u5ba2\u6237\u8d26\u6237 / \u4f59\u989d\u6d41\u6c34\u7b2c\u4e00\u9636\u6bb5\u5df2\u5f00\u653e" not in accounting_doc
+    assert "\u5df2\u652f\u6301\u624b\u5de5\u52a0\u6b3e" not in accounting_doc
+    assert "\u5df2\u652f\u6301\u624b\u5de5\u6263\u6b3e" not in accounting_doc
+    assert "entry_type=settlement_payout" not in accounting_doc
+    assert "payout_posted_at" not in accounting_doc
+    assert "\u4f59\u989d\u6d41\u6c34 / \u5ba2\u6237\u8d26\u6237 | \u7b2c\u4e00\u9636\u6bb5\u53ef\u7528" not in feature_status
+    assert "\u771f\u5b9e\u5151\u5956 / \u7ed3\u7b97\u4e2d\u5956\u91d1\u989d\u5165\u8d26\u7b2c\u4e00\u9636\u6bb5" not in feature_status
 
 def test_repository_safety_ignores_runtime_files_and_keeps_migrations_frozen() -> None:
     gitignore = Path(".gitignore").read_text(encoding="utf-8")
@@ -511,8 +473,8 @@ def test_repository_safety_ignores_runtime_files_and_keeps_migrations_frozen() -
         "20260628_0005_create_adjustment_records.py",
         "20260701_0006_create_customer_accounts.py",
         "20260702_0007_add_settlement_payout_posting.py",
+        "20260702_0008_remove_accounting_ledger_and_payout_posting.py",
     ]
-
 
 def test_order_analysis_dead_demo_code_removed() -> None:
     import ui.pages.order_analysis_page as module

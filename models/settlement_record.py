@@ -40,24 +40,11 @@ class SettlementRecord(Base):
     unsupported_count: Mapped[int] = mapped_column(nullable=False)
     total_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     result_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
-    payout_posted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
-    payout_ledger_entry_id: Mapped[int | None] = mapped_column(
-        ForeignKey(
-            "account_ledger_entries.id",
-            ondelete="SET NULL",
-            use_alter=True,
-            name="fk_settlement_records_payout_ledger_entry",
-        ),
-        nullable=True,
-        index=True,
-    )
-    payout_posted_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
     order = relationship("Order")
     draw = relationship("LotteryDraw")
     operation_log = relationship("OperationLog")
-    payout_ledger_entry = relationship("AccountLedgerEntry", foreign_keys=[payout_ledger_entry_id])
 
     __table_args__ = (
         UniqueConstraint("order_id", name="uq_settlement_records_order_id"),
