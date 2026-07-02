@@ -42,6 +42,12 @@ def test_alembic_upgrade_head_from_empty_sqlite_creates_current_key_tables(
         tables = set(inspect(engine).get_table_names())
         assert set(KEY_TABLES).issubset(tables)
         assert {"customer_accounts", "account_ledger_entries"}.issubset(tables)
+        settlement_columns = {column["name"] for column in inspect(engine).get_columns("settlement_records")}
+        assert {
+            "payout_posted_at",
+            "payout_ledger_entry_id",
+            "payout_posted_amount",
+        }.issubset(settlement_columns)
 
         with engine.connect() as connection:
             version = connection.execute(text("select version_num from alembic_version")).scalar_one()

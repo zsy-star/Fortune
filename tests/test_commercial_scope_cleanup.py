@@ -510,6 +510,7 @@ def test_repository_safety_ignores_runtime_files_and_keeps_migrations_frozen() -
         "20260626_0004_create_app_meta.py",
         "20260628_0005_create_adjustment_records.py",
         "20260701_0006_create_customer_accounts.py",
+        "20260702_0007_add_settlement_payout_posting.py",
     ]
 
 

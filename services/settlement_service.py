@@ -17,11 +17,13 @@ from domain.zodiac_rules import get_zodiac
 from models import LotteryDraw, Order, SettlementRecord
 from repositories.settings_repository import SettingsRepository
 from repositories.settlement_record_repository import SettlementRecordRepository
+from repositories.accounting_repository import AccountLedgerRepository
 from schemas.settlement_schema import (
     ItemSettlementResult,
     OrderSettlementCommitResult,
     OrderSettlementPreview,
     SettlementLedgerResult,
+    SettlementPayoutPostResult,
 )
 from settlement.exceptions import SettlementDataError
 from settlement.bet_normalizer import (
@@ -44,6 +46,7 @@ from settlement.bet_normalizer import (
     SIX_SPECIAL_ZODIAC,
 )
 from settlement.settlement_engine import SettlementEngine
+from services.accounting_service import AccountLedgerService
 from services.log_service import LogService
 
 ORDER_STATUS_SETTLED = "settled"
@@ -78,6 +81,7 @@ class SettlementService:
         self._session_factory = session_factory
         self._engine = engine or SettlementEngine()
         self._log_service = LogService(session_factory)
+        self._ledger_service = AccountLedgerService(session_factory)
 
     def preview_order(self, order_id: int, draw_id: int):
         with self._session_factory() as session:
@@ -167,6 +171,81 @@ class SettlementService:
         with self._session_factory() as session:
             record = SettlementRecordRepository(session).get(record_id)
             return self._to_ledger_result(record) if record else None
+
+    def post_payout_to_ledger(
+        self,
+        *,
+        order_id: int | None = None,
+        settlement_record_id: int | None = None,
+        operator: str | None = None,
+    ) -> SettlementPayoutPostResult:
+        if order_id is None and settlement_record_id is None:
+            raise SettlementDataError("必须提供订单 ID 或结算记录 ID")
+        with self._session_factory() as session:
+            try:
+                repo = SettlementRecordRepository(session)
+                if settlement_record_id is not None:
+                    record = repo.get(settlement_record_id)
+                else:
+                    record = repo.get_by_order_id(int(order_id or 0))
+                if record is None:
+                    raise SettlementDataError("未找到结算记录，不能兑奖入账")
+                order = record.order
+                if order is None:
+                    raise SettlementDataError("结算记录缺少订单，不能兑奖入账")
+                if order.status != ORDER_STATUS_SETTLED:
+                    raise SettlementDataError("只有已正式结算的订单才能兑奖入账")
+                if record.payout_ledger_entry_id is not None:
+                    raise SettlementDataError("该结算记录已入账，不能重复兑奖")
+                existing_entry = AccountLedgerRepository(session).get_by_source(
+                    "settlement_record",
+                    record.id,
+                )
+                if existing_entry is not None:
+                    raise SettlementDataError("该结算记录已存在入账流水，不能重复兑奖")
+                customer_name = str(order.customer_name or "").strip()
+                if not customer_name:
+                    raise SettlementDataError("订单缺少客户/申报人，不能自动入账")
+                payout_amount = self._snapshot_total_payout_for_posting(record.result_snapshot)
+                if payout_amount is None:
+                    raise SettlementDataError("旧结算快照无中奖金额，不能自动入账")
+                if payout_amount <= Decimal("0.00"):
+                    raise SettlementDataError("中奖金额为 0，无需入账")
+
+                entry = self._ledger_service.create_settlement_payout_entry(
+                    session,
+                    customer=customer_name,
+                    amount=payout_amount,
+                    reason="结算中奖金额入账",
+                    operator=operator or "系统操作员",
+                    order_id=order.id,
+                    settlement_record_id=record.id,
+                )
+                posted_at = datetime.now()
+                record.payout_posted_at = posted_at
+                record.payout_ledger_entry_id = entry.id
+                record.payout_posted_amount = payout_amount
+                record.result_snapshot = self._snapshot_with_payout_posting(
+                    record.result_snapshot,
+                    posted_at=posted_at,
+                    ledger_entry_id=entry.id,
+                    payout_amount=payout_amount,
+                )
+                session.flush()
+                session.commit()
+                return SettlementPayoutPostResult(
+                    success=True,
+                    customer_name=customer_name,
+                    payout_amount=payout_amount,
+                    balance_before=Decimal(entry.balance_before).quantize(CENT),
+                    balance_after=Decimal(entry.balance_after).quantize(CENT),
+                    ledger_entry_id=entry.id,
+                    settlement_record_id=record.id,
+                    message="结算中奖金额已入账",
+                )
+            except Exception:
+                session.rollback()
+                raise
 
     def commit_order_settlement(self, order_id: int, draw_id: int) -> OrderSettlementCommitResult:
         with self._session_factory() as session:
@@ -425,6 +504,9 @@ class SettlementService:
                 "special_number": draw.special_number,
                 "special_zodiac": get_zodiac(draw.special_number),
             },
+            "summary": {
+                "total_payout_amount": _decimal_money(preview.total_payout_amount),
+            },
             "settlement": {
                 "settled_at": settled_at.isoformat(sep=" "),
                 "total_items": preview.total_items,
@@ -508,10 +590,56 @@ class SettlementService:
             order_updated_at=order.updated_at,
             operation_log_description=log.description if log else None,
             total_payout_amount=total_payout_amount,
+            payout_posted_at=record.payout_posted_at,
+            payout_ledger_entry_id=record.payout_ledger_entry_id,
+            payout_posted_amount=(
+                Decimal(record.payout_posted_amount).quantize(CENT)
+                if record.payout_posted_amount is not None
+                else None
+            ),
         )
+
+    def _snapshot_total_payout_for_posting(self, snapshot: object) -> Decimal | None:
+        if not isinstance(snapshot, dict):
+            return None
+        summary = snapshot.get("summary")
+        if isinstance(summary, dict) and summary.get("total_payout_amount") not in (None, ""):
+            try:
+                return Decimal(str(summary["total_payout_amount"])).quantize(CENT)
+            except Exception as exc:
+                raise SettlementDataError("结算快照中奖金额格式异常，不能自动入账") from exc
+        settlement = snapshot.get("settlement")
+        if isinstance(settlement, dict) and settlement.get("total_payout_amount") not in (None, ""):
+            try:
+                return Decimal(str(settlement["total_payout_amount"])).quantize(CENT)
+            except Exception as exc:
+                raise SettlementDataError("结算快照中奖金额格式异常，不能自动入账") from exc
+        return None
+
+    def _snapshot_with_payout_posting(
+        self,
+        snapshot: object,
+        *,
+        posted_at: datetime,
+        ledger_entry_id: int,
+        payout_amount: Decimal,
+    ) -> dict[str, Any]:
+        next_snapshot: dict[str, Any] = dict(snapshot) if isinstance(snapshot, dict) else {}
+        next_snapshot["payout_posting"] = {
+            "posted_at": posted_at.isoformat(sep=" "),
+            "ledger_entry_id": ledger_entry_id,
+            "payout_amount": _decimal_money(payout_amount),
+        }
+        return next_snapshot
 
     def _snapshot_total_payout(self, snapshot: object) -> Decimal:
         if isinstance(snapshot, dict):
+            summary = snapshot.get("summary")
+            if isinstance(summary, dict) and summary.get("total_payout_amount") not in (None, ""):
+                try:
+                    return Decimal(str(summary["total_payout_amount"])).quantize(CENT)
+                except Exception:
+                    return Decimal("0.00")
             settlement = snapshot.get("settlement")
             if isinstance(settlement, dict) and settlement.get("total_payout_amount") not in (None, ""):
                 try:

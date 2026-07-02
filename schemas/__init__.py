@@ -20,7 +20,12 @@ from schemas.order_schema import (
     OrderResult,
     OrderSummary,
 )
-from schemas.settlement_schema import ItemSettlementResult, OrderSettlementPreview, UnsupportedBetResult
+from schemas.settlement_schema import (
+    ItemSettlementResult,
+    OrderSettlementPreview,
+    SettlementPayoutPostResult,
+    UnsupportedBetResult,
+)
 
 __all__ = [
     "AdjustmentRecordCreate",
@@ -39,5 +44,6 @@ __all__ = [
     "OrderResult",
     "OrderSettlementPreview",
     "OrderSummary",
+    "SettlementPayoutPostResult",
     "UnsupportedBetResult",
 ]

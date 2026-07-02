@@ -94,3 +94,14 @@
 - 清空账务流水。
 - 直接覆盖余额。
 - 根据历史订单自动推算余额。
+## 2026-07-02：真实兑奖 / 结算中奖金额入账第一阶段
+
+- 已开放已正式结算订单的“兑奖入账”入口。
+- 入账金额只读取 `SettlementRecord.result_snapshot` 中保存的中奖金额快照，优先读取 `summary.total_payout_amount`，并兼容当前快照的 `settlement.total_payout_amount`。
+- 入账不重新计算赔率，不重新读取当前赔率配置。
+- 入账会自动按订单 `customer_name` / 申报人创建或读取客户账户。
+- 入账流水字段：`direction=in`、`entry_type=settlement_payout`、`source_type=settlement_record`、`source_id=settlement_record.id`、`order_id=order.id`、`settlement_record_id=settlement_record.id`、`reason=结算中奖金额入账`。
+- `settlement_records` 增加入账状态字段：`payout_posted_at`、`payout_ledger_entry_id`、`payout_posted_amount`，用于防止同一结算记录重复入账。
+- 入账成功会写 `OperationLog`，`module=accounting`、`action=ledger/settlement_payout`。
+- 中奖金额为 0、订单缺少客户/申报人、旧快照缺少总中奖金额时不会自动入账。
+- 当前仍不做返水 / 佣金，不做权限审批，不做冲正 / 回滚 UI，不开放清空或重置。

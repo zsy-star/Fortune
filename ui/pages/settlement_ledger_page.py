@@ -244,6 +244,7 @@ class SettlementLedgerPage(QWidget):
         self._page = 1
         self._total = 0
         self._row_record_ids: list[int] = []
+        self._row_records: dict[int, SettlementLedgerResult] = {}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
@@ -258,6 +259,7 @@ class SettlementLedgerPage(QWidget):
 
         self._apply_stylesheet()
         app_events.settlements_changed.connect(self._on_settlements_changed)
+        app_events.ledger_changed.connect(self._on_settlements_changed)
         self.reload_data()
 
     def _on_settlements_changed(self) -> None:
@@ -308,6 +310,11 @@ class SettlementLedgerPage(QWidget):
         self._btn_snapshot_detail = QPushButton("查看结算快照详情")
         self._btn_snapshot_detail.clicked.connect(self._on_snapshot_detail)
         row.addWidget(self._btn_snapshot_detail)
+        self._btn_post_payout = QPushButton("兑奖入账")
+        self._btn_post_payout.setEnabled(False)
+        self._btn_post_payout.setToolTip("请选择已结算且有中奖金额、未入账的结算记录")
+        self._btn_post_payout.clicked.connect(self._on_post_payout_to_ledger)
+        row.addWidget(self._btn_post_payout)
         row.addStretch(1)
         return row
 
@@ -334,7 +341,7 @@ class SettlementLedgerPage(QWidget):
         return line
 
     def _build_table(self) -> QTableWidget:
-        self._table = QTableWidget(0, 14)
+        self._table = QTableWidget(0, 17)
         self._table.setHorizontalHeaderLabels(
             [
                 "结算ID",
@@ -353,15 +360,38 @@ class SettlementLedgerPage(QWidget):
                 "更新时间",
             ]
         )
+        for col_idx, label in enumerate(
+            [
+                "结算ID",
+                "订单ID",
+                "订单号",
+                "客户",
+                "地区",
+                "状态",
+                "投注总额",
+                "中奖金额",
+                "结算时间",
+                "开奖期号",
+                "入账状态",
+                "入账金额",
+                "流水ID",
+                "判定摘要",
+                "最近操作日志",
+                "创建时间",
+                "更新时间",
+            ]
+        ):
+            self._table.setHorizontalHeaderItem(col_idx, QTableWidgetItem(label))
         self._table.verticalHeader().setVisible(False)
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.itemSelectionChanged.connect(self._update_selected_actions)
         header = self._table.horizontalHeader()
-        for col in (0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13):
+        for col in (0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(11, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(14, QHeaderView.ResizeMode.Stretch)
         return self._table
 
     def _build_pager(self) -> QHBoxLayout:
@@ -452,9 +482,13 @@ class SettlementLedgerPage(QWidget):
 
     def _fill_table(self, rows: list[SettlementLedgerResult]) -> None:
         self._row_record_ids = []
+        self._row_records = {}
+        self._table.blockSignals(True)
+        self._table.clearSelection()
         self._table.setRowCount(len(rows))
         for row_idx, record in enumerate(rows):
             self._row_record_ids.append(record.id)
+            self._row_records[record.id] = record
             settlement_time = record.settled_at
             log_text = record.operation_log_description or "-"
             shown_log = log_text if len(log_text) <= 80 else log_text[:77] + "..."
@@ -473,6 +507,9 @@ class SettlementLedgerPage(QWidget):
                 _payout_text(record),
                 settlement_time.strftime("%Y-%m-%d %H:%M:%S"),
                 record.issue_number,
+                self._payout_posting_status(record),
+                _money(record.payout_posted_amount) if record.payout_posted_amount is not None else "-",
+                str(record.payout_ledger_entry_id) if record.payout_ledger_entry_id else "-",
                 summary,
                 shown_log,
                 record.order_created_at.strftime("%Y-%m-%d %H:%M:%S"),
@@ -480,11 +517,13 @@ class SettlementLedgerPage(QWidget):
             ]
             for col_idx, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                alignment = Qt.AlignmentFlag.AlignLeft if col_idx == 11 else Qt.AlignmentFlag.AlignCenter
+                alignment = Qt.AlignmentFlag.AlignLeft if col_idx == 14 else Qt.AlignmentFlag.AlignCenter
                 item.setTextAlignment(alignment)
-                if col_idx == 11:
+                if col_idx == 14:
                     item.setToolTip(log_text)
                 self._table.setItem(row_idx, col_idx, item)
+        self._table.blockSignals(False)
+        self._update_selected_actions()
 
     def _update_summary(self, displayed_count: int) -> None:
         if self._total == 0:
@@ -544,6 +583,102 @@ class SettlementLedgerPage(QWidget):
         if row < 0 or row >= len(self._row_record_ids):
             return None
         return self._row_record_ids[row]
+
+    def _snapshot_has_postable_payout_total(self, snapshot: object) -> bool:
+        if not isinstance(snapshot, dict):
+            return False
+        summary = snapshot.get("summary")
+        if isinstance(summary, dict) and summary.get("total_payout_amount") not in (None, ""):
+            return True
+        settlement = snapshot.get("settlement")
+        return isinstance(settlement, dict) and settlement.get("total_payout_amount") not in (None, "")
+
+    def _payout_posting_status(self, record: SettlementLedgerResult) -> str:
+        if record.payout_ledger_entry_id:
+            return "已入账"
+        if not self._snapshot_has_postable_payout_total(record.result_snapshot):
+            return "旧快照无法入账"
+        if record.total_payout_amount <= Decimal("0.00"):
+            return "无需入账"
+        if not str(record.customer_name or "").strip():
+            return "缺客户/申报人"
+        return "未入账"
+
+    def _payout_posting_state(self, record: SettlementLedgerResult | None) -> tuple[bool, str]:
+        if record is None:
+            return False, "请选择一条结算记录"
+        if record.order_status != "settled":
+            return False, "只有已正式结算订单才能兑奖入账"
+        if record.payout_ledger_entry_id is not None:
+            return False, f"已入账，流水 ID：{record.payout_ledger_entry_id}"
+        if not str(record.customer_name or "").strip():
+            return False, "订单缺少客户/申报人，不能自动入账"
+        if not self._snapshot_has_postable_payout_total(record.result_snapshot):
+            return False, "旧结算快照无中奖金额，不能自动入账"
+        if record.total_payout_amount <= Decimal("0.00"):
+            return False, "中奖金额为 0，无需入账"
+        return True, f"可入账：客户 {_dash(record.customer_name)}，中奖金额 {_money(record.total_payout_amount)}"
+
+    def _update_selected_actions(self) -> None:
+        record_id = self._selected_record_id()
+        record = self._row_records.get(record_id) if record_id is not None else None
+        enabled, message = self._payout_posting_state(record)
+        self._btn_post_payout.setEnabled(enabled)
+        self._btn_post_payout.setToolTip(message)
+
+    def _on_post_payout_to_ledger(self) -> None:
+        record_id = self._selected_record_id()
+        if record_id is None:
+            QMessageBox.warning(self, "兑奖入账", "请先选择一条结算记录。")
+            return
+        record = self._settlement_service.get_settlement_record(record_id)
+        enabled, message = self._payout_posting_state(record)
+        if not enabled:
+            self._btn_post_payout.setEnabled(False)
+            self._btn_post_payout.setToolTip(message)
+            QMessageBox.warning(self, "兑奖入账", message)
+            return
+        assert record is not None
+        choice = QMessageBox.question(
+            self,
+            "确认兑奖入账",
+            (
+                "将按正式结算快照写入客户余额流水，不能重复入账。\n\n"
+                f"客户：{_dash(record.customer_name)}\n"
+                f"订单 ID：{record.order_id}\n"
+                f"结算记录 ID：{record.id}\n"
+                f"中奖金额：{_money(record.total_payout_amount)}"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if choice != QMessageBox.StandardButton.Yes:
+            self._lbl_total.setText("已取消兑奖入账。")
+            return
+        try:
+            result = self._settlement_service.post_payout_to_ledger(
+                settlement_record_id=record.id,
+                operator="系统操作员",
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "兑奖入账", f"兑奖入账失败：{exc}")
+            self.reload_data()
+            return
+        app_events.settlements_changed.emit()
+        app_events.ledger_changed.emit()
+        app_events.logs_changed.emit()
+        self.reload_data()
+        QMessageBox.information(
+            self,
+            "兑奖入账",
+            (
+                f"{result.message}\n"
+                f"客户：{result.customer_name}\n"
+                f"流水 ID：{result.ledger_entry_id}\n"
+                f"入账金额：{_money(result.payout_amount)}\n"
+                f"余额：{_money(result.balance_before)} -> {_money(result.balance_after)}"
+            ),
+        )
 
     def _on_snapshot_detail(self) -> None:
         record_id = self._selected_record_id()

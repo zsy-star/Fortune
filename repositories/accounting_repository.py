@@ -68,6 +68,13 @@ class AccountLedgerRepository:
     def get(self, entry_id: int) -> AccountLedgerEntry | None:
         return self.session.get(AccountLedgerEntry, entry_id)
 
+    def get_by_source(self, source_type: str, source_id: int) -> AccountLedgerEntry | None:
+        stmt = select(AccountLedgerEntry).where(
+            AccountLedgerEntry.source_type == source_type,
+            AccountLedgerEntry.source_id == source_id,
+        )
+        return self.session.scalars(stmt).first()
+
     def list(
         self,
         *,

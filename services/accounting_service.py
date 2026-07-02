@@ -25,6 +25,7 @@ ACCOUNT_STATUS_DISABLED = "disabled"
 ENTRY_TYPE_MANUAL_CREDIT = "manual_credit"
 ENTRY_TYPE_MANUAL_DEBIT = "manual_debit"
 ENTRY_TYPE_REVERSAL = "manual_reversal"
+ENTRY_TYPE_SETTLEMENT_PAYOUT = "settlement_payout"
 
 
 class AccountingError(ValueError):
@@ -208,6 +209,36 @@ class AccountLedgerService:
     def get_customer_statement(self, customer: str | int) -> list[AccountLedgerEntryResult]:
         return self.list_entries(customer=customer, limit=500)
 
+    def create_settlement_payout_entry(
+        self,
+        session: Session,
+        *,
+        customer: str | int,
+        amount: Decimal | str | int,
+        reason: str,
+        operator: str | None,
+        order_id: int,
+        settlement_record_id: int,
+    ) -> AccountLedgerEntry:
+        amount_value = _validate_amount(amount)
+        reason = _normalize_required_text(reason, "变动原因")
+        operator = _normalize_operator(operator)
+        account = _get_or_create_account(session, customer)
+        return self._create_entry(
+            session,
+            account=account,
+            direction="in",
+            amount=amount_value,
+            reason=reason,
+            operator=operator,
+            entry_type=ENTRY_TYPE_SETTLEMENT_PAYOUT,
+            source_type="settlement_record",
+            source_id=settlement_record_id,
+            action="ledger/settlement_payout",
+            order_id=order_id,
+            settlement_record_id=settlement_record_id,
+        )
+
     def reverse_entry(self, entry_id: int, reason: str, operator: str | None = None) -> LedgerMutationResult:
         reason = _normalize_required_text(reason, "冲正原因")
         operator = _normalize_operator(operator)
@@ -302,6 +333,9 @@ class AccountLedgerService:
         source_type: str | None,
         source_id: int | None,
         action: str,
+        order_id: int | None = None,
+        settlement_record_id: int | None = None,
+        adjustment_record_id: int | None = None,
     ) -> AccountLedgerEntry:
         if account.status != ACCOUNT_STATUS_ACTIVE:
             raise AccountingError(f"客户账户已停用：{account.customer_name}")
@@ -324,6 +358,9 @@ class AccountLedgerService:
             entry_type=entry_type,
             source_type=source_type,
             source_id=source_id,
+            order_id=order_id,
+            settlement_record_id=settlement_record_id,
+            adjustment_record_id=adjustment_record_id,
             reason=reason,
             operator=operator,
             is_reversed=False,
