@@ -217,6 +217,36 @@ def test_settlement_snapshot_dialog_displays_hit_miss_and_unsupported_items() ->
     assert '"selection": "01"' in dialog._raw_snapshot.toPlainText()
 
 
+def test_settlement_snapshot_dialog_displays_rebate_statistics() -> None:
+    app()
+    dialog = _SettlementSnapshotDialog(
+        make_ledger_result(
+            {
+                "summary": {
+                    "total_rebate_amount": "1.50",
+                    "statistic_net_amount": "441.50",
+                },
+                "items": [
+                    {
+                        "bet_type": "鐗圭爜",
+                        "selection": "01",
+                        "amount": "10.00",
+                        "result": "hit",
+                        "payout_amount": "470.00",
+                        "rebate_rate": "0.05",
+                        "rebate_amount": "0.50",
+                    }
+                ],
+            }
+        )
+    )
+
+    assert "返水金额" in dialog._summary_label.text()
+    assert "统计结算金额" in dialog._summary_label.text()
+    assert dialog._items_table.item(0, 9).text() == "0.05"
+    assert dialog._items_table.item(0, 10).text() == "0.50"
+
+
 def test_settlement_snapshot_dialog_handles_empty_or_malformed_snapshot() -> None:
     app()
     dialog = _SettlementSnapshotDialog(make_ledger_result({}))

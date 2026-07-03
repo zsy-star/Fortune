@@ -293,7 +293,10 @@ class SettlementService:
             results=preview.results,
             warnings=[],
             operation_log_id=log.id,
+            total_bet_amount=preview.total_bet_amount,
             total_payout_amount=preview.total_payout_amount,
+            total_rebate_amount=preview.total_rebate_amount,
+            statistic_net_amount=preview.statistic_net_amount,
         )
 
     def _apply_payouts(
@@ -309,8 +312,22 @@ class SettlementService:
             self._apply_item_payout(item, plan_items, plan_name, odds_source)
             for item in preview.results
         ]
+        results = [
+            self._apply_item_rebate(item, plan_items, plan_name, odds_source)
+            for item in results
+        ]
+        total_bet = sum((item.amount for item in results), Decimal("0.00")).quantize(CENT)
         total_payout = sum((item.payout_amount for item in results), Decimal("0.00")).quantize(CENT)
-        return replace(preview, results=results, total_payout_amount=total_payout)
+        total_rebate = sum((item.rebate_amount for item in results), Decimal("0.00")).quantize(CENT)
+        statistic_net = (total_payout + total_rebate - total_bet).quantize(CENT)
+        return replace(
+            preview,
+            results=results,
+            total_bet_amount=total_bet,
+            total_payout_amount=total_payout,
+            total_rebate_amount=total_rebate,
+            statistic_net_amount=statistic_net,
+        )
 
     def _resolve_odds_plan(self, session: Session, order: Order):
         repo = SettingsRepository(session)
@@ -376,6 +393,42 @@ class SettlementService:
             payout_note=f"中奖金额 = 投注金额 {_decimal_money(item.amount)} x 赔率 {_decimal_odds(odds)}",
         )
 
+    def _apply_item_rebate(
+        self,
+        item: ItemSettlementResult,
+        plan_items: list[Any],
+        plan_name: str | None,
+        odds_source: str,
+    ) -> ItemSettlementResult:
+        if not plan_items:
+            return replace(
+                item,
+                rebate_rate=Decimal("0.00"),
+                rebate_amount=Decimal("0.00"),
+                rebate_note="未配置返水，按 0 计算",
+            )
+        rebate_item = self._find_rebate_item(item, plan_items)
+        if rebate_item is None:
+            return replace(
+                item,
+                rebate_rate=Decimal("0.00"),
+                rebate_amount=Decimal("0.00"),
+                rebate_note="未找到返水配置，按 0 计算",
+            )
+        rebate_percent = Decimal(rebate_item.rebate)
+        rebate_rate = (rebate_percent / Decimal("100")).quantize(Decimal("0.0001"))
+        rebate_amount = (item.amount * rebate_rate).quantize(CENT, rounding=ROUND_HALF_UP)
+        note = (
+            f"返水金额 = 投注金额 {_decimal_money(item.amount)} x 返水比例 "
+            f"{_decimal_odds(rebate_percent)}%"
+        )
+        return replace(
+            item,
+            rebate_rate=rebate_rate,
+            rebate_amount=rebate_amount,
+            rebate_note=f"{odds_source} / {plan_name or '未配置方案'}：{note}",
+        )
+
     def _find_odds_item(self, item: ItemSettlementResult, plan_items: list[Any]):
         candidates = self._odds_candidates_for_item(item)
         item_by_name = {str(config.bet_type).strip(): config for config in plan_items}
@@ -384,6 +437,17 @@ class SettlementService:
             if config is not None:
                 return config
         return None
+
+    def _find_rebate_item(self, item: ItemSettlementResult, plan_items: list[Any]):
+        item_by_name = {str(config.bet_type).strip(): config for config in plan_items}
+        exact = item_by_name.get(str(item.bet_type).strip())
+        if exact is not None:
+            return exact
+        for generic in ("全部", "统一返水", "默认返水"):
+            config = item_by_name.get(generic)
+            if config is not None:
+                return config
+        return self._find_odds_item(item, plan_items)
 
     def _odds_candidates_for_item(self, item: ItemSettlementResult) -> tuple[str, ...]:
         normalized_type = item.normalized_bet_type
@@ -427,7 +491,10 @@ class SettlementService:
                 "special_zodiac": get_zodiac(draw.special_number),
             },
             "summary": {
+                "total_bet_amount": _decimal_money(preview.total_bet_amount),
                 "total_payout_amount": _decimal_money(preview.total_payout_amount),
+                "total_rebate_amount": _decimal_money(preview.total_rebate_amount),
+                "statistic_net_amount": _decimal_money(preview.statistic_net_amount),
             },
             "settlement": {
                 "settled_at": settled_at.isoformat(sep=" "),
@@ -436,7 +503,10 @@ class SettlementService:
                 "unsupported_items": preview.unsupported_items,
                 "hit_count": preview.winning_items,
                 "miss_count": preview.losing_items,
+                "total_bet_amount": _decimal_money(preview.total_bet_amount),
                 "total_payout_amount": _decimal_money(preview.total_payout_amount),
+                "total_rebate_amount": _decimal_money(preview.total_rebate_amount),
+                "statistic_net_amount": _decimal_money(preview.statistic_net_amount),
             },
             "items": [self._snapshot_item(item) for item in preview.results],
         }
@@ -485,12 +555,17 @@ class SettlementService:
             "odds_plan_name": item.odds_plan_name,
             "odds_source": item.odds_source,
             "payout_note": item.payout_note,
+            "rebate_rate": _decimal_odds(item.rebate_rate) if item.rebate_rate is not None else None,
+            "rebate_amount": _decimal_money(item.rebate_amount),
+            "rebate_note": item.rebate_note,
         }
 
     def _to_ledger_result(self, record: SettlementRecord) -> SettlementLedgerResult:
         order = record.order
         log = record.operation_log
         total_payout_amount = self._snapshot_total_payout(record.result_snapshot)
+        total_rebate_amount = self._snapshot_total_rebate(record.result_snapshot)
+        statistic_net_amount = self._snapshot_statistic_net(record.result_snapshot, total_payout_amount, total_rebate_amount, record.total_amount)
         return SettlementLedgerResult(
             id=record.id,
             order_id=record.order_id,
@@ -512,6 +587,8 @@ class SettlementService:
             order_updated_at=order.updated_at,
             operation_log_description=log.description if log else None,
             total_payout_amount=total_payout_amount,
+            total_rebate_amount=total_rebate_amount,
+            statistic_net_amount=statistic_net_amount,
         )
 
 
@@ -540,6 +617,57 @@ class SettlementService:
                             continue
                 return total.quantize(CENT)
         return Decimal("0.00")
+
+    def _snapshot_total_rebate(self, snapshot: object) -> Decimal:
+        if isinstance(snapshot, dict):
+            summary = snapshot.get("summary")
+            if isinstance(summary, dict) and summary.get("total_rebate_amount") not in (None, ""):
+                try:
+                    return Decimal(str(summary["total_rebate_amount"])).quantize(CENT)
+                except Exception:
+                    return Decimal("0.00")
+            settlement = snapshot.get("settlement")
+            if isinstance(settlement, dict) and settlement.get("total_rebate_amount") not in (None, ""):
+                try:
+                    return Decimal(str(settlement["total_rebate_amount"])).quantize(CENT)
+                except Exception:
+                    return Decimal("0.00")
+            items = snapshot.get("items")
+            if isinstance(items, list):
+                total = Decimal("0.00")
+                found = False
+                for item in items:
+                    if isinstance(item, dict) and item.get("rebate_amount") not in (None, ""):
+                        found = True
+                        try:
+                            total += Decimal(str(item["rebate_amount"]))
+                        except Exception:
+                            continue
+                if found:
+                    return total.quantize(CENT)
+        return Decimal("0.00")
+
+    def _snapshot_statistic_net(
+        self,
+        snapshot: object,
+        total_payout: Decimal,
+        total_rebate: Decimal,
+        total_amount: Decimal,
+    ) -> Decimal:
+        if isinstance(snapshot, dict):
+            summary = snapshot.get("summary")
+            if isinstance(summary, dict) and summary.get("statistic_net_amount") not in (None, ""):
+                try:
+                    return Decimal(str(summary["statistic_net_amount"])).quantize(CENT)
+                except Exception:
+                    return Decimal("0.00")
+            settlement = snapshot.get("settlement")
+            if isinstance(settlement, dict) and settlement.get("statistic_net_amount") not in (None, ""):
+                try:
+                    return Decimal(str(settlement["statistic_net_amount"])).quantize(CENT)
+                except Exception:
+                    return Decimal("0.00")
+        return (Decimal(total_payout) + Decimal(total_rebate) - Decimal(total_amount)).quantize(CENT)
 
 
 def _decimal_money(value: Decimal) -> str:

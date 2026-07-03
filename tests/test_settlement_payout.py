@@ -88,6 +88,65 @@ def test_miss_and_unsupported_items_have_zero_payout(session_factory) -> None:
     assert preview.total_payout_amount == Decimal("0.00")
 
 
+def test_rebate_preview_uses_configured_rate_for_hit_and_miss_items(session_factory) -> None:
+    settings = SettingsService(session_factory)
+    plan = settings.ensure_default_plan()
+    settings.add_item(plan.id, "特码", "47", "5")
+    order = create_order(
+        OrderService(session_factory),
+        items=[
+            OrderItemCreate(bet_type="特码", selection="01", amount="10"),
+            OrderItemCreate(bet_type="特码", selection="02", amount="20"),
+        ],
+    )
+    draw = create_draw(DrawService(session_factory), special_number="01")
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+
+    assert preview.total_bet_amount == Decimal("30.00")
+    assert preview.total_payout_amount == Decimal("470.00")
+    assert preview.total_rebate_amount == Decimal("1.50")
+    assert preview.statistic_net_amount == Decimal("441.50")
+    assert [item.rebate_rate for item in preview.results] == [Decimal("0.0500"), Decimal("0.0500")]
+    assert [item.rebate_amount for item in preview.results] == [Decimal("0.50"), Decimal("1.00")]
+
+
+def test_rebate_preview_is_zero_when_no_rebate_configuration(session_factory) -> None:
+    order = create_order(
+        OrderService(session_factory),
+        items=[OrderItemCreate(bet_type="特码", selection="01", amount="10")],
+    )
+    draw = create_draw(DrawService(session_factory), special_number="01")
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+
+    assert preview.total_bet_amount == Decimal("10.00")
+    assert preview.total_rebate_amount == Decimal("0.00")
+    assert preview.statistic_net_amount == Decimal("-10.00")
+    assert preview.results[0].rebate_amount == Decimal("0.00")
+
+
+def test_unsupported_item_participates_in_rebate_when_exact_config_exists(session_factory) -> None:
+    settings = SettingsService(session_factory)
+    plan = settings.ensure_default_plan()
+    settings.add_item(plan.id, "几中几复选", "1", "10")
+    order = create_order(
+        OrderService(session_factory),
+        items=[OrderItemCreate(bet_type="几中几复选", selection="复3|01,02,03", amount="10")],
+    )
+    draw = create_draw(DrawService(session_factory), special_number="01")
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+    item = preview.results[0]
+
+    assert item.is_supported is False
+    assert item.payout_amount == Decimal("0.00")
+    assert item.rebate_rate == Decimal("0.1000")
+    assert item.rebate_amount == Decimal("1.00")
+    assert preview.total_rebate_amount == Decimal("1.00")
+    assert preview.statistic_net_amount == Decimal("-9.00")
+
+
 def test_hit_without_odds_configuration_has_zero_payout_and_note(session_factory) -> None:
     order = create_order(
         OrderService(session_factory),
@@ -204,10 +263,10 @@ def test_n_non_hit_falls_back_to_non_hit_odds(session_factory) -> None:
     assert item.payout_amount == Decimal("200.00")
 
 
-def test_commit_snapshot_contains_payout_fields_without_balance_or_rebate(session_factory) -> None:
+def test_commit_snapshot_contains_payout_and_rebate_fields_without_balance(session_factory) -> None:
     settings = SettingsService(session_factory)
     default = settings.ensure_default_plan()
-    settings.add_item(default.id, "特码", "47", "0")
+    settings.add_item(default.id, "特码", "47", "5")
     order = create_order(
         OrderService(session_factory),
         items=[
@@ -220,15 +279,26 @@ def test_commit_snapshot_contains_payout_fields_without_balance_or_rebate(sessio
     result = SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
 
     assert result.total_payout_amount == Decimal("470.00")
+    assert result.total_bet_amount == Decimal("20.00")
+    assert result.total_rebate_amount == Decimal("1.00")
+    assert result.statistic_net_amount == Decimal("451.00")
     with session_factory() as session:
         record = session.query(SettlementRecord).filter_by(order_id=order.id).one()
         snapshot = record.result_snapshot
 
+    assert snapshot["summary"]["total_bet_amount"] == "20.00"
+    assert snapshot["summary"]["total_rebate_amount"] == "1.00"
+    assert snapshot["summary"]["statistic_net_amount"] == "451.00"
     assert snapshot["settlement"]["total_payout_amount"] == "470.00"
+    assert snapshot["settlement"]["total_rebate_amount"] == "1.00"
+    assert snapshot["settlement"]["statistic_net_amount"] == "451.00"
     assert snapshot["items"][0]["odds"] == "47"
     assert snapshot["items"][0]["payout_amount"] == "470.00"
-    assert snapshot["items"][0]["odds_plan_name"] == "默认方案"
-    assert snapshot["items"][0]["odds_source"] == "默认方案"
+    assert snapshot["items"][0]["rebate_rate"] == "0.05"
+    assert snapshot["items"][0]["rebate_amount"] == "0.50"
+    assert snapshot["items"][0]["odds_plan_name"] == default.name
+    assert snapshot["items"][0]["odds_source"]
     assert snapshot["items"][1]["payout_amount"] == "0.00"
+    assert snapshot["items"][1]["rebate_amount"] == "0.50"
     assert "balance" not in str(snapshot).lower()
-    assert "rebate" not in str(snapshot).lower()
+    assert "ledger" not in str(snapshot).lower()

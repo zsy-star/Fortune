@@ -38,6 +38,8 @@ PAGE_SIZE = 20
 MALFORMED_SNAPSHOT_TEXT = "快照格式异常，无法完整展示"
 LEGACY_NO_PAYOUT_TEXT = "旧记录无赔付数据"
 LEGACY_NO_ODDS_TEXT = "旧记录无赔率数据"
+LEGACY_NO_REBATE_TEXT = "旧记录无返水统计"
+LEGACY_NO_NET_TEXT = "旧记录无统计结算金额"
 
 
 def _money(value: Decimal) -> str:
@@ -110,6 +112,44 @@ def _payout_text(record: SettlementLedgerResult) -> str:
     return _money(record.total_payout_amount)
 
 
+def _snapshot_has_rebate(snapshot: object) -> bool:
+    if not isinstance(snapshot, dict):
+        return False
+    summary = snapshot.get("summary")
+    if isinstance(summary, dict) and "total_rebate_amount" in summary:
+        return True
+    settlement = snapshot.get("settlement")
+    if isinstance(settlement, dict) and "total_rebate_amount" in settlement:
+        return True
+    items = snapshot.get("items")
+    return isinstance(items, list) and any(
+        isinstance(item, dict) and "rebate_amount" in item
+        for item in items
+    )
+
+
+def _snapshot_has_statistic_net(snapshot: object) -> bool:
+    if not isinstance(snapshot, dict):
+        return False
+    summary = snapshot.get("summary")
+    if isinstance(summary, dict) and "statistic_net_amount" in summary:
+        return True
+    settlement = snapshot.get("settlement")
+    return isinstance(settlement, dict) and "statistic_net_amount" in settlement
+
+
+def _rebate_text(record: SettlementLedgerResult) -> str:
+    if not _snapshot_has_rebate(record.result_snapshot):
+        return LEGACY_NO_REBATE_TEXT
+    return _money(record.total_rebate_amount)
+
+
+def _statistic_net_text(record: SettlementLedgerResult) -> str:
+    if not _snapshot_has_statistic_net(record.result_snapshot):
+        return LEGACY_NO_NET_TEXT
+    return _money(record.statistic_net_amount)
+
+
 class _SettlementSnapshotDialog(QDialog):
     def __init__(self, record: SettlementLedgerResult, parent=None):
         super().__init__(parent)
@@ -125,7 +165,7 @@ class _SettlementSnapshotDialog(QDialog):
         self._empty_label.setObjectName("snapshotEmptyLabel")
         layout.addWidget(self._empty_label)
 
-        self._items_table = QTableWidget(0, 9)
+        self._items_table = QTableWidget(0, 11)
         self._items_table.setHorizontalHeaderLabels(
             [
                 "投注类型",
@@ -137,15 +177,17 @@ class _SettlementSnapshotDialog(QDialog):
                 "赔率来源/提示",
                 "命中号码或原因",
                 "不支持说明",
+                "返水比例",
+                "返水金额",
             ]
         )
         self._items_table.verticalHeader().setVisible(False)
         self._items_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._items_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table_header = self._items_table.horizontalHeader()
-        for col in range(8):
+        for col in range(10):
             table_header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-        table_header.setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)
+        table_header.setSectionResizeMode(10, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self._items_table, stretch=2)
 
         self._raw_snapshot = QPlainTextEdit()
@@ -171,7 +213,10 @@ class _SettlementSnapshotDialog(QDialog):
             f"未命中数：{record.miss_count}    "
             f"不支持数：{record.unsupported_count}    "
             f"总金额：{_money(record.total_amount)}    "
-            f"总中奖金额：{_payout_text(record)}"
+            f"总中奖金额：{_payout_text(record)}    "
+            f"返水金额：{_rebate_text(record)}    "
+            f"统计结算金额：{_statistic_net_text(record)}\n"
+            "返水和统计结算金额仅作记账统计，不代表真实付款或入账。"
         )
 
     def _load_items(self, snapshot: object) -> None:
@@ -186,7 +231,10 @@ class _SettlementSnapshotDialog(QDialog):
         self._items_table.setRowCount(len(items))
         for row_idx, item in enumerate(items):
             if not isinstance(item, dict):
-                self._set_item_row(row_idx, ["—", "—", "—", MALFORMED_SNAPSHOT_TEXT, "—", "—", "—", "—", "—"])
+                self._set_item_row(
+                    row_idx,
+                    ["—", "—", "—", MALFORMED_SNAPSHOT_TEXT, "—", "—", "—", "—", "—", "—", "—"],
+                )
                 continue
             reason = _dash(item.get("reason"))
             unsupported_reason = _dash(item.get("unsupported_reason")) if _snapshot_result_text(item) == "不支持" else "—"
@@ -204,6 +252,8 @@ class _SettlementSnapshotDialog(QDialog):
                     payout_hint,
                     matched_or_reason,
                     unsupported_reason,
+                    _dash(item.get("rebate_rate")) if "rebate_rate" in item else LEGACY_NO_REBATE_TEXT,
+                    _dash(item.get("rebate_amount")) if "rebate_amount" in item else LEGACY_NO_REBATE_TEXT,
                 ],
             )
 
@@ -316,7 +366,8 @@ class SettlementLedgerPage(QWidget):
         self._lbl_total = QLabel()
         self._lbl_displayed = QLabel()
         self._lbl_readonly = QLabel(
-            "只读流水：本页面不修改订单状态，不触发重新结算；快照详情直接展示正式结算保存时的数据。"
+            "只读流水：本页面不修改订单状态，不触发重新结算；快照详情直接展示正式结算保存时的数据；"
+            "返水和统计结算金额仅作统计，不代表真实付款或入账。"
         )
         self._lbl_readonly.setObjectName("hintLabel")
         row.addWidget(self._lbl_total)
@@ -334,7 +385,7 @@ class SettlementLedgerPage(QWidget):
         return line
 
     def _build_table(self) -> QTableWidget:
-        self._table = QTableWidget(0, 14)
+        self._table = QTableWidget(0, 16)
         self._table.setHorizontalHeaderLabels(
             [
                 "结算ID",
@@ -351,6 +402,8 @@ class SettlementLedgerPage(QWidget):
                 "最近操作日志",
                 "创建时间",
                 "更新时间",
+                "返水金额",
+                "统计结算金额",
             ]
         )
         self._table.verticalHeader().setVisible(False)
@@ -358,7 +411,7 @@ class SettlementLedgerPage(QWidget):
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         header = self._table.horizontalHeader()
-        for col in (0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13):
+        for col in (0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(11, QHeaderView.ResizeMode.Stretch)
@@ -477,6 +530,8 @@ class SettlementLedgerPage(QWidget):
                 shown_log,
                 record.order_created_at.strftime("%Y-%m-%d %H:%M:%S"),
                 record.order_updated_at.strftime("%Y-%m-%d %H:%M:%S"),
+                _rebate_text(record),
+                _statistic_net_text(record),
             ]
             for col_idx, value in enumerate(values):
                 item = QTableWidgetItem(value)

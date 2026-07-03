@@ -461,5 +461,8 @@ def test_commit_is_allowed_without_unsupported_and_writes_zero_payout_when_odds_
     assert snapshot["settlement"]["total_payout_amount"] == "0.00"
     assert snapshot["items"][0]["payout_amount"] == "0.00"
     assert snapshot["items"][1]["payout_amount"] == "0.00"
+    assert snapshot["settlement"]["total_rebate_amount"] == "0.00"
+    assert snapshot["settlement"]["statistic_net_amount"] == "-20.00"
+    assert snapshot["items"][0]["rebate_amount"] == "0.00"
+    assert snapshot["items"][1]["rebate_amount"] == "0.00"
     assert "balance" not in str(snapshot).lower()
-    assert "rebate" not in str(snapshot).lower()

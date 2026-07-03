@@ -50,6 +50,8 @@ WAVE_COLORS = {"红波": "#e85d5d", "蓝波": "#4f78d8", "绿波": "#2d9d78"}
 MALFORMED_SNAPSHOT_TEXT = "快照格式异常，无法完整展示"
 LEGACY_NO_PAYOUT_TEXT = "旧记录无赔付数据"
 LEGACY_NO_ODDS_TEXT = "旧记录无赔率数据"
+LEGACY_NO_REBATE_TEXT = "旧记录无返水统计"
+LEGACY_NO_NET_TEXT = "旧记录无统计结算金额"
 WINNING_FILTER_OPTIONS = [
     ("不限中奖", None),
     ("未结算", "未结算"),
@@ -213,7 +215,7 @@ class OrderDetailPage(QWidget):
         self._btn_filter_prize.clicked.connect(self._on_filter_settlement_results)
         self._btn_combined_prize = QPushButton("综合结算摘要")
         self._btn_combined_prize.setObjectName("primaryAction")
-        self._btn_combined_prize.setToolTip("只读汇总当前筛选结果，不写余额、不计算返水佣金")
+        self._btn_combined_prize.setToolTip("只读汇总当前筛选结果，展示返水统计，不写余额、不计算佣金")
         self._btn_combined_prize.clicked.connect(self._on_combined_settlement_summary)
         self._btn_reset_draw = self._unavailable_button(
             "重置开奖",
@@ -760,7 +762,7 @@ class OrderDetailPage(QWidget):
     def _on_combined_settlement_summary(self) -> None:
         text = (
             "综合结算摘要（只读）\n"
-            "中奖金额：读取已结算快照中的基础中奖金额；未结算订单不参与。\n\n"
+            "中奖金额/返水金额：读取已结算快照中的统计字段；未结算订单不参与，不写余额。\n\n"
             f"{self._build_current_settlement_summary()}"
         )
         self._combined_result.setPlainText(text)
@@ -806,7 +808,19 @@ class OrderDetailPage(QWidget):
             for record in records.values()
             if self._snapshot_has_payout(record.result_snapshot)
         ]
+        rebate_values = [
+            record.total_rebate_amount
+            for record in records.values()
+            if self._snapshot_has_rebate(record.result_snapshot)
+        ]
+        net_values = [
+            record.statistic_net_amount
+            for record in records.values()
+            if self._snapshot_has_statistic_net(record.result_snapshot)
+        ]
         total_payout = sum(payout_values, Decimal("0.00"))
+        total_rebate = sum(rebate_values, Decimal("0.00"))
+        total_net = sum(net_values, Decimal("0.00"))
         status_counts = {
             "已结算": 0,
             "未结算": 0,
@@ -825,13 +839,18 @@ class OrderDetailPage(QWidget):
                 status_counts[display_status] += 1
 
         payout_text = _money(total_payout) if payout_values else f"—（{LEGACY_NO_PAYOUT_TEXT}）"
+        rebate_text = _money(total_rebate) if rebate_values else f"—（{LEGACY_NO_REBATE_TEXT}）"
+        net_text = _money(total_net) if net_values else f"—（{LEGACY_NO_NET_TEXT}）"
         return (
             f"订单数：{len(orders)}\n"
             f"已结算数：{status_counts['已结算']}    未结算数：{status_counts['未结算']}\n"
             f"命中订单数：{status_counts['命中']}    未中订单数：{status_counts['未中']}\n"
             f"部分命中订单数：{status_counts['部分命中']}    含不支持订单数：{status_counts['含不支持']}\n"
             f"当前订单总额：{_money(total_amount)}\n"
-            f"赔付/中奖金额：{payout_text}"
+            f"赔付/中奖金额：{payout_text}\n"
+            f"返水金额：{rebate_text}\n"
+            f"统计结算金额：{net_text}\n"
+            "说明：返水和统计结算金额仅作记账统计，不代表真实付款或入账。"
         )
 
     def _list_current_filtered_orders(self) -> list[OrderSummary]:
@@ -1036,13 +1055,23 @@ class OrderDetailPage(QWidget):
                 if self._snapshot_has_payout(record.result_snapshot)
                 else LEGACY_NO_PAYOUT_TEXT
             )
+            rebate_text = (
+                _money(record.total_rebate_amount)
+                if self._snapshot_has_rebate(record.result_snapshot)
+                else LEGACY_NO_REBATE_TEXT
+            )
+            net_text = (
+                _money(record.statistic_net_amount)
+                if self._snapshot_has_statistic_net(record.result_snapshot)
+                else LEGACY_NO_NET_TEXT
+            )
             summary = (
                 f"订单 ID：{record.order_id}\n"
                 f"地区：{record.region}    期号：{record.issue_number}\n"
                 f"命中数：{record.hit_count}    未命中数：{record.miss_count}    "
                 f"不支持数：{record.unsupported_count}\n"
                 f"总明细数：{record.total_items}    总金额：{_money(record.total_amount)}    "
-                f"总中奖金额：{payout_text}\n"
+                f"总中奖金额：{payout_text}    返水金额：{rebate_text}    统计结算金额：{net_text}\n"
                 f"{self._build_settlement_detail_text(record.result_snapshot)}"
             )
 
@@ -1076,7 +1105,7 @@ class OrderDetailPage(QWidget):
         return (
             "当前订单暂无结算明细，请先进行结算预览。\n\n"
             "当前仅展示命中 / 未中 / 不支持判断。\n"
-            "当前不写余额，不计算返水、佣金。\n"
+            "当前不写余额；返水仅在结算预览或正式结算快照中作为统计项展示。\n"
             "复杂玩法规则以当前 settlement_rules.md 为准。"
         )
 
@@ -1093,7 +1122,7 @@ class OrderDetailPage(QWidget):
         lines = [
             "结算明细：",
             "当前仅展示命中 / 未中 / 不支持判断。",
-            "当前展示基础中奖金额，不写余额，不计算返水、佣金。",
+            "当前展示基础中奖金额、返水金额和统计结算金额；不写余额，不代表真实付款或入账。",
             "复杂玩法规则以当前 settlement_rules.md 为准。",
         ]
         for index, item in enumerate(items, start=1):
@@ -1109,6 +1138,9 @@ class OrderDetailPage(QWidget):
             odds_source = _dash(item.get("odds_source"))
             odds_plan = _dash(item.get("odds_plan_name"))
             payout_note = _dash(item.get("payout_note"))
+            rebate_rate = _dash(item.get("rebate_rate")) if "rebate_rate" in item else LEGACY_NO_REBATE_TEXT
+            rebate_amount = _dash(item.get("rebate_amount")) if "rebate_amount" in item else LEGACY_NO_REBATE_TEXT
+            rebate_note = _dash(item.get("rebate_note")) if "rebate_note" in item else LEGACY_NO_REBATE_TEXT
             lines.extend(
                 [
                     (
@@ -1122,6 +1154,8 @@ class OrderDetailPage(QWidget):
                         f"赔率来源：{odds_source}    赔率方案：{odds_plan}"
                     ),
                     f"   赔率/赔付提示：{payout_note}",
+                    f"   返水比例：{rebate_rate}    返水金额：{rebate_amount}",
+                    f"   返水提示：{rebate_note}",
                     f"   命中 / 未中说明：{reason}",
                     f"   不支持原因：{unsupported_reason}",
                 ]
@@ -1185,6 +1219,30 @@ class OrderDetailPage(QWidget):
             for item in items
         )
 
+    def _snapshot_has_rebate(self, snapshot: object) -> bool:
+        if not isinstance(snapshot, dict):
+            return False
+        summary = snapshot.get("summary")
+        if isinstance(summary, dict) and "total_rebate_amount" in summary:
+            return True
+        settlement = snapshot.get("settlement")
+        if isinstance(settlement, dict) and "total_rebate_amount" in settlement:
+            return True
+        items = snapshot.get("items")
+        return isinstance(items, list) and any(
+            isinstance(item, dict) and "rebate_amount" in item
+            for item in items
+        )
+
+    def _snapshot_has_statistic_net(self, snapshot: object) -> bool:
+        if not isinstance(snapshot, dict):
+            return False
+        summary = snapshot.get("summary")
+        if isinstance(summary, dict) and "statistic_net_amount" in summary:
+            return True
+        settlement = snapshot.get("settlement")
+        return isinstance(settlement, dict) and "statistic_net_amount" in settlement
+
     def _append_reference(self, parts: list[str], label: str, value: object | None) -> None:
         text = self._format_reference_value(value)
         if text:
@@ -1200,7 +1258,10 @@ class OrderDetailPage(QWidget):
     def _preview_to_snapshot(self, preview: OrderSettlementPreview) -> dict[str, object]:
         return {
             "settlement": {
+                "total_bet_amount": _money(preview.total_bet_amount),
                 "total_payout_amount": _money(preview.total_payout_amount),
+                "total_rebate_amount": _money(preview.total_rebate_amount),
+                "statistic_net_amount": _money(preview.statistic_net_amount),
             },
             "items": [
                 {
@@ -1234,6 +1295,9 @@ class OrderDetailPage(QWidget):
                     "odds_plan_name": item.odds_plan_name,
                     "odds_source": item.odds_source,
                     "payout_note": item.payout_note,
+                    "rebate_rate": str(item.rebate_rate) if item.rebate_rate is not None else None,
+                    "rebate_amount": _money(item.rebate_amount),
+                    "rebate_note": item.rebate_note,
                 }
                 for item in preview.results
             ]

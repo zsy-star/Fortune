@@ -42,6 +42,9 @@ class ItemSettlementResult:
     odds_plan_name: str | None = None
     odds_source: str = "未配置"
     payout_note: str | None = None
+    rebate_rate: Decimal | None = None
+    rebate_amount: Decimal = Decimal("0.00")
+    rebate_note: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +69,10 @@ class OrderSettlementPreview:
     winning_items: int
     losing_items: int
     results: list[ItemSettlementResult]
+    total_bet_amount: Decimal = Decimal("0.00")
     total_payout_amount: Decimal = Decimal("0.00")
+    total_rebate_amount: Decimal = Decimal("0.00")
+    statistic_net_amount: Decimal = Decimal("0.00")
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +92,10 @@ class OrderSettlementCommitResult:
     results: list[ItemSettlementResult]
     warnings: list[str]
     operation_log_id: int
+    total_bet_amount: Decimal = Decimal("0.00")
     total_payout_amount: Decimal = Decimal("0.00")
+    total_rebate_amount: Decimal = Decimal("0.00")
+    statistic_net_amount: Decimal = Decimal("0.00")
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,3 +120,5 @@ class SettlementLedgerResult:
     order_updated_at: datetime
     operation_log_description: str | None = None
     total_payout_amount: Decimal = Decimal("0.00")
+    total_rebate_amount: Decimal = Decimal("0.00")
+    statistic_net_amount: Decimal = Decimal("0.00")

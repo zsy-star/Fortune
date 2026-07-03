@@ -230,8 +230,10 @@ def test_complex_zodiac_commit_writes_snapshot_with_zero_payout_when_odds_missin
     assert snapshot["settlement"]["total_payout_amount"] == "0.00"
     assert item_snapshot["payout_amount"] == "0.00"
     assert item_snapshot["payout_note"] == "未配置赔率"
+    assert snapshot["settlement"]["total_rebate_amount"] == "0.00"
+    assert snapshot["settlement"]["statistic_net_amount"] == "-15.00"
+    assert item_snapshot["rebate_amount"] == "0.00"
     assert "balance" not in str(snapshot).lower()
-    assert "rebate" not in str(snapshot).lower()
 
 
 def test_complex_zodiac_commit_is_blocked_when_any_item_is_unsupported(session_factory) -> None:

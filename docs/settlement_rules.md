@@ -4,6 +4,20 @@
 
 调用方必须显式传入一张订单和指定的一期开奖结果。结算服务不会自动选择最新开奖，避免把订单匹配到不确定期号。
 
+## 返水统计快照
+
+当前已在结算预览、正式结算快照、订单详情和结算历史中展示返水统计：
+
+1. 投注本金 / 有效投注额：使用当前订单明细金额合计，不修改订单保存口径。
+2. 中奖金额：沿用现有命中项 `投注金额 x 赔率` 公式，不重新计算旧快照，不改命中规则。
+3. 返水比例：优先读取申报人绑定的赔率 / 返水方案；没有绑定时读取默认方案；玩法没有返水配置时按 0 计算。
+4. 返水金额：按每条订单明细分别计算，`明细返水金额 = 明细投注金额 x 返水比例`，再汇总为 `total_rebate_amount`。
+5. 命中、未中和 unsupported 明细都按有效投注金额参与返水统计；unsupported 明细若能按原投注类型找到返水配置则计算，否则按 0。
+6. 统计结算金额：`statistic_net_amount = total_payout_amount + total_rebate_amount - total_bet_amount`。
+7. 返水金额和统计结算金额只是结算快照 / 记账统计参考，不入账、不付款、不生成客户余额、不代表真实收款或付款。
+
+正式结算 `result_snapshot.summary` 保存 `total_bet_amount`、`total_payout_amount`、`total_rebate_amount`、`statistic_net_amount`；每条 item 保存 `rebate_rate`、`rebate_amount`、`rebate_note`。旧快照没有这些字段时，界面显示旧记录提示或 0.00，不影响查看。
+
 ## 现有解析器输出调查
 
 `services/order_parser.py` 当前只读分析结果：

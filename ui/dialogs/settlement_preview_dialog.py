@@ -194,7 +194,10 @@ class SettlementPreviewDialog(QDialog):
       self._lbl_unsupported = QLabel("—")
       self._lbl_winning = QLabel("—")
       self._lbl_losing = QLabel("—")
+      self._lbl_total_bet = QLabel("—")
       self._lbl_total_payout = QLabel("—")
+      self._lbl_total_rebate = QLabel("—")
+      self._lbl_statistic_net = QLabel("—")
 
       for col, (label, widget) in enumerate(
           (
@@ -203,15 +206,20 @@ class SettlementPreviewDialog(QDialog):
               ("暂不支持数量", self._lbl_unsupported),
               ("中奖数量", self._lbl_winning),
               ("未中奖数量", self._lbl_losing),
+              ("投注本金", self._lbl_total_bet),
               ("总中奖金额", self._lbl_total_payout),
+              ("返水金额", self._lbl_total_rebate),
+              ("统计结算金额", self._lbl_statistic_net),
           )
       ):
-          grid.addWidget(QLabel(label), 0, col)
-          grid.addWidget(widget, 1, col)
+          row = 0 if col < 5 else 2
+          display_col = col if col < 5 else col - 5
+          grid.addWidget(QLabel(label), row, display_col)
+          grid.addWidget(widget, row + 1, display_col)
       return frame
 
   def _build_result_table(self) -> QTableWidget:
-      self._result_table = QTableWidget(0, 10)
+      self._result_table = QTableWidget(0, 12)
       self._result_table.setHorizontalHeaderLabels(
           [
               "投注类型",
@@ -224,6 +232,8 @@ class SettlementPreviewDialog(QDialog):
               "中奖金额",
               "赔率来源/提示",
               "判定说明",
+              "返水比例",
+              "返水金额",
           ]
       )
       self._result_table.verticalHeader().setVisible(False)
@@ -235,7 +245,7 @@ class SettlementPreviewDialog(QDialog):
       return self._result_table
 
   def _build_disclaimer(self) -> QLabel:
-      label = QLabel("本结果仅为判定预览，不代表正式兑奖结果。")
+      label = QLabel("返水和统计结算金额仅作记账统计，不代表真实付款、真实入账或客户余额变动。")
       label.setObjectName("hintLabel")
       label.setWordWrap(True)
       return label
@@ -337,7 +347,10 @@ class SettlementPreviewDialog(QDialog):
       self._lbl_unsupported.setText(str(preview.unsupported_items))
       self._lbl_winning.setText(str(preview.winning_items))
       self._lbl_losing.setText(str(preview.losing_items))
+      self._lbl_total_bet.setText(_money(preview.total_bet_amount))
       self._lbl_total_payout.setText(_money(preview.total_payout_amount))
+      self._lbl_total_rebate.setText(_money(preview.total_rebate_amount))
+      self._lbl_statistic_net.setText(_money(preview.statistic_net_amount))
 
       self._result_table.setRowCount(len(preview.results))
       for row_idx, item in enumerate(preview.results):
@@ -362,6 +375,8 @@ class SettlementPreviewDialog(QDialog):
               _money(item.payout_amount),
               self._payout_hint(item),
               item.reason,
+              self._rebate_rate_text(item.rebate_rate),
+              _money(item.rebate_amount),
           ]
           for col_idx, value in enumerate(values):
               cell = QTableWidgetItem(value)
@@ -371,6 +386,11 @@ class SettlementPreviewDialog(QDialog):
               if col_idx == 8:
                   cell.setToolTip(self._payout_hint(item))
               self._result_table.setItem(row_idx, col_idx, cell)
+
+  def _rebate_rate_text(self, value: Decimal | None) -> str:
+      if value is None:
+          return "—"
+      return f"{(value * Decimal('100')).quantize(Decimal('0.01'))}%"
 
   def _payout_hint(self, item) -> str:
       source = item.odds_source or "未配置"
@@ -387,7 +407,10 @@ class SettlementPreviewDialog(QDialog):
           self._lbl_unsupported,
           self._lbl_winning,
           self._lbl_losing,
+          self._lbl_total_bet,
           self._lbl_total_payout,
+          self._lbl_total_rebate,
+          self._lbl_statistic_net,
       ):
           label.setText("—")
       self._result_table.setRowCount(0)
@@ -434,6 +457,10 @@ class SettlementPreviewDialog(QDialog):
           f"中奖数量：{self._current_preview.winning_items}\n"
           f"未中奖数量：{self._current_preview.losing_items}\n"
           f"总明细数：{self._current_preview.total_items}\n\n"
+          f"投注本金：{_money(self._current_preview.total_bet_amount)}\n"
+          f"中奖金额：{_money(self._current_preview.total_payout_amount)}\n"
+          f"返水金额：{_money(self._current_preview.total_rebate_amount)}\n"
+          f"统计结算金额：{_money(self._current_preview.statistic_net_amount)}\n\n"
           "确认后将更新订单状态并写入操作日志。"
       )
       choice = QMessageBox.question(
@@ -476,6 +503,9 @@ class SettlementPreviewDialog(QDialog):
               f"开奖期号：{result.issue_number}\n"
               f"中奖数量：{result.win_count}\n"
               f"未中奖数量：{result.lose_count}\n"
+              f"中奖金额：{_money(result.total_payout_amount)}\n"
+              f"返水金额：{_money(result.total_rebate_amount)}\n"
+              f"统计结算金额：{_money(result.statistic_net_amount)}\n"
               f"操作日志ID：{result.operation_log_id}"
           ),
       )
