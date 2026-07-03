@@ -31,6 +31,9 @@ class ItemSettlementResult:
     selected_numbers: tuple[str, ...] = ()
     hit_numbers: tuple[str, ...] = ()
     matched_numbers: tuple[str, ...] = ()
+    selected_groups: tuple[str, ...] = ()
+    matched_groups: tuple[str, ...] = ()
+    fuxuan_type: str | None = None
     draw_special_wave: str | None = None
     draw_special_odd_even: str | None = None
     draw_special_big_small: str | None = None

@@ -135,47 +135,156 @@ def test_non_hit_unparseable_selection_is_unsupported(session_factory) -> None:
     assert preview.results[0].unsupported_reason
 
 
-@pytest.mark.parametrize(
-    ("bet_type", "selection", "amount", "note"),
-    [
-        ("几中几复选", "01,02,03,04", "40", "复选类型=复3"),
-        ("连肖复选", "兔,狗,虎,蛇,龙", "50", "复选类型=复4"),
-    ],
-)
-def test_fuxuan_settlement_is_unsupported(
-    session_factory,
-    bet_type: str,
-    selection: str,
-    amount: str,
-    note: str,
-) -> None:
+def test_pingwei_hits_when_selected_tail_is_in_regular_numbers(session_factory) -> None:
     order = create_order(
         OrderService(session_factory),
-        items=[OrderItemCreate(bet_type=bet_type, selection=selection, amount=amount, note=note)],
+        items=[OrderItemCreate(bet_type="平尾", selection="1,3,4,6", amount="4000")],
     )
     draw = create_draw(DrawService(session_factory))
 
     preview = SettlementService(session_factory).preview_order(order.id, draw.id)
     item = preview.results[0]
 
-    assert preview.unsupported_items == 1
-    assert item.is_supported is False
-    assert item.is_winner is None
-    assert item.unsupported_reason == "复选类玩法结算规则待确认"
-    assert item.reason == "复选类玩法结算规则待确认"
-    assert item.payout_amount == Decimal("0.00")
-    assert item.odds is None
-    assert item.draw_numbers == ("01", "02", "03", "04", "05", "06", "07")
+    assert preview.unsupported_items == 0
+    assert item.is_winner is True
+    assert item.normalized_bet_type == "ping_tail"
+    assert item.selected_tails == ("1", "3", "4", "6")
+    assert item.matched_tails == ("1", "3", "4", "6")
 
 
-def test_commit_is_blocked_for_fuxuan_unsupported_item(session_factory) -> None:
-    order_service = OrderService(session_factory)
+def test_pingwei_misses_when_tail_only_appears_as_special_number(session_factory) -> None:
     order = create_order(
-        order_service,
+        OrderService(session_factory),
+        items=[OrderItemCreate(bet_type="平尾", selection="7", amount="100")],
+    )
+    draw = create_draw(DrawService(session_factory), special_number="17")
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+    item = preview.results[0]
+
+    assert preview.losing_items == 1
+    assert item.is_winner is False
+    assert item.matched_tails == ()
+    assert "特码 17 不参与" in item.reason
+
+
+def test_two_in_two_hits_when_group_is_fully_in_regular_numbers(session_factory) -> None:
+    order = create_order(
+        OrderService(session_factory),
+        items=[OrderItemCreate(bet_type="二中二", selection="(01-02)-(07-08)", amount="20")],
+    )
+    draw = create_draw(DrawService(session_factory))
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+    item = preview.results[0]
+
+    assert item.is_winner is True
+    assert item.normalized_bet_type == "lianma_two_two"
+    assert item.selected_groups == ("(01-02)", "(07-08)")
+    assert item.matched_groups == ("(01-02)",)
+
+
+def test_two_in_two_misses_when_only_one_number_matches(session_factory) -> None:
+    order = create_order(
+        OrderService(session_factory),
+        items=[OrderItemCreate(bet_type="二中二", selection="(01-08)", amount="10")],
+    )
+    draw = create_draw(DrawService(session_factory))
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+
+    assert preview.losing_items == 1
+    assert preview.results[0].matched_groups == ()
+
+
+def test_three_in_three_hits_only_when_all_three_regular_numbers_match(session_factory) -> None:
+    order = create_order(
+        OrderService(session_factory),
+        items=[OrderItemCreate(bet_type="三中三", selection="(01-02-03)", amount="10")],
+    )
+    draw = create_draw(DrawService(session_factory))
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+
+    assert preview.winning_items == 1
+    assert preview.results[0].normalized_bet_type == "lianma_three_three"
+    assert preview.results[0].matched_groups == ("(01-02-03)",)
+
+
+def test_three_in_three_misses_when_only_two_regular_numbers_match(session_factory) -> None:
+    order = create_order(
+        OrderService(session_factory),
+        items=[OrderItemCreate(bet_type="三中三", selection="(01-02-08)", amount="10")],
+    )
+    draw = create_draw(DrawService(session_factory))
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+
+    assert preview.losing_items == 1
+    assert preview.results[0].matched_groups == ()
+
+
+def test_three_in_two_hits_with_two_or_three_regular_numbers(session_factory) -> None:
+    order = create_order(
+        OrderService(session_factory),
+        items=[
+            OrderItemCreate(bet_type="三中二", selection="(01-02-08)", amount="10"),
+            OrderItemCreate(bet_type="三中二", selection="(01-02-03)", amount="10"),
+        ],
+    )
+    draw = create_draw(DrawService(session_factory))
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+
+    assert preview.winning_items == 2
+    assert preview.results[0].matched_groups == ("(01-02-08)",)
+    assert preview.results[1].matched_groups == ("(01-02-03)",)
+
+
+def test_three_in_two_misses_when_only_one_regular_number_matches(session_factory) -> None:
+    order = create_order(
+        OrderService(session_factory),
+        items=[OrderItemCreate(bet_type="三中二", selection="(01-07-08)", amount="10")],
+    )
+    draw = create_draw(DrawService(session_factory))
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+
+    assert preview.losing_items == 1
+    assert preview.results[0].matched_groups == ()
+
+
+def test_number_fuxuan_fu2_uses_two_in_two_combinations(session_factory) -> None:
+    order = create_order(
+        OrderService(session_factory),
         items=[
             OrderItemCreate(
                 bet_type="几中几复选",
-                selection="01,02,03,04",
+                selection="01,02,08",
+                amount="30",
+                note="复选类型=复2",
+            )
+        ],
+    )
+    draw = create_draw(DrawService(session_factory))
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+    item = preview.results[0]
+
+    assert preview.winning_items == 1
+    assert item.normalized_bet_type == "number_fuxuan"
+    assert item.fuxuan_type == "复2"
+    assert item.selected_groups == ("(01-02)", "(01-08)", "(02-08)")
+    assert item.matched_groups == ("(01-02)",)
+
+
+def test_number_fuxuan_fu3_uses_three_in_three_combinations(session_factory) -> None:
+    order = create_order(
+        OrderService(session_factory),
+        items=[
+            OrderItemCreate(
+                bet_type="几中几复选",
+                selection="01,02,03,08",
                 amount="40",
                 note="复选类型=复3",
             )
@@ -183,81 +292,43 @@ def test_commit_is_blocked_for_fuxuan_unsupported_item(session_factory) -> None:
     )
     draw = create_draw(DrawService(session_factory))
 
-    with pytest.raises(SettlementDataError, match="存在暂不支持玩法"):
-        SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
-
-    after = order_service.get_order(order.id)
-    assert after.raw_text == "complex number settlement"
-    assert after.status == "active"
-    assert SettlementService(session_factory).count_settlement_records() == 0
-
-
-@pytest.mark.parametrize(
-    ("bet_type", "selection", "amount", "note"),
-    [
-        ("二中二", "(01-02)", "10", "连码组合数=1;连码组大小=2"),
-        ("三中三", "(01-02-03)", "10", "连码组合数=1;连码组大小=3"),
-        ("三中二", "(01-02-03)", "10", "连码组合数=1;连码组大小=3"),
-    ],
-)
-def test_lianma_settlement_is_unsupported(
-    session_factory,
-    bet_type: str,
-    selection: str,
-    amount: str,
-    note: str,
-) -> None:
-    order = create_order(
-        OrderService(session_factory),
-        items=[OrderItemCreate(bet_type=bet_type, selection=selection, amount=amount, note=note)],
-    )
-    draw = create_draw(DrawService(session_factory))
-
     preview = SettlementService(session_factory).preview_order(order.id, draw.id)
     item = preview.results[0]
 
-    assert preview.unsupported_items == 1
-    assert item.is_supported is False
-    assert item.is_winner is None
-    assert item.unsupported_reason == "连码类玩法结算规则待确认"
-    assert item.reason == "连码类玩法结算规则待确认"
-    assert item.payout_amount == Decimal("0.00")
-    assert item.odds is None
+    assert preview.winning_items == 1
+    assert item.fuxuan_type == "复3"
+    assert item.matched_groups == ("(01-02-03)",)
 
 
-def test_commit_is_blocked_for_lianma_unsupported_item(session_factory) -> None:
-    order_service = OrderService(session_factory)
+def test_number_fuxuan_fu3_misses_when_no_three_regular_group_matches(session_factory) -> None:
     order = create_order(
-        order_service,
+        OrderService(session_factory),
         items=[
             OrderItemCreate(
-                bet_type="二中二",
-                selection="(01-02)-(03-04)",
-                amount="20",
-                note="连码组合数=2;连码组大小=2",
+                bet_type="几中几复选",
+                selection="01,02,07,08",
+                amount="40",
+                note="复选类型=复3",
             )
         ],
     )
     draw = create_draw(DrawService(session_factory))
 
-    with pytest.raises(SettlementDataError, match="存在暂不支持玩法"):
-        SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
 
-    after = order_service.get_order(order.id)
-    assert after.raw_text == "complex number settlement"
-    assert after.status == "active"
-    assert SettlementService(session_factory).count_settlement_records() == 0
+    assert preview.losing_items == 1
+    assert preview.results[0].matched_groups == ()
 
 
-def test_pingwei_settlement_is_unsupported(session_factory) -> None:
+def test_lianxiao_fuxuan_stays_unsupported_until_reference_examples_confirm_rules(session_factory) -> None:
     order = create_order(
         OrderService(session_factory),
         items=[
             OrderItemCreate(
-                bet_type="平尾",
-                selection="1,3,4,6",
-                amount="4000",
-                note="平尾尾数个数=4",
+                bet_type="连肖复选",
+                selection="兔,狗,虎,蛇,龙",
+                amount="50",
+                note="复选类型=复4",
             )
         ],
     )
@@ -268,35 +339,38 @@ def test_pingwei_settlement_is_unsupported(session_factory) -> None:
 
     assert preview.unsupported_items == 1
     assert item.is_supported is False
-    assert item.is_winner is None
-    assert item.unsupported_reason == "平尾结算规则待确认"
-    assert item.reason == "平尾结算规则待确认"
-    assert item.payout_amount == Decimal("0.00")
-    assert item.odds is None
+    assert item.unsupported_reason == "复选类玩法结算规则待确认"
 
 
-def test_commit_is_blocked_for_pingwei_unsupported_item(session_factory) -> None:
+def test_commit_allowed_for_new_complex_number_rules_and_snapshot_groups(session_factory) -> None:
     order_service = OrderService(session_factory)
     order = create_order(
         order_service,
         items=[
+            OrderItemCreate(bet_type="二中二", selection="(01-02)-(08-09)", amount="20"),
+            OrderItemCreate(bet_type="平尾", selection="1,9", amount="200"),
             OrderItemCreate(
-                bet_type="平尾",
-                selection="1,3,4,6",
-                amount="4000",
-                note="平尾尾数个数=4",
-            )
+                bet_type="几中几复选",
+                selection="01,02,03,08",
+                amount="40",
+                note="复选类型=复3",
+            ),
         ],
     )
     draw = create_draw(DrawService(session_factory))
 
-    with pytest.raises(SettlementDataError, match="存在暂不支持玩法"):
-        SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+    result = SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
 
-    after = order_service.get_order(order.id)
-    assert after.raw_text == "complex number settlement"
-    assert after.status == "active"
-    assert SettlementService(session_factory).count_settlement_records() == 0
+    assert result.unsupported_items == 0
+    assert result.win_count == 3
+    record = SettlementService(session_factory).get_settlement_record_by_order_id(order.id)
+    assert record is not None
+    assert record.unsupported_count == 0
+    snapshot = record.result_snapshot
+    assert snapshot["items"][0]["matched_groups"] == ["(01-02)"]
+    assert snapshot["items"][1]["matched_tails"] == ["1"]
+    assert snapshot["items"][2]["fuxuan_type"] == "复3"
+    assert snapshot["items"][2]["matched_groups"] == ["(01-02-03)"]
 
 
 def test_six_special_zodiac_hits_when_special_zodiac_is_selected(session_factory) -> None:

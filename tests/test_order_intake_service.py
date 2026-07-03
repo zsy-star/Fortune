@@ -279,11 +279,11 @@ def test_number_fuxuan_intake_saves_one_summary_item_with_note() -> None:
     assert item.selection == "01,02,03,04"
     assert item.amount == Decimal("40.00")
     assert item.note == "复选类型=复3"
-    assert any("复选类玩法" in warning for warning in preview.warnings)
+    assert not any("复选类玩法" in warning for warning in preview.warnings)
     row = _first_valid_item(preview)
     assert row.original_bet_type == "几中几复选"
     assert row.order_selection == "01,02,03,04"
-    assert row.normalized_bet_type is None
+    assert row.normalized_bet_type == "number_fuxuan"
 
 
 def test_lianxiao_fuxuan_intake_saves_one_summary_item_with_note() -> None:
@@ -331,11 +331,24 @@ def test_lianma_intake_saves_stable_selection_and_note() -> None:
     assert item.selection == "(01-02)-(03-04)"
     assert item.amount == Decimal("20.00")
     assert item.note == "连码组合数=2;连码组大小=2"
-    assert any("连码类玩法" in warning for warning in preview.warnings)
+    assert not any("连码类玩法" in warning for warning in preview.warnings)
     row = _first_valid_item(preview)
     assert row.original_bet_type == "二中二"
     assert row.order_selection == "(01-02)-(03-04)"
-    assert row.normalized_bet_type is None
+    assert row.normalized_bet_type == "lianma_two_two"
+
+
+def test_lianma_drag_intake_saves_one_summary_item() -> None:
+    preview = _preview("二中二 01,02,03,04,05 拖 06,07,08,09,10 各5", region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == Decimal("125.00")
+    assert len(preview.order_items) == 1
+    item = preview.order_items[0]
+    assert item.bet_type == "二中二"
+    assert item.selection.startswith("(01-06)-(01-07)-(01-08)")
+    assert item.selection.endswith("(05-10)")
+    assert item.amount == Decimal("125.00")
+    assert item.note == "拖式组合数=25;连码组大小=2"
 
 
 @pytest.mark.parametrize(
@@ -409,11 +422,11 @@ def test_pingwei_intake_saves_one_summary_item() -> None:
     assert item.selection == "1,3,4,6"
     assert item.amount == Decimal("4000.00")
     assert item.note == "平尾尾数个数=4"
-    assert any("平尾" in warning for warning in preview.warnings)
+    assert not any("平尾" in warning for warning in preview.warnings)
     row = _first_valid_item(preview)
     assert row.original_bet_type == "平尾"
     assert row.order_selection == "1,3,4,6"
-    assert row.normalized_bet_type is None
+    assert row.normalized_bet_type == "ping_tail"
 
 
 @pytest.mark.parametrize(

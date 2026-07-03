@@ -11,8 +11,13 @@ from domain.zodiac_rules import get_zodiac
 from schemas.settlement_schema import ItemSettlementResult, OrderSettlementPreview
 from settlement.bet_normalizer import (
     LINKED_TAIL,
+    LIANMA_THREE_THREE,
+    LIANMA_THREE_TWO,
+    LIANMA_TWO_TWO,
     NON_HIT_NUMBER,
+    NUMBER_FUXUAN,
     PACKAGE_HALF_WAVE,
+    PING_TAIL,
     REGULAR_NUMBER,
     SPECIAL_COLOR,
     SPECIAL_ELEMENT,
@@ -37,8 +42,10 @@ from settlement.matchers import (
     match_head,
     match_linked_tail,
     match_non_hit_number,
+    match_number_fuxuan,
     match_package_half_wave,
     match_parity,
+    match_ping_tail,
     match_regular_number,
     match_six_special_zodiac,
     match_size,
@@ -46,8 +53,15 @@ from settlement.matchers import (
     match_sum_parity,
     match_sum_size,
     match_tail,
+    match_three_in_three,
+    match_three_in_two,
+    match_two_in_two,
     match_zodiac,
     match_zodiac_group,
+    fuxuan_groups,
+    format_lianma_group,
+    matched_lianma_groups,
+    parse_lianma_groups,
 )
 
 Matcher = Any
@@ -66,6 +80,11 @@ MATCHERS: dict[str, Matcher] = {
     SPECIAL_ELEMENT: match_element,
     SPECIAL_ZODIAC_GROUP: match_zodiac_group,
     LINKED_TAIL: match_linked_tail,
+    PING_TAIL: match_ping_tail,
+    LIANMA_TWO_TWO: match_two_in_two,
+    LIANMA_THREE_THREE: match_three_in_three,
+    LIANMA_THREE_TWO: match_three_in_two,
+    NUMBER_FUXUAN: match_number_fuxuan,
     NON_HIT_NUMBER: match_non_hit_number,
     SIX_SPECIAL_ZODIAC: match_six_special_zodiac,
     REGULAR_NUMBER: match_regular_number,
@@ -88,7 +107,11 @@ class SettlementEngine:
         draw_special_zodiac = get_zodiac(draw_special_number, year=self._zodiac_year)
         common_draw_fields = self._draw_reference_fields(draw_regular_numbers, draw_special_number)
         try:
-            normalized = self._normalizer.normalize(order_item.bet_type, order_item.selection)
+            normalized = self._normalizer.normalize(
+                order_item.bet_type,
+                order_item.selection,
+                note=getattr(order_item, "note", None),
+            )
         except (UnsupportedBetTypeError, InvalidSelectionError) as exc:
             return ItemSettlementResult(
                 order_item_id=getattr(order_item, "id", None),
@@ -113,7 +136,16 @@ class SettlementEngine:
                 draw_special_number,
                 year=self._zodiac_year,
             )
-        elif normalized.normalized_bet_type in {LINKED_TAIL, NON_HIT_NUMBER, REGULAR_NUMBER}:
+        elif normalized.normalized_bet_type in {
+            LINKED_TAIL,
+            PING_TAIL,
+            NON_HIT_NUMBER,
+            REGULAR_NUMBER,
+            LIANMA_TWO_TWO,
+            LIANMA_THREE_THREE,
+            LIANMA_THREE_TWO,
+            NUMBER_FUXUAN,
+        }:
             is_winner, matched_number, reason = matcher(
                 normalized.selection,
                 list(draw_regular_numbers),
@@ -248,6 +280,43 @@ class SettlementEngine:
             return {
                 "selected_tails": selected_tails,
                 "matched_tails": tuple(tail for tail in selected_tails if tail in draw_tails),
+            }
+        if normalized_type == PING_TAIL:
+            selected_tails = tuple(token for token in selection.split(",") if token)
+            regular_tails = {str(tail_number(number)) for number in regular_numbers}
+            return {
+                "selected_tails": selected_tails,
+                "matched_tails": tuple(tail for tail in selected_tails if tail in regular_tails),
+            }
+        if normalized_type in {LIANMA_TWO_TWO, LIANMA_THREE_THREE, LIANMA_THREE_TWO}:
+            if normalized_type == LIANMA_TWO_TWO:
+                group_size, required_hits = 2, 2
+            elif normalized_type == LIANMA_THREE_THREE:
+                group_size, required_hits = 3, 3
+            else:
+                group_size, required_hits = 3, 2
+            selected_groups = parse_lianma_groups(selection)
+            matched_groups = matched_lianma_groups(
+                selection,
+                list(regular_numbers),
+                group_size=group_size,
+                required_hits=required_hits,
+            )
+            return {
+                "selected_groups": tuple(format_lianma_group(group) for group in selected_groups),
+                "matched_groups": tuple(format_lianma_group(group) for group in matched_groups),
+            }
+        if normalized_type == NUMBER_FUXUAN:
+            groups = fuxuan_groups(selection)
+            regular_set = set(regular_numbers)
+            matched_groups = tuple(group for group in groups if all(number in regular_set for number in group))
+            fuxuan_type = selection.split("|", 1)[0] if "|" in selection else None
+            selected_numbers = tuple(selection.split("|", 1)[1].split(",")) if "|" in selection else ()
+            return {
+                "selected_numbers": selected_numbers,
+                "selected_groups": tuple(format_lianma_group(group) for group in groups),
+                "matched_groups": tuple(format_lianma_group(group) for group in matched_groups),
+                "fuxuan_type": fuxuan_type,
             }
         if normalized_type == NON_HIT_NUMBER:
             selected_numbers = tuple(token for token in selection.split(",") if token)

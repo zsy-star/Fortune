@@ -26,8 +26,13 @@ from schemas.settlement_schema import (
 from settlement.exceptions import SettlementDataError
 from settlement.bet_normalizer import (
     LINKED_TAIL,
+    LIANMA_THREE_THREE,
+    LIANMA_THREE_TWO,
+    LIANMA_TWO_TWO,
     NON_HIT_NUMBER,
+    NUMBER_FUXUAN,
     PACKAGE_HALF_WAVE,
+    PING_TAIL,
     REGULAR_NUMBER,
     SPECIAL_COLOR,
     SPECIAL_ELEMENT,
@@ -62,6 +67,11 @@ ODDS_CANDIDATES: dict[str, tuple[str, ...]] = {
     SPECIAL_SUM_SIZE: ("合数", "合数大小", "特码合数大小"),
     SPECIAL_ELEMENT: ("五行", "特码五行"),
     LINKED_TAIL: ("连尾", "尾数"),
+    PING_TAIL: ("平尾", "尾数"),
+    LIANMA_TWO_TWO: ("二中二",),
+    LIANMA_THREE_THREE: ("三中三",),
+    LIANMA_THREE_TWO: ("三中二",),
+    NUMBER_FUXUAN: ("几中几复选",),
     NON_HIT_NUMBER: ("N不中", "不中"),
     SIX_SPECIAL_ZODIAC: ("六肖中特",),
     REGULAR_NUMBER: ("平码",),
@@ -432,6 +442,9 @@ class SettlementService:
     def _find_odds_item(self, item: ItemSettlementResult, plan_items: list[Any]):
         candidates = self._odds_candidates_for_item(item)
         item_by_name = {str(config.bet_type).strip(): config for config in plan_items}
+        exact = item_by_name.get(str(item.bet_type).strip())
+        if exact is not None:
+            return exact
         for candidate in candidates:
             config = item_by_name.get(candidate)
             if config is not None:
@@ -455,6 +468,12 @@ class SettlementService:
             if item.bet_type == "多生肖":
                 return ("多生肖", "连肖", "生肖")
             return ("连肖", "多生肖", "生肖")
+        if normalized_type == NUMBER_FUXUAN:
+            if item.fuxuan_type == "复2":
+                return ("几中几复选", "二中二")
+            if item.fuxuan_type == "复3":
+                return ("几中几复选", "三中三")
+            return ("几中几复选",)
         return ODDS_CANDIDATES.get(normalized_type or "", ())
 
     def _validate_limit_offset(self, limit: int, offset: int) -> tuple[int, int]:
@@ -544,6 +563,9 @@ class SettlementService:
             "selected_numbers": list(item.selected_numbers),
             "hit_numbers": list(item.hit_numbers),
             "matched_numbers": list(item.matched_numbers),
+            "selected_groups": list(item.selected_groups),
+            "matched_groups": list(item.matched_groups),
+            "fuxuan_type": item.fuxuan_type,
             "draw_special_wave": item.draw_special_wave,
             "draw_special_odd_even": item.draw_special_odd_even,
             "draw_special_big_small": item.draw_special_big_small,

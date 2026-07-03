@@ -592,10 +592,70 @@ def _parse_lianma_group_text(group_text: str, group_size: int) -> tuple[int, ...
     return tuple(numbers)
 
 
+def _parse_lianma_drag_group_text(group_text: str) -> tuple[int, ...] | str:
+    raw_tokens = [token for token in re.split(r"[,，、\-\s]+", group_text.strip()) if token]
+    if not raw_tokens:
+        return f"拖式号码组不能为空：{group_text}"
+    numbers: list[int] = []
+    for token in raw_tokens:
+        if not token.isdigit():
+            return f"拖式号码格式无效：{group_text}"
+        number = int(token)
+        if number < 1 or number > 49:
+            return f"拖式号码 {token} 超出范围 (01-49)"
+        numbers.append(number)
+    if len(set(numbers)) != len(numbers):
+        return f"拖式同组内不能重复号码：{group_text}"
+    return tuple(numbers)
+
+
+def _parse_lianma_drag_groups(selection_text: str, group_size: int) -> tuple[tuple[int, ...], ...] | str | None:
+    text = selection_text.strip()
+    if group_size != 2:
+        return None
+
+    if "拖" in text:
+        pieces = [piece.strip() for piece in text.split("拖")]
+        if len(pieces) != 2 or not pieces[0] or not pieces[1]:
+            return f"二中二拖式格式无效：{selection_text}"
+    elif "/" in text:
+        pieces = [piece.strip() for piece in text.split("/")]
+        if len(pieces) != 2 or not pieces[0] or not pieces[1]:
+            return f"二中二分组格式无效：{selection_text}"
+    else:
+        return None
+
+    left = _parse_lianma_drag_group_text(pieces[0])
+    if isinstance(left, str):
+        return left
+    right = _parse_lianma_drag_group_text(pieces[1])
+    if isinstance(right, str):
+        return right
+    if set(left) & set(right):
+        return "二中二拖式两组号码不能重复"
+
+    groups: list[tuple[int, ...]] = []
+    seen: set[tuple[int, ...]] = set()
+    for left_number in left:
+        for right_number in right:
+            group = tuple(sorted((left_number, right_number)))
+            if group in seen:
+                continue
+            seen.add(group)
+            groups.append(group)
+    if not groups:
+        return f"二中二拖式没有生成有效组合：{selection_text}"
+    return tuple(groups)
+
+
 def _parse_lianma_groups(selection_text: str, group_size: int) -> tuple[tuple[int, ...], ...] | str:
     text = selection_text.strip()
     if not text:
         return "连码投注内容不能为空"
+
+    drag_groups = _parse_lianma_drag_groups(text, group_size)
+    if drag_groups is not None:
+        return drag_groups
 
     bracket_matches = list(re.finditer(r"\(([^()]*)\)", text))
     if bracket_matches:

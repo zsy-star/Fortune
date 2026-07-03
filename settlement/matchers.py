@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from itertools import combinations
+
 from domain.color_rules import get_five_element, get_half_wave, get_wave_color
 from domain.number_rules import (
     composite_odd_even_label,
@@ -132,6 +135,135 @@ def match_linked_tail(
     if matched:
         return True, ",".join(matched_tails), f"连尾使用全部开奖号码 {draw_text}，投注{selected_text}全部出现"
     return False, None, f"连尾使用全部开奖号码 {draw_text}，投注{selected_text}，已出现{matched_text}，未全部出现"
+
+
+def parse_lianma_groups(selection: str) -> tuple[tuple[str, ...], ...]:
+    groups: list[tuple[str, ...]] = []
+    for match in re.finditer(r"\(([^()]*)\)", selection):
+        numbers = tuple(normalize_number(token) for token in re.split(r"[\s,，、\-]+", match.group(1)) if token)
+        if numbers:
+            groups.append(numbers)
+    if groups:
+        return tuple(groups)
+    numbers = tuple(normalize_number(token) for token in re.split(r"[\s,，、\-]+", selection.strip()) if token)
+    return (numbers,) if numbers else ()
+
+
+def format_lianma_group(group: tuple[str, ...]) -> str:
+    return "(" + "-".join(group) + ")"
+
+
+def matched_lianma_groups(
+    selection: str,
+    regular_numbers: list[str],
+    *,
+    group_size: int,
+    required_hits: int,
+) -> tuple[tuple[str, ...], ...]:
+    regular_set = {normalize_number(number) for number in regular_numbers}
+    matched_groups: list[tuple[str, ...]] = []
+    for group in parse_lianma_groups(selection):
+        if len(group) != group_size or len(set(group)) != len(group):
+            continue
+        hit_count = sum(1 for number in group if number in regular_set)
+        if hit_count >= required_hits:
+            matched_groups.append(group)
+    return tuple(matched_groups)
+
+
+def match_ping_tail(
+    selection: str,
+    regular_numbers: list[str],
+    special_number: str,
+) -> tuple[bool, str | None, str]:
+    normalized_regular = [normalize_number(number) for number in regular_numbers]
+    regular_tails = {str(tail_number(number)) for number in normalized_regular}
+    selected_tails = [token for token in selection.split(",") if token]
+    matched_tails = [tail for tail in selected_tails if tail in regular_tails]
+    regular_text = ",".join(normalized_regular)
+    selected_text = ",".join(f"{tail}尾" for tail in selected_tails)
+    special = normalize_number(special_number)
+    if matched_tails:
+        return (
+            True,
+            ",".join(matched_tails),
+            f"平尾只使用 6 个正码 {regular_text}，投注{selected_text} 命中 {','.join(matched_tails)}尾",
+        )
+    return (
+        False,
+        None,
+        f"平尾只使用 6 个正码 {regular_text}，特码 {special} 不参与，投注{selected_text} 未命中",
+    )
+
+
+def match_lianma(
+    selection: str,
+    regular_numbers: list[str],
+    special_number: str,
+    *,
+    group_size: int,
+    required_hits: int,
+    label: str,
+) -> tuple[bool, str | None, str]:
+    normalized_regular = [normalize_number(number) for number in regular_numbers]
+    matched_groups = matched_lianma_groups(
+        selection,
+        normalized_regular,
+        group_size=group_size,
+        required_hits=required_hits,
+    )
+    regular_text = ",".join(normalized_regular)
+    special = normalize_number(special_number)
+    if matched_groups:
+        matched_text = "-".join(format_lianma_group(group) for group in matched_groups)
+        return True, matched_text, f"{label}只使用 6 个正码 {regular_text}，命中组合 {matched_text}"
+    return False, None, f"{label}只使用 6 个正码 {regular_text}，特码 {special} 不参与，未命中"
+
+
+def match_two_in_two(selection: str, regular_numbers: list[str], special_number: str) -> tuple[bool, str | None, str]:
+    return match_lianma(selection, regular_numbers, special_number, group_size=2, required_hits=2, label="二中二")
+
+
+def match_three_in_three(selection: str, regular_numbers: list[str], special_number: str) -> tuple[bool, str | None, str]:
+    return match_lianma(selection, regular_numbers, special_number, group_size=3, required_hits=3, label="三中三")
+
+
+def match_three_in_two(selection: str, regular_numbers: list[str], special_number: str) -> tuple[bool, str | None, str]:
+    return match_lianma(selection, regular_numbers, special_number, group_size=3, required_hits=2, label="三中二")
+
+
+def parse_number_fuxuan_selection(selection: str) -> tuple[int, tuple[str, ...]]:
+    if "|" not in selection:
+        raise ValueError("missing fuxuan type")
+    fuxuan_type, numbers_text = selection.split("|", 1)
+    if not re.fullmatch(r"复[23]", fuxuan_type):
+        raise ValueError("unsupported fuxuan type")
+    numbers = tuple(normalize_number(token) for token in numbers_text.split(",") if token)
+    return int(fuxuan_type[1:]), numbers
+
+
+def fuxuan_groups(selection: str) -> tuple[tuple[str, ...], ...]:
+    k, numbers = parse_number_fuxuan_selection(selection)
+    return tuple(tuple(group) for group in combinations(numbers, k))
+
+
+def match_number_fuxuan(
+    selection: str,
+    regular_numbers: list[str],
+    special_number: str,
+) -> tuple[bool, str | None, str]:
+    k, _numbers = parse_number_fuxuan_selection(selection)
+    groups = fuxuan_groups(selection)
+    normalized_regular = [normalize_number(number) for number in regular_numbers]
+    regular_set = set(normalized_regular)
+    matched_groups = tuple(group for group in groups if all(number in regular_set for number in group))
+    regular_text = ",".join(normalized_regular)
+    special = normalize_number(special_number)
+    label = f"复{k}"
+    if matched_groups:
+        matched_text = "-".join(format_lianma_group(group) for group in matched_groups)
+        return True, matched_text, f"几中几复选{label}只使用 6 个正码 {regular_text}，命中组合 {matched_text}"
+    return False, None, f"几中几复选{label}只使用 6 个正码 {regular_text}，特码 {special} 不参与，未命中"
 
 
 def match_non_hit_number(

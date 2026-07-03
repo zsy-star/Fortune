@@ -111,6 +111,29 @@ def test_rebate_preview_uses_configured_rate_for_hit_and_miss_items(session_fact
     assert [item.rebate_amount for item in preview.results] == [Decimal("0.50"), Decimal("1.00")]
 
 
+def test_lianma_hit_uses_existing_odds_and_rebate_snapshot(session_factory) -> None:
+    settings = SettingsService(session_factory)
+    plan = settings.ensure_default_plan()
+    settings.add_item(plan.id, "二中二", "12.5", "2")
+    order = create_order(
+        OrderService(session_factory),
+        items=[OrderItemCreate(bet_type="二中二", selection="(02-03)", amount="10")],
+    )
+    draw = create_draw(DrawService(session_factory), special_number="01")
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+    item = preview.results[0]
+
+    assert item.is_winner is True
+    assert item.matched_groups == ("(02-03)",)
+    assert item.odds == Decimal("12.5000")
+    assert item.payout_amount == Decimal("125.00")
+    assert item.rebate_rate == Decimal("0.0200")
+    assert item.rebate_amount == Decimal("0.20")
+    assert preview.total_rebate_amount == Decimal("0.20")
+    assert preview.statistic_net_amount == Decimal("115.20")
+
+
 def test_rebate_preview_is_zero_when_no_rebate_configuration(session_factory) -> None:
     order = create_order(
         OrderService(session_factory),
@@ -129,10 +152,10 @@ def test_rebate_preview_is_zero_when_no_rebate_configuration(session_factory) ->
 def test_unsupported_item_participates_in_rebate_when_exact_config_exists(session_factory) -> None:
     settings = SettingsService(session_factory)
     plan = settings.ensure_default_plan()
-    settings.add_item(plan.id, "几中几复选", "1", "10")
+    settings.add_item(plan.id, "连肖复选", "1", "10")
     order = create_order(
         OrderService(session_factory),
-        items=[OrderItemCreate(bet_type="几中几复选", selection="复3|01,02,03", amount="10")],
+        items=[OrderItemCreate(bet_type="连肖复选", selection="兔,狗,虎,蛇,龙", amount="10")],
     )
     draw = create_draw(DrawService(session_factory), special_number="01")
 

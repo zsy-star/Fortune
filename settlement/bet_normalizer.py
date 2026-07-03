@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from itertools import combinations
 
 from domain.color_rules import FIVE_ELEMENT_NUMBERS, WAVE_NUMBERS
 from domain.exceptions import InvalidNumberError
@@ -28,6 +29,11 @@ NON_HIT_NUMBER = "non_hit_number"
 SIX_SPECIAL_ZODIAC = "six_special_zodiac"
 REGULAR_NUMBER = "regular_number"
 PACKAGE_HALF_WAVE = "package_half_wave"
+PING_TAIL = "ping_tail"
+LIANMA_TWO_TWO = "lianma_two_two"
+LIANMA_THREE_THREE = "lianma_three_three"
+LIANMA_THREE_TWO = "lianma_three_two"
+NUMBER_FUXUAN = "number_fuxuan"
 
 SUPPORTED_NORMALIZED_TYPES = {
     SPECIAL_NUMBER,
@@ -47,27 +53,29 @@ SUPPORTED_NORMALIZED_TYPES = {
     SIX_SPECIAL_ZODIAC,
     REGULAR_NUMBER,
     PACKAGE_HALF_WAVE,
+    PING_TAIL,
+    LIANMA_TWO_TWO,
+    LIANMA_THREE_THREE,
+    LIANMA_THREE_TWO,
+    NUMBER_FUXUAN,
 }
 
 UNSUPPORTED_BET_TYPES = {
     "胆拖",
     "拖码",
     "组选",
-    "复式组合",
     "全包",
     "平码一肖",
     "三中一",
-    "二中二",
-    "三中二",
     "二中特",
     "特串",
 }
 
-FUXUAN_UNSUPPORTED_BET_TYPES = {"几中几复选", "连肖复选"}
+FUXUAN_UNSUPPORTED_BET_TYPES = {"连肖复选"}
 FUXUAN_UNSUPPORTED_REASON = "复选类玩法结算规则待确认"
-LIANMA_UNSUPPORTED_BET_TYPES = {"二中二", "三中三", "三中二"}
+LIANMA_UNSUPPORTED_BET_TYPES: set[str] = set()
 LIANMA_UNSUPPORTED_REASON = "连码类玩法结算规则待确认"
-PINGWEI_UNSUPPORTED_BET_TYPES = {"平尾"}
+PINGWEI_UNSUPPORTED_BET_TYPES: set[str] = set()
 PINGWEI_UNSUPPORTED_REASON = "平尾结算规则待确认"
 
 BET_TYPE_ALIASES = {
@@ -88,6 +96,11 @@ BET_TYPE_ALIASES = {
     SIX_SPECIAL_ZODIAC: {"六肖中特"},
     REGULAR_NUMBER: {"平码"},
     PACKAGE_HALF_WAVE: {"包半波"},
+    PING_TAIL: {"平尾"},
+    LIANMA_TWO_TWO: {"二中二"},
+    LIANMA_THREE_THREE: {"三中三"},
+    LIANMA_THREE_TWO: {"三中二"},
+    NUMBER_FUXUAN: {"几中几复选", "复式组合"},
 }
 
 SIZE_SELECTIONS = {"大", "小"}
@@ -121,7 +134,7 @@ class NormalizedBet:
 class BetTypeNormalizer:
     """Normalize known settlement bet labels without guessing unknown rules."""
 
-    def normalize(self, bet_type: str, selection: str) -> NormalizedBet:
+    def normalize(self, bet_type: str, selection: str, note: str | None = None) -> NormalizedBet:
         original_bet_type = (bet_type or "").strip()
         raw_selection = (selection or "").strip()
         if not original_bet_type:
@@ -139,7 +152,7 @@ class BetTypeNormalizer:
             raise UnsupportedBetTypeError(f"暂不支持玩法：{original_bet_type}")
 
         normalized_type = self._normalize_type(original_bet_type, raw_selection)
-        normalized_selection = self._normalize_selection(normalized_type, raw_selection)
+        normalized_selection = self._normalize_selection(normalized_type, raw_selection, note=note)
         return NormalizedBet(original_bet_type, normalized_type, normalized_selection)
 
     def _normalize_type(self, bet_type: str, selection: str) -> str:
@@ -172,7 +185,7 @@ class BetTypeNormalizer:
 
         raise UnsupportedBetTypeError(f"未知或未实现玩法：{bet_type}")
 
-    def _normalize_selection(self, normalized_type: str, selection: str) -> str:
+    def _normalize_selection(self, normalized_type: str, selection: str, *, note: str | None = None) -> str:
         if normalized_type == SPECIAL_NUMBER:
             return self._normalize_number_selection(selection)
         if normalized_type == SPECIAL_ZODIAC:
@@ -227,6 +240,13 @@ class BetTypeNormalizer:
             return self._normalize_number_group_selection(selection)
         if normalized_type == PACKAGE_HALF_WAVE:
             return self._normalize_package_half_wave_selection(selection)
+        if normalized_type == PING_TAIL:
+            return self._normalize_tail_group_selection(selection)
+        if normalized_type in {LIANMA_TWO_TWO, LIANMA_THREE_THREE, LIANMA_THREE_TWO}:
+            group_size = 2 if normalized_type == LIANMA_TWO_TWO else 3
+            return self._normalize_lianma_groups(selection, group_size)
+        if normalized_type == NUMBER_FUXUAN:
+            return self._normalize_number_fuxuan_selection(selection, note=note)
         raise UnsupportedBetTypeError(f"未实现玩法：{normalized_type}")
 
     def _infer_special_type(self, selection: str) -> str:
@@ -339,6 +359,57 @@ class BetTypeNormalizer:
         if not unique_tokens:
             raise InvalidSelectionError("包半波投注内容不能为空")
         return ",".join(unique_tokens)
+
+    def _normalize_lianma_groups(self, selection: str, group_size: int) -> str:
+        text = selection.strip()
+        bracket_matches = list(re.finditer(r"\(([^()]*)\)", text))
+        if bracket_matches:
+            leftover = re.sub(r"\([^()]*\)", "", text).strip()
+            if re.sub(r"[\-\s,，、]+", "", leftover):
+                raise InvalidSelectionError(f"连码组合格式无效：{selection}")
+            groups = [self._normalize_lianma_group(match.group(1), group_size) for match in bracket_matches]
+        else:
+            groups = [self._normalize_lianma_group(text, group_size)]
+        if not groups:
+            raise InvalidSelectionError("连码组合不能为空")
+        return "-".join("(" + "-".join(group) + ")" for group in groups)
+
+    def _normalize_lianma_group(self, group_text: str, group_size: int) -> tuple[str, ...]:
+        tokens = [token for token in re.split(r"[\s,，、\-]+", group_text.strip()) if token]
+        if len(tokens) != group_size:
+            raise InvalidSelectionError(f"连码每组必须 {group_size} 个号码：{group_text}")
+        try:
+            numbers = tuple(normalize_number(token) for token in tokens)
+        except InvalidNumberError as exc:
+            raise InvalidSelectionError(f"无效连码号码：{group_text}") from exc
+        if len(set(numbers)) != len(numbers):
+            raise InvalidSelectionError(f"连码单组内不能重复号码：{group_text}")
+        return numbers
+
+    def _normalize_number_fuxuan_selection(self, selection: str, *, note: str | None = None) -> str:
+        fuxuan_type = self._extract_fuxuan_type(selection, note)
+        if fuxuan_type is None:
+            raise UnsupportedBetTypeError(FUXUAN_UNSUPPORTED_REASON)
+        number_selection = selection.split("|", 1)[1] if "|" in selection else selection
+        numbers = self._normalize_number_group_selection(number_selection)
+        k = int(fuxuan_type[1:])
+        if k not in {2, 3}:
+            raise UnsupportedBetTypeError(FUXUAN_UNSUPPORTED_REASON)
+        selected_numbers = [token for token in numbers.split(",") if token]
+        if k > len(selected_numbers):
+            raise InvalidSelectionError(f"复选数量{fuxuan_type}不能大于号码个数 {len(selected_numbers)}")
+        if k < 2:
+            raise InvalidSelectionError(f"复选数量必须至少为 2：{fuxuan_type}")
+        # Touch the combinations here so invalid boundaries are caught during normalization.
+        tuple(combinations(selected_numbers, k))
+        return f"{fuxuan_type}|{numbers}"
+
+    def _extract_fuxuan_type(self, selection: str, note: str | None) -> str | None:
+        for text in (selection, note or ""):
+            match = re.search(r"复\s*([2-9]\d*)", text)
+            if match:
+                return f"复{int(match.group(1))}"
+        return None
 
     def _split_package_half_wave_tokens(self, selection: str) -> list[str]:
         text = selection.strip()

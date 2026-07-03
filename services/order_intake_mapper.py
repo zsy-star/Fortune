@@ -357,8 +357,7 @@ def convert_parse_result(
         return previews, order_items, warnings, errors
 
     if category == "平尾":
-        warning = "平尾可保存，但正式结算规则待确认"
-        warnings.append(warning)
+        warning = None
         tails = result.pingwei_tails or result.numbers
         selection = ",".join(str(tail) for tail in tails)
         note = f"平尾尾数个数={len(tails)}" if tails else None
@@ -407,12 +406,13 @@ def convert_parse_result(
         return previews, order_items, warnings, errors
 
     if category in _LIANMA_CATEGORIES:
-        warning = "连码类玩法可保存，但正式结算规则待确认"
-        warnings.append(warning)
+        warning = None
         groups = result.lianma_groups
         selection = _format_lianma_selection(groups) if groups else ",".join(f"{number:02d}" for number in result.numbers)
         group_size = len(groups[0]) if groups else 0
-        note = f"连码组合数={len(groups)};连码组大小={group_size}" if groups else None
+        is_drag_group = category == "二中二" and ("拖" in source_line or "/" in source_line)
+        note_prefix = "拖式组合数" if is_drag_group else "连码组合数"
+        note = f"{note_prefix}={len(groups)};连码组大小={group_size}" if groups else None
         try:
             normalize_bet_type(category)
         except InvalidBetTypeError as exc:
@@ -458,8 +458,9 @@ def convert_parse_result(
         return previews, order_items, warnings, errors
 
     if category in {"几中几复选", "连肖复选"}:
-        warning = "复选类玩法可保存，但正式结算规则待确认"
-        warnings.append(warning)
+        warning = "复选类玩法可保存，但正式结算规则待确认" if category == "连肖复选" else None
+        if warning:
+            warnings.append(warning)
         if category == "连肖复选":
             selection = ",".join(name for name, _ in result.zodiac_groups)
         else:
@@ -493,6 +494,7 @@ def convert_parse_result(
             order_bet_type=category,
             order_selection=selection,
             normalizer=normalizer,
+            preview_selection=f"{result.fuxuan_type}|{selection}" if category == "几中几复选" and result.fuxuan_type else None,
             warning=warning,
         )
         previews.append(preview)

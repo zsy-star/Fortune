@@ -1058,6 +1058,31 @@ class TestLianmaParser:
         assert not r.success
         assert "每组必须 2 个号码" in r.error
 
+    def test_erzhonger_drag_groups_expand_cartesian_product(self) -> None:
+        r = parse_order("二中二 01,02,03,04,05 拖 06,07,08,09,10 各5")
+        assert r.success
+        assert r.category == "二中二"
+        assert len(r.lianma_groups) == 25
+        assert r.lianma_groups[0] == (1, 6)
+        assert r.lianma_groups[-1] == (5, 10)
+        assert r.total == Decimal("125")
+
+    def test_erzhonger_slash_groups_expand_cartesian_product(self) -> None:
+        r = parse_order("二中二 01,02,03,04,05/06,07,08,09,10 各5")
+        assert r.success
+        assert len(r.lianma_groups) == 25
+        assert r.total == Decimal("125")
+
+    def test_erzhonger_drag_rejects_invalid_number(self) -> None:
+        r = parse_order("二中二 01,02 拖 50,03 各5")
+        assert not r.success
+        assert "超出范围" in r.error
+
+    def test_erzhonger_drag_rejects_repeated_number_between_groups(self) -> None:
+        r = parse_order("二中二 01,02 拖 02,03 各5")
+        assert not r.success
+        assert "两组号码不能重复" in r.error
+
     def test_lianma_rejects_duplicate_number_inside_group(self) -> None:
         r = parse_order("二中二 (01-01) 各10")
         assert not r.success
