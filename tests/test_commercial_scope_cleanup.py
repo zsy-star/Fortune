@@ -139,7 +139,7 @@ def test_lianxiao_order_page_first_stage_is_readonly(session_factory) -> None:
     assert "调整后数据" in labels
     assert page._summary_table.rowCount() == 1
     assert len(page._tables) == 4
-    assert not page.findChildren(QLineEdit)
+    assert page._throw_reason_edit in page.findChildren(QLineEdit)
     assert "暂无数据" in page._output.toPlainText()
     button_texts = {button.text() for button in page.findChildren(QPushButton)}
     assert "保存本次调整" in button_texts
@@ -154,6 +154,7 @@ def test_lianxiao_order_page_first_stage_is_readonly(session_factory) -> None:
     assert page._btn_reset.isEnabled()
     assert page._btn_clear_output.isEnabled()
     assert page._btn_adjust_records.isEnabled()
+    assert page._btn_apply_throw.isEnabled()
     page._on_print_adjustment()
     page._on_reset_adjustment()
     assert "只是生成可复制/导出的打印文本" in page._output.toPlainText()

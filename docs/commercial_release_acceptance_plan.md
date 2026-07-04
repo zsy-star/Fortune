@@ -210,18 +210,36 @@ python scripts\check_db_migration_state.py data\fortune.db
 
 覆盖：
 
-- 特码调单快照保存。
-- 连肖调单快照保存。
-- 调整记录查看。
+- 特码调单 01-49 风险表。
+- 特码最大亏损自动抛出建议。
+- 特码抛出输入：`25=100`、`红波大=100`、`合大=50`、`尾1=20`、`1头=20`。
+- 特码抛出保存和撤销。
+- 连肖调单按生肖组合风险汇总。
+- 连肖抛出输入：`龙羊猴=100`、`龙,羊,猴=100`、`龙-羊-猴=100`。
+- 连肖抛出保存和撤销。
+- 旧版特码 / 连肖调单快照保存。
+- 调整记录查看，并显示 active / reversed / reversal / legacy 状态。
 - 复制记录详情。
 - 导出记录详情。
 - 打印文本生成。
 
 边界：
 
-- 调单快照不修改原订单。
-- 调单快照不做真实兑奖入账。
+- 调单不是新投注玩法。
+- 调单不修改原订单和 order_items 原始金额。
+- 调单不自动重新结算。
+- 调单不写客户余额、不生成资金流水、不做真实付款 / 收款 / 兑奖入账。
+- 撤销不是删除原记录，而是新增 reversal 记录。
+- 本阶段复用 `adjustment_records` 的 JSON 快照字段，不要求新增迁移。
 - 打印文本不调用真实打印机。
+
+风险公式：
+
+| 页面 | 公式 |
+| --- | --- |
+| 特码 | `risk_amount = potential_payout_amount + rebate_amount - raw_stake_amount` |
+| 连肖 | `risk_amount = potential_payout_amount + rebate_amount - raw_amount` |
+| 调整后风险 | `adjusted_risk_amount = risk_amount - thrown_amount` |
 
 ## 12. 操作日志验收
 

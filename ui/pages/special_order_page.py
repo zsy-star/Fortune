@@ -34,6 +34,7 @@ from domain.zodiac_rules import get_zodiac
 from schemas.adjustment_record_schema import AdjustmentRecordCreate
 from services.adjustment_record_service import AdjustmentRecordService
 from services.order_service import OrderService
+from services.risk_adjustment_service import RiskAdjustmentService, SpecialRiskRow
 from ui.app_events import app_events
 from ui.dialogs.adjustment_record_dialog import AdjustmentRecordDialog
 
@@ -87,7 +88,9 @@ class SpecialOrderPage(QWidget):
         self._adjustment_record_service = adjustment_record_service or (
             AdjustmentRecordService(session_factory) if session_factory is not None else AdjustmentRecordService()
         )
+        self._risk_adjustment_service = RiskAdjustmentService(session_factory) if session_factory is not None else RiskAdjustmentService()
         self._number_rows: dict[str, NumberSummary] = {}
+        self._risk_rows: list[SpecialRiskRow] = []
         self._number_labels: dict[str, QLabel] = {}
         self._original_edits: dict[str, QLineEdit] = {}
         self._adjust_edits: dict[str, QLineEdit] = {}
@@ -109,6 +112,7 @@ class SpecialOrderPage(QWidget):
         root.addLayout(body, stretch=8)
 
         root.addWidget(self._build_stats_panel())
+        root.addWidget(self._build_throw_panel())
         root.addWidget(self._build_action_panel())
         self._output = QPlainTextEdit()
         self._output.setReadOnly(True)
@@ -137,9 +141,11 @@ class SpecialOrderPage(QWidget):
         return frame
 
     def _build_summary_table(self) -> QTableWidget:
-        self._summary_table = QTableWidget(49, 4)
+        self._summary_table = QTableWidget(49, 8)
         self._summary_table.setObjectName("specialSummaryTable")
-        self._summary_table.setHorizontalHeaderLabels(["号码", "下注数", "盈亏", "ID"])
+        self._summary_table.setHorizontalHeaderLabels(
+            ["号码", "生肖", "下注数", "预计赔付", "原始风险", "已抛出", "调整后风险", "备注"]
+        )
         self._summary_table.verticalHeader().setVisible(False)
         self._summary_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._summary_table.setAlternatingRowColors(True)
@@ -232,6 +238,40 @@ class SpecialOrderPage(QWidget):
         )
         return panel
 
+    def _build_throw_panel(self) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("throwPanel")
+        col = QVBoxLayout(frame)
+        col.setContentsMargins(8, 4, 8, 4)
+        col.setSpacing(4)
+
+        top = QHBoxLayout()
+        top.addWidget(QLabel("最大亏损"))
+        self._max_loss_edit = QLineEdit()
+        self._max_loss_edit.setPlaceholderText("例如 1000")
+        self._max_loss_edit.returnPressed.connect(self._on_generate_throw_suggestion)
+        top.addWidget(self._max_loss_edit)
+        self._btn_generate_throw = QPushButton("生成抛出建议")
+        self._btn_generate_throw.clicked.connect(self._on_generate_throw_suggestion)
+        top.addWidget(self._btn_generate_throw)
+        self._btn_copy_throw = QPushButton("复制抛出建议")
+        self._btn_copy_throw.clicked.connect(self._on_copy_throw_text)
+        top.addWidget(self._btn_copy_throw)
+        top.addWidget(QLabel("原因"))
+        self._throw_reason_edit = QLineEdit()
+        self._throw_reason_edit.setPlaceholderText("应用抛出前必填")
+        top.addWidget(self._throw_reason_edit, stretch=1)
+        self._btn_apply_throw = QPushButton("应用抛出")
+        self._btn_apply_throw.clicked.connect(self._on_apply_throw)
+        top.addWidget(self._btn_apply_throw)
+        col.addLayout(top)
+
+        self._throw_input = QPlainTextEdit()
+        self._throw_input.setPlaceholderText("抛出格式：25=100 或 红波大=100；多条可换行或逗号分隔。")
+        self._throw_input.setMaximumHeight(70)
+        col.addWidget(self._throw_input)
+        return frame
+
     def _stats_row(self, title: str, *labels: QLabel) -> QFrame:
         frame = QFrame()
         frame.setObjectName("statsPanel")
@@ -311,35 +351,8 @@ class SpecialOrderPage(QWidget):
         return button.property("region") if button is not None else None
 
     def _load_number_summary(self) -> dict[str, NumberSummary]:
-        amounts = {f"{number:02d}": Decimal("0") for number in range(1, 50)}
-        offset = 0
-        while True:
-            orders = self._order_service.list_orders(
-                region=self._selected_region(),
-                limit=200,
-                offset=offset,
-            )
-            if not orders:
-                break
-            for order in orders:
-                detail = self._order_service.get_order(order.id)
-                if detail is None:
-                    continue
-                for item in detail.items:
-                    if item.bet_type not in SPECIAL_BET_TYPES:
-                        continue
-                    for token in item.selection.replace("，", ",").replace("、", ",").split(","):
-                        token = token.strip()
-                        if not token:
-                            continue
-                        try:
-                            number = normalize_number(token)
-                        except Exception:
-                            continue
-                        amounts[number] += Decimal(item.amount)
-            if len(orders) < 200:
-                break
-            offset += 200
+        self._risk_rows = self._risk_adjustment_service.build_special_risk_table(region=self._selected_region())
+        amounts = {row.number: row.raw_stake_amount for row in self._risk_rows}
         return {
             number: NumberSummary(number=number, amount=amount, row_id=index)
             for index, (number, amount) in enumerate(amounts.items(), start=1)
@@ -347,9 +360,24 @@ class SpecialOrderPage(QWidget):
 
     def _fill_summary_table(self) -> None:
         rows = [self._number_rows[f"{number:02d}"] for number in range(1, 50)]
+        risk_by_number = {row.number: row for row in self._risk_rows}
         self._summary_table.setRowCount(len(rows))
         for row, summary in enumerate(rows):
-            values = [summary.number, _money(summary.amount), "0.00", str(summary.row_id)]
+            risk = risk_by_number.get(summary.number)
+            values = (
+                [
+                    summary.number,
+                    risk.zodiac,
+                    _money(risk.raw_stake_amount),
+                    _money(risk.potential_payout_amount),
+                    _money(risk.risk_amount),
+                    _money(risk.thrown_amount),
+                    _money(risk.adjusted_risk_amount),
+                    risk.note,
+                ]
+                if risk is not None
+                else [summary.number, "", _money(summary.amount), "0.00", "0.00", "0.00", "0.00", ""]
+            )
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -407,14 +435,14 @@ class SpecialOrderPage(QWidget):
             f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             "",
             "左侧号码汇总表",
-            "号码\t下注数\t盈亏\tID",
+            "号码\t生肖\t下注数\t预计赔付\t原始风险\t已抛出\t调整后风险\t备注",
         ]
         for row in range(self._summary_table.rowCount()):
             values = [
                 self._summary_table.item(row, column).text()
                 if self._summary_table.item(row, column) is not None
                 else ""
-                for column in range(4)
+                for column in range(self._summary_table.columnCount())
             ]
             lines.append("\t".join(values))
 
@@ -452,6 +480,9 @@ class SpecialOrderPage(QWidget):
                 "不自动结算或兑奖",
                 "未计算真实赔付",
                 "不写余额",
+                "",
+                "抛出输入",
+                self._throw_input.toPlainText(),
             ]
         )
         return "\n".join(lines)
@@ -516,6 +547,74 @@ class SpecialOrderPage(QWidget):
             f"操作日志 ID：{result.operation_log_id}。当前调整未清空，订单未被修改，未自动兑奖。"
         )
 
+    def _on_generate_throw_suggestion(self) -> None:
+        try:
+            text = self._risk_adjustment_service.generate_special_throw_suggestions(
+                self._risk_rows,
+                self._max_loss_edit.text(),
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "生成抛出建议", str(exc))
+            self._append_output(f"生成抛出建议失败：{exc}")
+            return
+        self._throw_input.setPlainText(text)
+        count = len([line for line in text.splitlines() if line.strip()])
+        self._append_output(f"已生成特码抛出建议：{count} 条。")
+
+    def _on_copy_throw_text(self) -> None:
+        QApplication.clipboard().setText(self._throw_input.toPlainText())
+        self._append_output("已复制特码抛出建议到剪贴板。")
+
+    def _on_apply_throw(self) -> None:
+        try:
+            entries = self._risk_adjustment_service.parse_special_throw_text(self._throw_input.toPlainText())
+        except Exception as exc:
+            QMessageBox.warning(self, "应用抛出", str(exc))
+            self._append_output(f"解析特码抛出失败：{exc}")
+            return
+        total = sum((entry.amount for entry in entries), Decimal("0"))
+        reason = self._throw_reason_edit.text().strip()
+        if not reason:
+            QMessageBox.warning(self, "应用抛出", "原因不能为空")
+            self._append_output("应用特码抛出失败：原因不能为空。")
+            return
+        detail = "\n".join(f"{entry.number}={_money(entry.amount)}" for entry in entries[:20])
+        if len(entries) > 20:
+            detail += f"\n... 共 {len(entries)} 条"
+        choice = QMessageBox.question(
+            self,
+            "应用特码抛出",
+            (
+                "确认保存特码抛出记录？\n\n"
+                f"地区：{self._selected_region_label()}\n"
+                f"影响号码数量：{len(entries)}\n"
+                f"总抛出金额：{_money(total)}\n"
+                f"原因：{reason}\n\n"
+                f"{detail}\n\n"
+                "本操作只写调单记录和操作日志，不修改订单、不自动结算、不写余额。"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if choice != QMessageBox.StandardButton.Yes:
+            self._append_output("已取消应用特码抛出。")
+            return
+        try:
+            result = self._risk_adjustment_service.apply_special_throw(
+                entries,
+                region=self._selected_region_label(),
+                reason=reason,
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "应用抛出", f"保存失败：{exc}")
+            self._append_output(f"应用特码抛出失败：{exc}")
+            return
+        app_events.logs_changed.emit()
+        self.reload_data()
+        self._append_output(
+            f"已保存特码抛出记录 ID：{result.record.id}；操作日志 ID：{result.operation_log_id}。"
+        )
+
     def _on_round_to_tens(self) -> None:
         changed = 0
         for number, original_edit in self._original_edits.items():
@@ -552,10 +651,12 @@ class SpecialOrderPage(QWidget):
     def _on_adjust_records(self) -> None:
         dialog = AdjustmentRecordDialog(
             self,
-            default_type="special",
+            default_type="special_all",
             service=self._adjustment_record_service,
+            risk_service=self._risk_adjustment_service,
         )
         dialog.exec()
+        self.reload_data()
         self._append_output("已关闭特码调整记录窗口。")
 
     def _build_adjustment_payload(self) -> AdjustmentRecordCreate | None:
@@ -642,6 +743,10 @@ class SpecialOrderPage(QWidget):
             """
             QWidget { background: #ffffff; color: #263238; font-size: 12px; }
             QFrame#topFilter, QFrame#statsPanel, QFrame#numberGrid {
+                border: 1px solid #c5d2d6;
+                background: #fbfefe;
+            }
+            QFrame#throwPanel {
                 border: 1px solid #c5d2d6;
                 background: #fbfefe;
             }

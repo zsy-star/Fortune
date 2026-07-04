@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
@@ -28,11 +29,12 @@ from PySide6.QtWidgets import (
 from schemas.adjustment_record_schema import AdjustmentRecordCreate
 from services.adjustment_record_service import AdjustmentRecordService
 from services.order_service import OrderService
+from services.risk_adjustment_service import LianxiaoRiskRow, RiskAdjustmentService
 from ui.app_events import app_events
 from ui.dialogs.adjustment_record_dialog import AdjustmentRecordDialog
 
 LIANXIAO_BET_TYPES = {"连肖", "多生肖", "复试连肖"}
-TABLE_HEADERS = ["生肖组", "下注数", "盈亏"]
+TABLE_HEADERS = ["生肖组", "下注数", "预计赔付", "原始风险", "已抛出", "调整后风险"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +66,9 @@ class LianxiaoOrderPage(QWidget):
         self._adjustment_record_service = adjustment_record_service or (
             AdjustmentRecordService(session_factory) if session_factory is not None else AdjustmentRecordService()
         )
+        self._risk_adjustment_service = RiskAdjustmentService(session_factory) if session_factory is not None else RiskAdjustmentService()
         self._summaries: list[LianxiaoSummary] = []
+        self._risk_rows: list[LianxiaoRiskRow] = []
         self._tables: list[QTableWidget] = []
 
         root = QVBoxLayout(self)
@@ -74,6 +78,7 @@ class LianxiaoOrderPage(QWidget):
         root.addWidget(self._build_header())
         root.addWidget(self._build_body(), stretch=7)
         root.addWidget(self._build_stats_panel())
+        root.addWidget(self._build_throw_panel())
         root.addWidget(self._build_action_panel())
 
         self._output = QPlainTextEdit()
@@ -128,7 +133,7 @@ class LianxiaoOrderPage(QWidget):
         return panel
 
     def _create_table(self, object_name: str) -> QTableWidget:
-        table = QTableWidget(0, 3)
+        table = QTableWidget(0, len(TABLE_HEADERS))
         table.setObjectName(object_name)
         table.setHorizontalHeaderLabels(TABLE_HEADERS)
         table.verticalHeader().setVisible(False)
@@ -172,6 +177,29 @@ class LianxiaoOrderPage(QWidget):
         col.addWidget(self._original_stats_bar)
         col.addWidget(self._adjusted_stats_bar)
         return panel
+
+    def _build_throw_panel(self) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("throwPanel")
+        col = QVBoxLayout(frame)
+        col.setContentsMargins(6, 3, 6, 3)
+        top = QHBoxLayout()
+        top.addWidget(QLabel("抛出原因"))
+        self._throw_reason_edit = QLineEdit()
+        self._throw_reason_edit.setPlaceholderText("应用抛出前必填")
+        top.addWidget(self._throw_reason_edit, stretch=1)
+        self._btn_apply_throw = QPushButton("应用连肖抛出")
+        self._btn_apply_throw.clicked.connect(self._on_apply_throw)
+        top.addWidget(self._btn_apply_throw)
+        self._btn_copy_throw = QPushButton("复制抛出文本")
+        self._btn_copy_throw.clicked.connect(self._on_copy_throw_text)
+        top.addWidget(self._btn_copy_throw)
+        col.addLayout(top)
+        self._throw_input = QPlainTextEdit()
+        self._throw_input.setPlaceholderText("抛出格式：龙羊猴=100、龙,羊,猴=100 或 龙-羊-猴=100；多条可换行。")
+        self._throw_input.setMaximumHeight(64)
+        col.addWidget(self._throw_input)
+        return frame
 
     def _stats_row(self, title: str, *labels: QLabel) -> QFrame:
         frame = QFrame()
@@ -251,31 +279,10 @@ class LianxiaoOrderPage(QWidget):
         return button.property("region") if button is not None else None
 
     def _load_lianxiao_summary(self) -> list[LianxiaoSummary]:
-        grouped: dict[str, Decimal] = {}
-        offset = 0
-        while True:
-            orders = self._order_service.list_orders(
-                region=self._selected_region(),
-                limit=200,
-                offset=offset,
-            )
-            if not orders:
-                break
-            for order in orders:
-                detail = self._order_service.get_order(order.id)
-                if detail is None:
-                    continue
-                for item in detail.items:
-                    if item.bet_type not in LIANXIAO_BET_TYPES:
-                        continue
-                    group = item.selection.strip() or "未命名组合"
-                    grouped[group] = grouped.get(group, Decimal("0")) + Decimal(item.amount)
-            if len(orders) < 200:
-                break
-            offset += 200
+        self._risk_rows = self._risk_adjustment_service.build_lianxiao_risk_table(region=self._selected_region())
         return [
-            LianxiaoSummary(group=group, amount=amount)
-            for group, amount in sorted(grouped.items(), key=lambda row: (-row[1], row[0]))
+            LianxiaoSummary(group=row.zodiac_group, amount=row.raw_amount)
+            for row in self._risk_rows
         ]
 
     def _fill_tables(self) -> None:
@@ -302,7 +309,7 @@ class LianxiaoOrderPage(QWidget):
     ) -> None:
         if not rows and show_empty:
             table.setRowCount(1)
-            values = ["暂无数据", "0.00", "0.00"]
+            values = ["暂无数据", "0.00", "0.00", "0.00", "0.00", "0.00"]
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -310,8 +317,21 @@ class LianxiaoOrderPage(QWidget):
             return
 
         table.setRowCount(len(rows))
+        risk_by_group = {row.zodiac_group: row for row in self._risk_rows}
         for row, summary in enumerate(rows):
-            values = [summary.group, _money(summary.amount), "0.00"]
+            risk = risk_by_group.get(summary.group)
+            values = (
+                [
+                    summary.group,
+                    _money(risk.raw_amount),
+                    _money(risk.potential_payout_amount),
+                    _money(risk.risk_amount),
+                    _money(risk.thrown_amount),
+                    _money(risk.adjusted_risk_amount),
+                ]
+                if risk is not None
+                else [summary.group, _money(summary.amount), "0.00", "0.00", "0.00", "0.00"]
+            )
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 alignment = (
@@ -324,14 +344,20 @@ class LianxiaoOrderPage(QWidget):
 
     def _update_stats(self) -> None:
         total = sum((summary.amount for summary in self._summaries), Decimal("0"))
-        zero = Decimal("0")
+        risks = [row.risk_amount for row in self._risk_rows]
+        adjusted = [row.adjusted_risk_amount for row in self._risk_rows]
+        thrown_total = sum((row.thrown_amount for row in self._risk_rows), Decimal("0"))
+        max_risk = max(risks) if risks else Decimal("0")
+        min_risk = min(risks) if risks else Decimal("0")
+        adjusted_max = max(adjusted) if adjusted else Decimal("0")
+        adjusted_min = min(adjusted) if adjusted else Decimal("0")
         self._lbl_lianxiao_total.setText(f"连肖总额：{_money(total)}")
-        self._lbl_max_profit.setText(f"最大盈利：{_money(zero)}")
-        self._lbl_max_loss.setText(f"最大亏损：{_money(zero)}")
+        self._lbl_max_profit.setText(f"最高风险：{_money(max_risk)}")
+        self._lbl_max_loss.setText(f"最低风险：{_money(min_risk)}")
         self._lbl_eat_total.setText(f"吃单总额：{_money(total)}")
-        self._lbl_adjustment_total.setText(f"调整总额：{_money(zero)}")
-        self._lbl_adjusted_max_profit.setText(f"最大盈利：{_money(zero)}")
-        self._lbl_adjusted_max_loss.setText(f"最大亏损：{_money(zero)}")
+        self._lbl_adjustment_total.setText(f"已抛出：{_money(thrown_total)}")
+        self._lbl_adjusted_max_profit.setText(f"调整后最高风险：{_money(adjusted_max)}")
+        self._lbl_adjusted_max_loss.setText(f"调整后最低风险：{_money(adjusted_min)}")
 
     def _append_output(self, message: str) -> None:
         current = self._output.toPlainText().strip()
@@ -357,12 +383,12 @@ class LianxiaoOrderPage(QWidget):
             f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             "",
             "左侧总表",
-            "生肖组\t下注数\t盈亏",
+            "\t".join(TABLE_HEADERS),
         ]
         lines.extend(self._table_rows_text(self._summary_table))
 
         for index, table in enumerate(self._tables, start=1):
-            lines.extend(["", f"第 {index} 列表", "生肖组\t下注数\t盈亏"])
+            lines.extend(["", f"第 {index} 列表", "\t".join(TABLE_HEADERS)])
             lines.extend(self._table_rows_text(table))
 
         lines.extend(
@@ -385,6 +411,9 @@ class LianxiaoOrderPage(QWidget):
                 "不自动结算或兑奖",
                 "未计算真实赔付",
                 "不写余额",
+                "",
+                "抛出输入",
+                self._throw_input.toPlainText(),
             ]
         )
         return "\n".join(lines)
@@ -399,6 +428,60 @@ class LianxiaoOrderPage(QWidget):
     def _on_copy_summary(self) -> None:
         QApplication.clipboard().setText(self._build_export_text())
         self._append_output("已复制连肖调单汇总到剪贴板。")
+
+    def _on_copy_throw_text(self) -> None:
+        QApplication.clipboard().setText(self._throw_input.toPlainText())
+        self._append_output("已复制连肖抛出文本到剪贴板。")
+
+    def _on_apply_throw(self) -> None:
+        try:
+            entries = self._risk_adjustment_service.parse_lianxiao_throw_text(self._throw_input.toPlainText())
+        except Exception as exc:
+            QMessageBox.warning(self, "应用连肖抛出", str(exc))
+            self._append_output(f"解析连肖抛出失败：{exc}")
+            return
+        reason = self._throw_reason_edit.text().strip()
+        if not reason:
+            QMessageBox.warning(self, "应用连肖抛出", "原因不能为空")
+            self._append_output("应用连肖抛出失败：原因不能为空。")
+            return
+        total = sum((entry.amount for entry in entries), Decimal("0"))
+        detail = "\n".join(f"{entry.zodiac_group}={_money(entry.amount)}" for entry in entries[:20])
+        if len(entries) > 20:
+            detail += f"\n... 共 {len(entries)} 条"
+        choice = QMessageBox.question(
+            self,
+            "应用连肖抛出",
+            (
+                "确认保存连肖抛出记录？\n\n"
+                f"地区：{self._selected_region_label()}\n"
+                f"影响组合数量：{len(entries)}\n"
+                f"总抛出金额：{_money(total)}\n"
+                f"原因：{reason}\n\n"
+                f"{detail}\n\n"
+                "本操作只写调单记录和操作日志，不修改订单、不自动结算、不写余额。"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if choice != QMessageBox.StandardButton.Yes:
+            self._append_output("已取消应用连肖抛出。")
+            return
+        try:
+            result = self._risk_adjustment_service.apply_lianxiao_throw(
+                entries,
+                region=self._selected_region_label(),
+                reason=reason,
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "应用连肖抛出", f"保存失败：{exc}")
+            self._append_output(f"应用连肖抛出失败：{exc}")
+            return
+        app_events.logs_changed.emit()
+        self.reload_data()
+        self._append_output(
+            f"已保存连肖抛出记录 ID：{result.record.id}；操作日志 ID：{result.operation_log_id}。"
+        )
 
     def _on_export_summary(self) -> None:
         path, _selected_filter = QFileDialog.getSaveFileName(
@@ -459,10 +542,12 @@ class LianxiaoOrderPage(QWidget):
     def _on_adjust_records(self) -> None:
         dialog = AdjustmentRecordDialog(
             self,
-            default_type="lianxiao",
+            default_type="lianxiao_all",
             service=self._adjustment_record_service,
+            risk_service=self._risk_adjustment_service,
         )
         dialog.exec()
+        self.reload_data()
         self._append_output("已关闭连肖调整记录窗口。")
 
     def _table_rows_snapshot(self, table: QTableWidget) -> list[dict[str, str]]:
@@ -476,7 +561,10 @@ class LianxiaoOrderPage(QWidget):
                 {
                     "group": values[0] if len(values) > 0 else "",
                     "amount": values[1] if len(values) > 1 else "0.00",
-                    "profit_loss": values[2] if len(values) > 2 else "0.00",
+                    "potential_payout_amount": values[2] if len(values) > 2 else "0.00",
+                    "risk_amount": values[3] if len(values) > 3 else "0.00",
+                    "thrown_amount": values[4] if len(values) > 4 else "0.00",
+                    "adjusted_risk_amount": values[5] if len(values) > 5 else "0.00",
                 }
             )
         return rows
@@ -554,6 +642,10 @@ class LianxiaoOrderPage(QWidget):
                 background: #ffffff;
                 min-height: 23px;
                 max-height: 25px;
+            }
+            QFrame#throwPanel {
+                border: 1px solid #8f9da1;
+                background: #fbfefe;
             }
             QLabel#statsTitle {
                 color: #c0392b;
