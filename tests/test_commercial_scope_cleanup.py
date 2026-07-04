@@ -501,6 +501,84 @@ def test_docs_split_high_risk_from_out_of_product_scope() -> None:
     assert "\u4e0d\u5f62\u6210\u5ba2\u6237\u4f59\u989d" in combined
 
 
+def test_commercial_release_acceptance_plan_and_samples_exist() -> None:
+    required_paths = [
+        Path("docs/commercial_release_acceptance_plan.md"),
+        Path("docs/samples/order_entry_samples.txt"),
+        Path("docs/samples/import_orders_sample.csv"),
+        Path("docs/samples/settlement_acceptance_cases.md"),
+        Path("docs/samples/high_risk_scope_checklist.md"),
+    ]
+    for path in required_paths:
+        assert path.exists(), f"missing acceptance artifact: {path}"
+        assert path.read_text(encoding="utf-8").strip()
+
+    plan = Path("docs/commercial_release_acceptance_plan.md").read_text(encoding="utf-8")
+    for section in (
+        "## 1. 验收目标",
+        "## 2. 验收环境",
+        "## 3. 验收前准备",
+        "## 4. 录单验收样例",
+        "## 5. 导入验收样例",
+        "## 6. 拆单助手验收样例",
+        "## 7. 开奖验收样例",
+        "## 8. 结算验收样例",
+        "## 9. 复杂玩法结算验收样例",
+        "## 10. 订单管理验收",
+        "## 11. 调单快照验收",
+        "## 12. 操作日志验收",
+        "## 13. 备份恢复验收",
+        "## 14. 导出 / 打印文本验收",
+        "## 15. 高风险未开放确认",
+        "## 16. 明确不纳入产品范围确认",
+        "## 17. 验收通过标准",
+    ):
+        assert section in plan
+
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in required_paths)
+    for phrase in (
+        "不做客户账户",
+        "客户余额",
+        "余额流水",
+        "真实兑奖入账",
+        "真实打印机",
+        "云同步 / 在线账号",
+        "返水",
+        "统计项",
+        "中奖金额",
+        "统计参考",
+        "权限 / 登录 / 角色 / 审批",
+        "清空订单",
+        "清空日志",
+        "重置开奖",
+        "连肖复选",
+        "正码特",
+        "特串",
+    ):
+        assert phrase in combined
+
+    sample_text = Path("docs/samples/order_entry_samples.txt").read_text(encoding="utf-8")
+    for phrase in (
+        "特码 01 各10",
+        "兔各10",
+        "红波各20",
+        "N不中 08,09,10 各100",
+        "平尾 1,3,4,6 各1000",
+        "二中二 01,02 各10",
+        "复2 01,02,03,04,05 各10",
+        "二中二 01,02,03,04,05 拖 06,07,08,09,10 各5",
+        "马蛇10",
+        "1岁各10",
+        "羊马各10",
+    ):
+        assert phrase in sample_text
+
+    csv_text = Path("docs/samples/import_orders_sample.csv").read_text(encoding="utf-8")
+    assert "region,raw_text,declarer,channel,expected_status,expected_total" in csv_text
+    assert "failed" in csv_text
+    assert "duplicate_check" in csv_text
+
+
 def test_permission_design_is_frozen_and_accounting_is_out_of_product_scope() -> None:
     permission_doc_path = Path("docs/permission_audit_model.md")
     accounting_doc_path = Path("docs/accounting_ledger_model.md")
