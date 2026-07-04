@@ -1504,3 +1504,147 @@ class TestExcludeNumbers:
         r = parse_order("张三 兔各30 不要04")
         assert r.success
         assert 4 not in r.numbers
+
+
+# ======================================================================
+# 参考软件式智能录单识别第一阶段
+# ======================================================================
+
+
+class TestReferenceStyleSmartIntakeParser:
+    def test_real_sample_lianxiao_fushi_multi_sizes(self) -> None:
+        r = parse_order("牛鸡猪狗虎复试3.4.5连各组50")
+        assert r.success
+        assert r.category == "连肖复选"
+        assert [name for name, _ in r.zodiac_groups] == ["牛", "鸡", "猪", "狗", "虎"]
+        assert r.fushi_lian_sizes == (3, 4, 5)
+        assert r.amount == Decimal("50")
+        assert r.total == Decimal("800")
+        assert "组合数=16" in r.note
+
+    def test_real_sample_single_pingte_zodiac_with_da(self) -> None:
+        r = parse_order("蛇平特一肖打1000")
+        assert r.success
+        assert r.category == "平特一肖"
+        assert [name for name, _ in r.zodiac_groups] == ["蛇"]
+        assert r.total == Decimal("1000")
+
+    def test_real_sample_context_heading_pingte(self) -> None:
+        results = parse_lines("澳平特一肖\n龙100\n蛇100")
+        assert [r.region for r in results] == ["澳门", "澳门"]
+        assert [r.category for r in results] == ["平特一肖", "平特一肖"]
+        assert [[name for name, _ in r.zodiac_groups] for r in results] == [["龙"], ["蛇"]]
+        assert sum(Decimal(str(r.total)) for r in results) == Decimal("200")
+
+    def test_real_sample_named_macau_numbers_and_declared_total(self) -> None:
+        results = parse_lines("张二，澳门码，09号，45号，16号，34号，46号，35号，以上六个数各5元。01号一10元。共计40")
+        assert len(results) == 2
+        assert results[0].success and results[0].region == "澳门"
+        assert results[0].numbers == (9, 16, 34, 35, 45, 46)
+        assert results[0].amount == Decimal("5")
+        assert results[1].numbers == (1,)
+        assert results[1].amount == Decimal("10")
+        assert sum(Decimal(str(r.total)) for r in results) == Decimal("40")
+        assert any("共计校验通过" in warning for warning in results[0].warnings)
+
+    def test_real_sample_zodiac_numbers_with_exclusion(self) -> None:
+        results = parse_lines("羊猪狗兔马龙各数10，1号不要，猴鸡数各5")
+        assert len(results) == 2
+        assert results[0].success
+        assert 1 not in results[0].numbers
+        assert results[0].total == Decimal("240")
+        assert "排除号码=01" in results[0].note
+        assert results[1].success
+        assert [name for name, _ in results[1].zodiac_groups] == ["猴", "鸡"]
+        assert results[1].total == Decimal("40")
+
+    def test_real_sample_same_line_pingte_and_lianxiao_with_suffix_region(self) -> None:
+        results = parse_lines("龙虎各200平特。龙虎蛇三连50         龙蛇二连50    澳门")
+        assert len(results) == 3
+        assert [r.success for r in results] == [True, True, True]
+        assert results[0].category == "平特一肖"
+        assert [name for name, _ in results[0].zodiac_groups] == ["龙", "虎"]
+        assert results[0].total == Decimal("400")
+        assert [r.region for r in results[1:]] == ["澳门", "澳门"]
+        assert [r.category for r in results[1:]] == ["连肖", "连肖"]
+        assert sum(Decimal(str(r.total)) for r in results) == Decimal("500")
+
+    def test_real_sample_spaced_digits_and_yang_ping(self) -> None:
+        results = parse_lines("蛇羊各数5块，2 6号1 0块，3 6号4 8号各数2 5块，羊平1 0 0")
+        assert len(results) == 4
+        assert [r.success for r in results] == [True, True, True, True]
+        assert results[1].numbers == (26,)
+        assert results[1].amount == Decimal("10")
+        assert results[2].numbers == (36, 48)
+        assert results[2].amount == Decimal("25")
+        assert results[3].category == "平特一肖"
+        assert [name for name, _ in results[3].zodiac_groups] == ["羊"]
+        assert results[3].total == Decimal("100")
+
+    def test_real_sample_long_mixed_numeric_groups(self) -> None:
+        text = (
+            "18/30-42/各三十06十13/25/各三十五01-37-49-各十"
+            "12-24-各四十36/48/各十10-22/34/各三十46十09/33/45-各三十"
+            "21十08/20/各四十32/44/各十02-14-各四十26/38各十"
+            "13-25-12-24-48-各二十奥"
+        )
+        results = parse_lines(text)
+        assert len(results) == 12
+        assert all(r.success for r in results)
+        assert all(r.region == "澳门" for r in results)
+        assert results[0].numbers == (18, 30, 42)
+        assert results[0].amount == Decimal("30")
+        assert results[1].numbers == (6, 13, 25)
+        assert results[1].amount == Decimal("35")
+        assert results[-1].numbers == (12, 13, 24, 25, 48)
+        assert results[-1].amount == Decimal("20")
+        assert sum(Decimal(str(r.total)) for r in results) == Decimal("875")
+
+    def test_reference_pair_amount_and_lianxiao_pairs(self) -> None:
+        number_results = parse_lines("01 100 02 200")
+        assert [(r.numbers, r.amount, r.total) for r in number_results] == [
+            ((1,), Decimal("100"), Decimal("100")),
+            ((2,), Decimal("200"), Decimal("200")),
+        ]
+
+        lianxiao_results = parse_lines("连肖 猪马100 牛虎猴300")
+        assert [r.category for r in lianxiao_results] == ["连肖", "连肖"]
+        assert [[name for name, _ in r.zodiac_groups] for r in lianxiao_results] == [
+            ["猪", "马"],
+            ["牛", "虎", "猴"],
+        ]
+
+    def test_lianma_group_each_and_fushi_reference_examples(self) -> None:
+        erzhonger = parse_order("二中二 01 02 03 04 各组100")
+        assert erzhonger.success
+        assert erzhonger.category == "二中二"
+        assert len(erzhonger.lianma_groups) == 6
+        assert erzhonger.total == Decimal("600")
+
+        sanzhongsan = parse_order("三中三 01 02 03 04 05 复式 各10")
+        assert sanzhongsan.success
+        assert sanzhongsan.category == "三中三"
+        assert len(sanzhongsan.lianma_groups) == 10
+        assert sanzhongsan.total == Decimal("100")
+
+    @pytest.mark.parametrize("text", ["1头各10", "尾1各10", "复2 01,02,03各10", "二中二 01,02各10", "三中二 01,02,03各10"])
+    def test_reference_smart_parser_does_not_break_existing_keywords(self, text: str) -> None:
+        assert parse_order(text).success
+
+    def test_age_writing_stays_opt_in_for_one_sui(self) -> None:
+        assert not parse_order("1岁各10").success
+        assert parse_order("1岁各10", age_writing=True).success
+
+    def test_declared_total_mismatch_is_warning_not_failure(self) -> None:
+        results = parse_lines("01号10元。共计20")
+        assert len(results) == 1
+        assert results[0].success
+        assert any("共计校验不一致" in warning for warning in results[0].warnings)
+
+    def test_special_combo_parse_preview_categories_remain_unsupported_for_settlement(self) -> None:
+        r = parse_order("二中特 01 02 各10")
+        assert r.success
+        assert r.category == "二中特"
+        assert r.numbers == (1, 2)
+        assert r.total == Decimal("10")
+        assert any("正式结算暂不支持" in warning for warning in r.warnings)

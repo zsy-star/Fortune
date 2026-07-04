@@ -299,6 +299,41 @@ def test_lianxiao_fuxuan_intake_saves_one_summary_item_with_note() -> None:
     assert any("复选类玩法" in warning for warning in preview.warnings)
 
 
+def test_reference_fushi_lianxiao_intake_preserves_combo_note() -> None:
+    preview = _preview("牛鸡猪狗虎复试3.4.5连各组50", region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == Decimal("800.00")
+    assert len(preview.order_items) == 1
+    item = preview.order_items[0]
+    assert item.bet_type == "连肖复选"
+    assert item.selection == "牛,鸡,猪,狗,虎"
+    assert item.amount == Decimal("800.00")
+    assert "复选类型=复3.4.5" in (item.note or "")
+    assert "组合数=16" in (item.note or "")
+
+
+def test_reference_smart_intake_split_preview_and_exclusion_note() -> None:
+    preview = _preview("羊猪狗兔马龙各数10，1号不要，猴鸡数各5", region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == Decimal("280.00")
+    assert len(preview.order_items) == 32
+    assert all(item.selection != "01" for item in preview.order_items)
+    assert any(item.note == "排除号码=01" for item in preview.order_items)
+    assert any("已排除号码" in warning for warning in preview.warnings)
+
+
+def test_unsupported_settlement_combo_is_saveable_with_warning() -> None:
+    preview = _preview("二中特 01 02 各10", region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == Decimal("10.00")
+    assert len(preview.order_items) == 1
+    item = preview.order_items[0]
+    assert item.bet_type == "二中特"
+    assert item.selection == "01,02"
+    assert item.note == "结算规则待确认"
+    assert any("结算预览暂不支持" in warning for warning in preview.warnings)
+
+
 def test_fuxuan_intake_save_and_read_preserves_fuxuan_type_note(session_factory) -> None:
     service = OrderIntakeService(session_factory)
     save_result = service.parse_and_save(

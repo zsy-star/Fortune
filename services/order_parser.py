@@ -227,6 +227,14 @@ class ParseResult:
     lianma_groups: tuple[tuple[int, ...], ...] = ()
     # 平尾专用：标准尾数列表，如 (1, 3, 4, 6)
     pingwei_tails: tuple[int, ...] = ()
+    # 解析阶段提示：用于共计校验、排除说明、暂不支持结算等非阻断信息。
+    warnings: list[str] = field(default_factory=list)
+    # 保存到预览/订单备注的补充信息。
+    note: str = ""
+    # 归一化后的源片段，便于预览表显示多单拆分来源。
+    normalized_text: str = ""
+    # “生肖各数”口径：按生肖下号码展开，而不是按连肖整组保存。
+    zodiac_number_mode: bool = False
 
 
 @dataclass(frozen=True)
@@ -246,7 +254,116 @@ class ParseOptions:
 # 金额提取
 # ======================================================================
 
-_AMOUNT_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(?:元)?$")
+_AMOUNT_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(?:元|块|蚊)?$")
+_CN_AMOUNT_CHARS = "零〇一二两三四五六七八九十百千万"
+_FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９．", "0123456789.")
+
+
+def _cn_amount_to_number(raw: str) -> Decimal | None:
+    """把常见中文金额转为数字，支持十、三十五、一百二十等口语写法。"""
+    text = raw.strip()
+    if not text:
+        return None
+    if re.fullmatch(r"\d+(?:\.\d+)?", text):
+        return Decimal(text)
+    digit_map = {
+        "零": 0,
+        "〇": 0,
+        "一": 1,
+        "二": 2,
+        "两": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+    }
+    unit_map = {"十": 10, "百": 100, "千": 1000}
+    total = 0
+    section = 0
+    number = 0
+    for char in text:
+        if char in digit_map:
+            number = digit_map[char]
+            continue
+        if char in unit_map:
+            unit = unit_map[char]
+            if number == 0:
+                number = 1
+            section += number * unit
+            number = 0
+            continue
+        if char == "万":
+            section += number
+            total += section * 10000
+            section = 0
+            number = 0
+            continue
+        return None
+    value = total + section + number
+    return Decimal(value) if value > 0 else None
+
+
+def _format_decimal_plain(value: Decimal) -> str:
+    if value == value.to_integral():
+        return str(int(value))
+    return format(value.normalize(), "f").rstrip("0").rstrip(".")
+
+
+def _normalize_chinese_amounts(text: str) -> str:
+    amount_word = rf"[{_CN_AMOUNT_CHARS}]+"
+
+    def marker_repl(match: re.Match[str]) -> str:
+        value = _cn_amount_to_number(match.group(2))
+        if value is None:
+            return match.group(0)
+        return f"{match.group(1)}{_format_decimal_plain(value)}"
+
+    text = re.sub(rf"((?:各组|各数|各号|每注|每数|各|每|打|买)\s*)({amount_word})", marker_repl, text)
+
+    def suffix_repl(match: re.Match[str]) -> str:
+        value = _cn_amount_to_number(match.group(1))
+        if value is None:
+            return match.group(0)
+        return f"{_format_decimal_plain(value)}{match.group(2)}"
+
+    return re.sub(rf"({amount_word})(元|块|蚊)", suffix_repl, text)
+
+
+def _normalize_smart_text(text: str) -> str:
+    """第一阶段智能录单归一化：只处理输入形态，不改变玩法/结算口径。"""
+    t = text.strip().translate(_FULLWIDTH_DIGITS)
+    t = _normalize_chinese_amounts(t)
+
+    # 01号一10元 / 26号1 0块 这类口语里，“一/1”是“各”的近音。
+    t = re.sub(r"一\s*(\d+(?:\.\d+)?)\s*(元|块|蚊)", r"各\1", t)
+    t = re.sub(r"(?<=号)\s*1\s+(\d)\s*(元|块|蚊)", r"各1\1", t)
+
+    def collapse_spaced_digits(match: re.Match[str]) -> str:
+        return re.sub(r"\s+", "", match.group(1))
+
+    t = re.sub(r"(?<!\d)((?:\d\s+){1,4}\d)(?=\s*(?:号|元|块|蚊|$))", collapse_spaced_digits, t)
+    t = re.sub(r"(\d)\s+(?=\d号)", r"\1", t)
+    t = re.sub(r"(\d)\s+(?=\d(?:元|块|蚊))", r"\1", t)
+
+    # 常见参考软件别名。
+    t = t.replace("平肖", "平特一肖")
+    t = t.replace("特肖", "平特一肖")
+    t = re.sub(r"平特(?=$|[，,。；;\s])", "平特一肖", t)
+    t = re.sub(r"^(.+?)(各组|各数|各号|每注|每数|各|每|打|买)(\d+(?:\.\d+)?)(?:平特|平特一肖)$", r"\1平特一肖\2\3", t)
+    t = re.sub(rf"^([{''.join(sorted(set(_zodiac_name.values())))}]+)数各", r"\1各数", t)
+    t = re.sub(rf"^([{''.join(sorted(set(_zodiac_name.values())))}]+)数(?=(?:每|打|买))", r"\1", t)
+    t = re.sub(rf"^([{''.join(sorted(set(_zodiac_name.values())))}]+)平(?=\d|各|每|打|买)", r"\1平特一肖", t)
+
+    # “36号48号各数25”需要在去“号”之前插入号码分隔符。
+    t = re.sub(r"(\d{1,2})号(?=\s*\d{1,2}号)", r"\1,", t)
+    t = re.sub(r"(\d{1,2})号\s*(?=(?:各组|各数|各号|每注|每数|各|每|打|买))", r"\1", t)
+    t = re.sub(r"(\d{1,2})号\s*(\d+(?:\.\d+)?)(?:元|块|蚊)?(?=$|[，,。；;\s])", r"\1各\2", t)
+    t = re.sub(r"(\d{1,2})号(?:码)?", r"\1", t)
+    t = re.sub(r"(\d)(?:元|块|蚊)", r"\1", t)
+    return t.strip()
 
 
 def _extract_amount(text: str) -> tuple[float, str]:
@@ -322,15 +439,18 @@ def _apply_exclusion(result: ParseResult, exclude_nums: set[int]) -> None:
     """从结果中移除排除的号码，重新计算 total。"""
     if not exclude_nums or not result.success or not result.numbers:
         return
+    excluded_str = ",".join(f"{n:02d}" for n in sorted(exclude_nums))
     filtered = tuple(n for n in result.numbers if n not in exclude_nums)
     if not filtered:
-        excluded_str = ",".join(f"{n:02d}" for n in sorted(exclude_nums))
         result.success = False
         result.error = f"排除 {excluded_str} 后无剩余号码"
         result.numbers = ()
         result.total = 0.0
         return
     result.numbers = filtered
+    if f"排除号码={excluded_str}" not in result.note:
+        result.note = ";".join(part for part in (result.note, f"排除号码={excluded_str}") if part)
+    result.warnings.append(f"已排除号码：{excluded_str}")
     if result.category == "N不中" or _is_lianxiao_result_category(result.category):
         result.total = result.amount
     else:
@@ -486,7 +606,7 @@ def _try_parse_tuo_zodiacs(text: str) -> list[tuple[str, tuple[int, ...]]] | Non
 
 
 # ── "各" / "各数" 分隔符正则 ──
-_SEP_PATTERN = re.compile(r"(?:各|每)(?:数|注)?|打")
+_SEP_PATTERN = re.compile(r"各组|各数|各号|每注|每数|各|每|打|买")
 
 # ── 复试连肖格式: "牛鸡猪狗虎复试3.4.5连各组50" ──
 _FUSHI_PATTERN = re.compile(
@@ -496,7 +616,7 @@ _FUSHI_PATTERN = re.compile(
 # ── bet 类型中缀: 可出现在类别名后面的投注类型关键词 ──
 _BET_TYPE_INFIX: list[str] = sorted(
     ["平特一肖", "平特一尾", "特码波色", "特码两面",
-     "包半波", "六肖中特", "N不中", "特码", "平码", "连尾", "不中"],
+     "包半波", "六肖中特", "二中特", "N不中", "特码", "特串", "平码", "连尾", "不中"],
     key=len, reverse=True,  # 长优先
 )
 
@@ -648,10 +768,19 @@ def _parse_lianma_drag_groups(selection_text: str, group_size: int) -> tuple[tup
     return tuple(groups)
 
 
-def _parse_lianma_groups(selection_text: str, group_size: int) -> tuple[tuple[int, ...], ...] | str:
+def _parse_lianma_groups(
+    selection_text: str,
+    group_size: int,
+    *,
+    fushi_mode: bool = False,
+) -> tuple[tuple[int, ...], ...] | str:
     text = selection_text.strip()
     if not text:
         return "连码投注内容不能为空"
+
+    explicit_fushi = "复式" in text
+    if explicit_fushi:
+        text = text.replace("复式", " ").strip()
 
     drag_groups = _parse_lianma_drag_groups(text, group_size)
     if drag_groups is not None:
@@ -670,6 +799,12 @@ def _parse_lianma_groups(selection_text: str, group_size: int) -> tuple[tuple[in
             groups.append(parsed)
         return tuple(groups)
 
+    numbers = _parse_number_list(text)
+    if numbers is not None and (explicit_fushi or fushi_mode):
+        if len(numbers) < group_size:
+            return f"连码复式号码数量不能少于 {group_size} 个：{selection_text}"
+        return tuple(tuple(group) for group in itertools.combinations(numbers, group_size))
+
     parsed = _parse_lianma_group_text(text, group_size)
     if isinstance(parsed, str):
         return parsed
@@ -681,6 +816,7 @@ def _parse_lianma_category(
     region: str,
     category_text: str,
     amount: float | Decimal,
+    fushi_mode: bool = False,
 ) -> ParseResult | None:
     text = category_text.strip()
     if not text:
@@ -701,7 +837,7 @@ def _parse_lianma_category(
         return None
 
     group_size = _LIANMA_TYPES[bet_type]
-    groups = _parse_lianma_groups(selection_text, group_size)
+    groups = _parse_lianma_groups(selection_text, group_size, fushi_mode=fushi_mode)
     if isinstance(groups, str):
         return ParseResult(region=region, success=False, error=groups)
 
@@ -871,7 +1007,7 @@ def parse_order(
         age_writing=age_writing,
         zodiac_each_mode=zodiac_each_mode,
     )
-    text = text.strip()
+    text = _normalize_smart_text(text.strip())
     if not text:
         return ParseResult(success=False, error="输入为空")
 
@@ -892,7 +1028,7 @@ def parse_order(
 
     # ── 提取地域前缀 ──
     region = ""
-    for prefix, full_name in (("澳门", "澳门"), ("澳", "澳门"), ("香港", "香港"), ("港", "香港")):
+    for prefix, full_name in (("澳门", "澳门"), ("澳", "澳门"), ("奥", "澳门"), ("香港", "香港"), ("港", "香港")):
         if text.startswith(prefix):
             region = full_name
             text = text[len(prefix):].strip()
@@ -912,7 +1048,9 @@ def parse_order(
         ("特码波色", "特码波色"),
         ("特码两面", "特码两面"),
         ("六肖中特", "六肖中特"),
+        ("二中特", "二中特"),
         ("包半波", "包半波"),
+        ("特串", "特串"),
         ("平码", "平码"),
         ("连尾", "连尾"),
         ("特码", "特码"),
@@ -982,12 +1120,14 @@ def parse_order(
         return ParseResult(
             region=region,
             success=True,
-            category="复试连肖",
+            category="连肖复选",
             numbers=all_nums,
             amount=amount,
             total=amount * total_combos,
             zodiac_groups=groups,
             fushi_lian_sizes=tuple(lian_sizes),
+            fuxuan_type="复" + ".".join(str(size) for size in lian_sizes),
+            note=f"复试连数={','.join(str(size) for size in lian_sizes)};组合数={total_combos}",
         )
 
     # ── 1. 查找 "各/各数/每/每注" 分隔符 ──
@@ -995,6 +1135,9 @@ def parse_order(
     if not sep_m:
         # 无分隔符：尝试末尾金额（旧格式兜底 / 省略「各」的快捷格式「兔10」）
         amount, category_text = _extract_amount(text)
+        category_text, infix_bt = _strip_bet_type_infix(category_text)
+        if infix_bt and not bet_type_override:
+            bet_type_override = infix_bt
         # 清理末尾残留的分隔关键字（"蛇打" → "蛇"）
         category_text = re.sub(r'(打|各|各数|每|每注)$', '', category_text).strip()
         if amount == 0:
@@ -1012,7 +1155,7 @@ def parse_order(
 
         amount_str = text[sep_m.end() :].strip()
         # 去除可选的 "元" 后缀
-        amount_str = re.sub(r"元$", "", amount_str).strip()
+        amount_str = re.sub(r"(元|块|蚊)$", "", amount_str).strip()
         # 金额倍数: *N（如「兔各10*3」→ 30）
         mult_m = re.match(r"(\d+(?:\.\d+)?)\s*\*\s*(\d+)\s*$", amount_str)
         if mult_m:
@@ -1045,6 +1188,7 @@ def parse_order(
         region=region,
         category_text=category_text,
         amount=amount,
+        fushi_mode=bool(sep_m and sep_m.group() == "各组"),
     )
     if lianma_result is not None:
         return lianma_result
@@ -1068,6 +1212,7 @@ def parse_order(
             and sep_m.group() == "各"
             and len(groups_for_special) >= 1
         )
+        zodiac_number_mode = bool(sep_m and sep_m.group() in {"各数", "每数"})
         if (
             groups_for_special
             and (bet_type_override == "平特一肖" or use_zodiac_each or options.special_zodiac_mode)
@@ -1079,6 +1224,22 @@ def parse_order(
             )
 
         # 0. 特殊投注类型处理
+        if bet_type_override in {"二中特", "特串"}:
+            num_list = _parse_number_list(cat)
+            if num_list is not None:
+                return ParseResult(region=region,
+                    success=True,
+                    category=bet_type_override,
+                    numbers=num_list,
+                    amount=amt,
+                    total=amt,
+                    warnings=[f"{bet_type_override}可录入预览，正式结算暂不支持"],
+                )
+            return ParseResult(region=region,
+                success=False,
+                error=f"无法解析{bet_type_override}号码列表：{cat}",
+            )
+
         if bet_type_override == "N不中":
             # 不中范围: 5-24 或 5至24
             range_m = re.match(r"^(\d{1,2})\s*[-至]\s*(\d{1,2})$", cat)
@@ -1188,6 +1349,7 @@ def parse_order(
                 amount=amt,
                 total=amt * len(all_nums),
                 zodiac_groups=groups_inner,
+                zodiac_number_mode=zodiac_number_mode,
             )
         if len(groups_inner) == 1 and _zodiac_consume_len(cat) == len(cat):
             name, nums = groups_inner[0]
@@ -1252,16 +1414,16 @@ def _normalize_line(text: str) -> str | None:
     >>> _normalize_line("共计40")
     None
     """
-    t = text.strip()
+    t = _normalize_smart_text(text)
     if not t:
         return None
 
     # 丢弃仅有"共计NN"的行
-    if re.match(r'^共计\s*\d+$', t):
+    if re.match(r'^(?:共计|合计|总计)\s*\d+(?:\.\d+)?$', t):
         return None
 
     # 去掉开头的「人名，」/「人名、」（2-3个中文字 + 中文逗号）
-    t = re.sub(r'^[^\d\s澳门香港澳港各每打连复试]{2,4}[，,]\s*', '', t)
+    t = re.sub(r'^[^\d\s澳门香港澳奥港各每打买连复试]{2,4}[，,]\s*', '', t)
 
     # 地区口语：澳门码 / 香港码 → 澳门 / 香港
     t = re.sub(r'(澳门|香港)码', r'\1', t)
@@ -1273,20 +1435,17 @@ def _normalize_line(text: str) -> str | None:
         t,
     )
 
-    # "NN号" / "NN号码" → "NN"
-    t = re.sub(r'(\d+)号(?:码)?', r'\1', t)
-
     # "以上N个数各X元" / "以上N个各X元" → 各X
     # 先转中文数字：五→5, 六→6, 七→7, 八→8, 九→9, 十→10
     for cn, nb in [("五", "5"), ("六", "6"), ("七", "7"), ("八", "8"), ("九", "9"), ("十", "10")]:
         t = t.replace(f'以上{cn}个', f'以上{nb}个')
-    t = re.sub(r'以上(\d+)个(?:数)?各(\d+)', r'各\2', t)
+    t = re.sub(r'以上(\d+)个(?:数)?各(\d+(?:\.\d+)?)', r'各\2', t)
 
     # "各X元" / "每X元" → "各X"
-    t = re.sub(r'(各|每)(\d+)元', r'\1\2', t)
+    t = re.sub(r'(各组|各数|各号|每注|每数|各|每|打|买)(\d+(?:\.\d+)?)(元|块|蚊)', r'\1\2', t)
 
     # "一X元" → "各X"  (口语 "01号一10元" → "01各10")
-    t = re.sub(r'一(\d+)元', r'各\1', t)
+    t = re.sub(r'一(\d+(?:\.\d+)?)(元|块|蚊)', r'各\1', t)
 
     # 中文逗号、顿号 → 英文逗号（号码分隔）
     t = t.replace('，', ',').replace('、', ',')
@@ -1304,6 +1463,247 @@ def _normalize_line(text: str) -> str | None:
         return None
 
     return t
+
+
+def _extract_declared_total(text: str) -> tuple[str, Decimal | None]:
+    text = _normalize_chinese_amounts(text.translate(_FULLWIDTH_DIGITS))
+    total: Decimal | None = None
+
+    def repl(match: re.Match[str]) -> str:
+        nonlocal total
+        value = _cn_amount_to_number(match.group(1))
+        if value is None:
+            return ""
+        total = value
+        return ""
+
+    cleaned = re.sub(
+        rf"(?:共计|合计|总计)\s*(\d+(?:\.\d+)?|[{_CN_AMOUNT_CHARS}]+)\s*(?:元|块|蚊)?",
+        repl,
+        text,
+    )
+    return cleaned, total
+
+
+def _strip_region_marker(text: str) -> tuple[str, str]:
+    t = text.strip()
+    region = ""
+    for marker, full_name in (
+        ("澳门码", "澳门"),
+        ("澳门", "澳门"),
+        ("澳", "澳门"),
+        ("奥", "澳门"),
+        ("香港码", "香港"),
+        ("香港", "香港"),
+        ("港", "香港"),
+    ):
+        if t.startswith(marker):
+            return t[len(marker):].strip(), full_name
+    for marker, full_name in (
+        ("澳门码", "澳门"),
+        ("澳门", "澳门"),
+        ("澳", "澳门"),
+        ("奥", "澳门"),
+        ("香港码", "香港"),
+        ("香港", "香港"),
+        ("港", "香港"),
+    ):
+        if t.endswith(marker):
+            return t[: -len(marker)].strip(), full_name
+    return t, region
+
+
+def _with_region(segment: str, region: str) -> str:
+    if not region:
+        return segment.strip()
+    segment = segment.strip()
+    if segment.startswith(("澳门", "澳", "奥", "香港", "港")):
+        return segment
+    return region + segment
+
+
+def _is_exclusion_clause(text: str) -> bool:
+    return bool(re.search(r"(不要|除了|排除|去掉|除外|除)", text))
+
+
+def _normalize_exclusion_clause(text: str) -> str:
+    cleaned = re.sub(r"(不要|除了|排除|去掉|除外|除)", "", text)
+    cleaned = cleaned.replace("号", "")
+    nums = _parse_number_list(cleaned)
+    if nums:
+        return " 不要 " + ",".join(f"{n:02d}" for n in nums)
+    return " " + text.strip()
+
+
+def _looks_like_amount_clause(text: str) -> bool:
+    if re.search(_SEP_PATTERN, text):
+        return True
+    zodiacs = "".join(sorted(set(_zodiac_name.values())))
+    if re.fullmatch(rf"[{zodiacs}]+(?:平特一肖|平)\d+(?:\.\d+)?", text.strip()):
+        return True
+    if re.fullmatch(rf"[{zodiacs}]+[{_CN_DIGIT_CHARS}]?(?:连肖|连|拖|托|有|友|胆)\d+(?:\.\d+)?", text.strip()):
+        return True
+    if re.fullmatch(r"\d{1,2}号\d+(?:\.\d+)?", text.strip()):
+        return True
+    return False
+
+
+def _split_comma_clauses(line: str) -> list[str]:
+    parts = [part.strip() for part in re.split(r"[，,]", line) if part.strip()]
+    if len(parts) < 2:
+        return [line]
+
+    combined: list[str] = []
+    index = 0
+    while index < len(parts):
+        part = parts[index]
+        if _is_exclusion_clause(part) and combined:
+            combined[-1] += _normalize_exclusion_clause(part)
+        elif (
+            re.fullmatch(r"\d{1,2}", part)
+            and index + 1 < len(parts)
+            and re.match(r"\d{1,2}(?:各组|各数|各号|每注|每数|各|每|打|买)", parts[index + 1])
+        ):
+            combined.append(part + "," + parts[index + 1])
+            index += 1
+        else:
+            combined.append(part)
+        index += 1
+
+    amount_like_count = sum(1 for part in combined if _looks_like_amount_clause(part))
+    numeric_only_count = sum(1 for part in combined if re.fullmatch(r"\d{1,2}", part))
+    if amount_like_count >= 2 and numeric_only_count < len(combined) - 1:
+        return combined
+    return [line]
+
+
+def _split_repeated_number_amount_groups(line: str) -> list[str] | None:
+    body, region = _strip_region_marker(line)
+    compact = re.sub(r"\s+", "", body)
+    if not compact or not re.fullmatch(r"[\d/,\-—十各.]+", compact):
+        return None
+    if compact.count("各") < 2:
+        return None
+
+    def parse_group_numbers(group_text: str) -> tuple[list[int], int] | None:
+        nums = [token for token in re.split(r"[/,，\-—十]+", group_text.strip("/,，-—十")) if token]
+        if not nums:
+            return None
+        parsed: list[int] = []
+        for token in nums:
+            if not token.isdigit():
+                return None
+            number = int(token)
+            if number < 1 or number > 49:
+                return None
+            parsed.append(number)
+        return parsed, len(nums[0])
+
+    segments: list[str] = []
+    start = 0
+    while start < len(compact):
+        marker = compact.find("各", start)
+        if marker < 0:
+            return None
+        parsed_group = parse_group_numbers(compact[start:marker])
+        if parsed_group is None:
+            return None
+        parsed, _ = parsed_group
+
+        amount_start = marker + 1
+        if amount_start >= len(compact) or not compact[amount_start].isdigit():
+            return None
+
+        next_marker_exists = "各" in compact[amount_start:]
+        amount_end: int | None = None
+        if not next_marker_exists:
+            tail = compact[amount_start:]
+            if not re.fullmatch(r"\d+(?:\.\d+)?", tail):
+                return None
+            amount_end = len(compact)
+        else:
+            candidates: list[tuple[int, int]] = []
+            for end in range(amount_start + 1, min(len(compact), amount_start + 6) + 1):
+                amount_text = compact[amount_start:end]
+                if not re.fullmatch(r"\d+(?:\.\d+)?", amount_text):
+                    continue
+                next_marker = compact.find("各", end)
+                if next_marker < 0:
+                    continue
+                next_group = parse_group_numbers(compact[end:next_marker])
+                if next_group is None:
+                    continue
+                _, first_token_len = next_group
+                candidates.append((0 if first_token_len == 2 else 1, end))
+            if not candidates:
+                return None
+            candidates.sort()
+            amount_end = candidates[0][1]
+
+        amount_text = compact[amount_start:amount_end]
+        segment = ",".join(f"{number:02d}" for number in parsed) + f"各{amount_text}"
+        segments.append(_with_region(segment, region))
+        start = amount_end
+    return segments
+
+
+def _split_pair_amount_groups(line: str) -> list[str] | None:
+    body, region = _strip_region_marker(line)
+    body = body.strip()
+    number_matches = list(re.finditer(r"(?<!\d)(\d{1,2})(?:号)?\s+(\d+(?:\.\d+)?)(?!\d)", body))
+    if len(number_matches) >= 2:
+        leftover = body
+        for match in number_matches:
+            leftover = leftover.replace(match.group(0), " ", 1)
+        if not leftover.strip():
+            return [_with_region(f"{int(m.group(1)):02d}各{m.group(2)}", region) for m in number_matches]
+
+    for prefix, target_prefix in (("平特一肖", "平特一肖"), ("连肖", "连肖")):
+        if body.startswith(prefix):
+            selection_body = body[len(prefix):].strip()
+            matches = list(re.finditer(rf"([{''.join(sorted(set(_zodiac_name.values())))}]+)\s*(\d+(?:\.\d+)?)", selection_body))
+            if len(matches) < 2:
+                return None
+            leftover = selection_body
+            for match in matches:
+                leftover = leftover.replace(match.group(0), " ", 1)
+            if leftover.strip():
+                return None
+            if target_prefix == "平特一肖":
+                return [_with_region(f"{m.group(1)}平特一肖打{m.group(2)}", region) for m in matches]
+            return [_with_region(f"连肖{m.group(1)}打{m.group(2)}", region) for m in matches]
+    return None
+
+
+def _split_space_order_chunks(line: str) -> list[str] | None:
+    body, region = _strip_region_marker(line)
+    chunks = [chunk.strip() for chunk in re.split(r"\s{2,}", body) if chunk.strip()]
+    if len(chunks) < 2:
+        return None
+    if all(_looks_like_amount_clause(chunk) for chunk in chunks):
+        return [_with_region(chunk, region) for chunk in chunks]
+    return None
+
+
+def _split_smart_segments(line: str) -> list[str]:
+    repeated = _split_repeated_number_amount_groups(line)
+    if repeated:
+        return repeated
+    pair_amounts = _split_pair_amount_groups(line)
+    if pair_amounts:
+        return pair_amounts
+    space_chunks = _split_space_order_chunks(line)
+    if space_chunks:
+        return [part for chunk in space_chunks for part in _split_smart_segments(chunk)]
+
+    pieces: list[str] = []
+    for comma_clause in _split_comma_clauses(line):
+        pair_clause = _split_pair_amount_groups(comma_clause)
+        if pair_clause:
+            pieces.extend(pair_clause)
+        else:
+            pieces.append(comma_clause)
+    return pieces
 
 
 def parse_lines(
@@ -1330,6 +1730,7 @@ def parse_lines(
         age_writing=age_writing,
         zodiac_each_mode=zodiac_each_mode,
     )
+    text, declared_total = _extract_declared_total(text)
     results: list[ParseResult] = []
     ctx_region = ""
     ctx_bet_type = ""
@@ -1361,7 +1762,7 @@ def parse_lines(
             h_region = ""
             h_bt = ""
             remaining = line
-            for prefix, full_name in (("澳门", "澳门"), ("澳", "澳门"), ("香港", "香港"), ("港", "香港")):
+            for prefix, full_name in (("澳门", "澳门"), ("澳", "澳门"), ("奥", "澳门"), ("香港", "香港"), ("港", "香港")):
                 if remaining.startswith(prefix):
                     h_region = full_name
                     remaining = remaining[len(prefix):].strip()
@@ -1384,7 +1785,7 @@ def parse_lines(
             if ctx_bet_type and not any(line.startswith(bt) for bt in _ALL_BT):
                 # 投注类型要紧挨地域之后（parse_order 先剥地域再剥投注类型）
                 inserted = False
-                for prefix in ("澳门", "香港", "澳", "港"):
+                for prefix in ("澳门", "香港", "澳", "奥", "港"):
                     if line.startswith(prefix):
                         line = prefix + ctx_bet_type + line[len(prefix):]
                         inserted = True
@@ -1392,23 +1793,33 @@ def parse_lines(
                 if not inserted:
                     line = ctx_bet_type + line
 
-            # ── 一行多单：逗号/中文逗号分隔 ──
-            sub_parts = [line]
-            sep_keywords = ("各", "每", "打")
-            if any(kw in line for kw in sep_keywords):
-                parts = re.split(r"[，,]", line)
-                if len(parts) >= 2 and all(
-                    re.search(_SEP_PATTERN, p) for p in parts
-                ):
-                    sub_parts = parts
+            # ── 一行多单：按参考软件式口语规则拆成独立订单片段 ──
+            trailing_region = ""
+            stripped_line, trailing_region = _strip_region_marker(line)
+            if trailing_region:
+                line = _with_region(stripped_line, trailing_region)
+            sub_parts = _split_smart_segments(line)
             for sub in sub_parts:
                 sub = sub.strip()
                 if sub:
                     r = parse_order(sub, options=options)
-                    if r.success and sub != line:
-                        r.original_text = sub.strip()
+                    r.original_text = sub.strip()
+                    r.normalized_text = sub.strip()
                     results.append(r)
 
+    if declared_total is not None and results:
+        calculated_total = sum((Decimal(str(r.total)) for r in results if r.success), Decimal("0"))
+        if calculated_total == declared_total:
+            message = f"共计校验通过：{_format_decimal_plain(declared_total)}"
+        else:
+            message = (
+                f"共计校验不一致：输入{_format_decimal_plain(declared_total)}，"
+                f"解析{_format_decimal_plain(calculated_total)}"
+            )
+        for result in results:
+            if result.success:
+                result.warnings.append(message)
+                break
     return results
 
 
@@ -1480,7 +1891,7 @@ def format_result(result: ParseResult) -> str:
     prefix = f"{result.region}：特码：" if result.region else ""
 
     # ── 复试连肖专用展示 ──
-    if result.category == "复试连肖" and result.zodiac_groups:
+    if result.fushi_lian_sizes and result.zodiac_groups:
         return _format_fushi(result, amount_display)
 
     groups = result.zodiac_groups

@@ -395,7 +395,11 @@ class OrderIntakeService:
         total_amount = Decimal("0")
 
         for index, result in enumerate(parsed_results):
-            source_line = source_lines[index] if index < len(source_lines) else metadata.raw_text.strip()
+            source_line = (
+                getattr(result, "normalized_text", None)
+                or getattr(result, "original_text", None)
+                or (source_lines[index] if index < len(source_lines) else metadata.raw_text.strip())
+            )
             try:
                 line_region = resolve_region(
                     text_region=result.region,

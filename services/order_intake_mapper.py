@@ -39,6 +39,7 @@ _TAIL_PATTERN = re.compile(r"^尾[0-9]$")
 _HEAD_PATTERN = re.compile(r"^[0-4]头$")
 _UNSUPPORTED_SAVE_CATEGORIES = frozenset({"全包"})
 _LIANMA_CATEGORIES = frozenset({"二中二", "三中三", "三中二"})
+_UNSUPPORTED_SETTLEMENT_GROUP_CATEGORIES = frozenset({"二中特", "特串"})
 
 
 class IntakeConversionError(Exception):
@@ -90,6 +91,8 @@ def _is_single_zodiac(result: ParseResult) -> bool:
 
 
 def _is_lianxiao_category(result: ParseResult) -> bool:
+    if getattr(result, "zodiac_number_mode", False):
+        return False
     if result.category == "多生肖":
         return True
     if result.category.endswith("肖") and not _is_single_zodiac(result):
@@ -177,7 +180,7 @@ def convert_parse_result(
     normalizer: BetTypeNormalizer | None = None,
 ) -> tuple[list[IntakeItemPreview], list[OrderItemCreate], list[str], list[str]]:
     normalizer = normalizer or BetTypeNormalizer()
-    warnings: list[str] = []
+    warnings: list[str] = list(getattr(result, "warnings", []) or [])
     errors: list[str] = []
     previews: list[IntakeItemPreview] = []
     order_items: list[OrderItemCreate] = []
@@ -219,6 +222,54 @@ def convert_parse_result(
         return previews, order_items, warnings, errors
 
     category = result.category
+
+    if category in _UNSUPPORTED_SETTLEMENT_GROUP_CATEGORIES:
+        selection = ",".join(f"{number:02d}" for number in result.numbers)
+        warning = f"玩法「{category}」可保存，但当前结算预览暂不支持"
+        warnings.append(warning)
+        try:
+            normalize_bet_type(category)
+        except InvalidBetTypeError as exc:
+            message = str(exc)
+            previews.append(
+                _build_item_preview(
+                    source_line=source_line,
+                    original_bet_type=category,
+                    original_selection=selection,
+                    amount=expected_total,
+                    order_bet_type=None,
+                    order_selection=None,
+                    normalizer=normalizer,
+                    warning=warning,
+                    error=message,
+                )
+            )
+            errors.append(message)
+            return previews, order_items, warnings, errors
+
+        preview = _build_item_preview(
+            source_line=source_line,
+            original_bet_type=category,
+            original_selection=selection,
+            amount=expected_total,
+            order_bet_type=category,
+            order_selection=selection,
+            normalizer=normalizer,
+            warning=warning,
+        )
+        previews.append(preview)
+        if preview.is_valid:
+            order_items.append(
+                OrderItemCreate(
+                    bet_type=category,
+                    selection=selection,
+                    amount=expected_total,
+                    note=(result.note or "结算规则待确认"),
+                )
+            )
+        else:
+            errors.append(preview.error or f"{category}映射失败")
+        return previews, order_items, warnings, errors
 
     if category in _UNSUPPORTED_SAVE_CATEGORIES:
         message = f"玩法「{category}」当前无法保存到订单系统"
@@ -465,7 +516,19 @@ def convert_parse_result(
             selection = ",".join(name for name, _ in result.zodiac_groups)
         else:
             selection = ",".join(f"{number:02d}" for number in result.numbers)
-        fuxuan_note = f"复选类型={result.fuxuan_type}" if result.fuxuan_type else None
+        fuxuan_notes: list[str] = []
+        if result.fuxuan_type:
+            fuxuan_notes.append(f"复选类型={result.fuxuan_type}")
+        if result.fushi_lian_sizes:
+            combo_count = int(Decimal(str(result.total)) / Decimal(str(result.amount))) if Decimal(str(result.amount)) else 0
+            fuxuan_notes.append(
+                "复试连数="
+                + ",".join(str(size) for size in result.fushi_lian_sizes)
+                + f";组合数={combo_count}"
+            )
+        if result.note:
+            fuxuan_notes.append(result.note)
+        fuxuan_note = ";".join(dict.fromkeys(fuxuan_notes)) or None
         try:
             normalize_bet_type(category)
         except InvalidBetTypeError as exc:
@@ -557,7 +620,7 @@ def convert_parse_result(
             errors.append(preview.error or "连肖映射失败")
         return previews, order_items, warnings, errors
 
-    if _is_expand_category(category) or _is_single_zodiac(result):
+    if _is_expand_category(category) or _is_single_zodiac(result) or getattr(result, "zodiac_number_mode", False):
         numbers = result.numbers
         if not numbers:
             message = f"类别「{category}」未展开出有效号码"
@@ -666,7 +729,12 @@ def convert_parse_result(
             previews.append(preview)
             if preview.is_valid:
                 order_items.append(
-                    OrderItemCreate(bet_type="特码", selection=selection, amount=per_amount)
+                    OrderItemCreate(
+                        bet_type="特码",
+                        selection=selection,
+                        amount=per_amount,
+                        note=(result.note or None),
+                    )
                 )
             else:
                 errors.append(preview.error or f"号码 {number} 转换失败")
