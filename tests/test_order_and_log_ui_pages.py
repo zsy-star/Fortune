@@ -245,20 +245,22 @@ def test_order_detail_business_layout_and_core_entries(session_factory) -> None:
     assert not page._btn_void.isEnabled()
 
 
-def test_order_detail_remaining_unavailable_actions_are_explicitly_disabled(session_factory) -> None:
+def test_order_detail_high_risk_maintenance_actions_are_guarded(session_factory) -> None:
     app()
     page = OrderDetailPage(
         order_service=OrderService(session_factory),
         log_service=LogService(session_factory),
     )
 
-    buttons = [
-        page._btn_clear_orders,
-        page._btn_reset_draw,
-    ]
-    assert all(not button.isEnabled() for button in buttons)
-    assert "高风险删除入口" in page._btn_clear_orders.toolTip()
-    assert "高风险开奖维护入口" in page._btn_reset_draw.toolTip()
+    assert page._btn_clear_orders.isEnabled()
+    assert page._btn_clear_orders.objectName() == "dangerAction"
+    assert "自动备份" in page._btn_clear_orders.toolTip()
+    assert page._btn_bulk_delete_orders.objectName() == "dangerAction"
+    assert not page._btn_bulk_delete_orders.isEnabled()
+    assert "选中" in page._btn_bulk_delete_orders.toolTip()
+    assert page._btn_reset_draw.isEnabled()
+    assert page._btn_reset_draw.objectName() == "dangerAction"
+    assert "无结算记录" in page._btn_reset_draw.toolTip()
     assert page._btn_import_orders.isEnabled()
     assert page._btn_import_orders.text() == "导入订单"
     assert "预览" in page._btn_import_orders.toolTip()
@@ -922,12 +924,13 @@ def test_operation_log_page_loads_filters_reset_and_paging(session_factory) -> N
     assert page._table.item(0, 3).toolTip()
 
 
-def test_operation_log_page_date_validation_and_clear_disabled(session_factory) -> None:
+def test_operation_log_page_date_validation_and_clear_logs_guard(session_factory) -> None:
     app()
     page = OperationLogPage(log_service=LogService(session_factory))
     page._start_date.setDate(QDate(2026, 1, 2))
     page._end_date.setDate(QDate(2026, 1, 1))
     page.reload_data()
     assert "开始日期不能晚于结束日期" in page._lbl_total.text()
-    page._on_clear_disabled()
-    assert "暂未开放" in page._lbl_total.text()
+    assert page._btn_clear_logs.isEnabled()
+    assert page._btn_clear_logs.objectName() == "dangerAction"
+    assert "归档当前日志" in page._btn_clear_logs.toolTip()

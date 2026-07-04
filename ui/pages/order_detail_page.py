@@ -9,6 +9,7 @@ from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDateEdit,
+    QDialog,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -35,9 +36,11 @@ from schemas.settlement_schema import OrderSettlementPreview, SettlementLedgerRe
 from services.draw_service import DrawService
 from services.excel_export_service import ExcelExportService
 from services.log_service import LogService
+from services.maintenance_service import MaintenanceError, MaintenanceService
 from services.order_service import OrderService
 from services.settlement_service import SettlementService
 from services.settings_service import SettingsService
+from ui.dialogs.high_risk_confirm_dialog import HighRiskConfirmDialog
 from ui.dialogs.order_import_dialog import OrderImportDialog
 from ui.dialogs.settlement_preview_dialog import SettlementPreviewDialog
 from ui.app_events import app_events
@@ -122,6 +125,7 @@ class OrderDetailPage(QWidget):
         settlement_service: SettlementService | None = None,
         excel_export_service: ExcelExportService | None = None,
         settings_service: SettingsService | None = None,
+        maintenance_service: MaintenanceService | None = None,
     ):
         super().__init__(parent)
         self._order_service = order_service or OrderService()
@@ -131,6 +135,7 @@ class OrderDetailPage(QWidget):
         self._settlement_service = settlement_service or SettlementService(session_factory)
         self._excel_export_service = excel_export_service or ExcelExportService(session_factory)
         self._settings_service = settings_service or SettingsService(session_factory)
+        self._maintenance_service = maintenance_service or MaintenanceService(session_factory)
         self._page = 1
         self._total = 0
         self._selected_order_id: int | None = None
@@ -197,10 +202,15 @@ class OrderDetailPage(QWidget):
         row.setContentsMargins(4, 3, 4, 3)
         row.setSpacing(4)
 
-        self._btn_clear_orders = self._unavailable_button(
-            "清空订单",
-            "高风险删除入口，需要权限、审计和恢复策略；当前不开放，请使用筛选和单笔作废。",
-        )
+        self._btn_clear_orders = QPushButton("清空订单")
+        self._btn_clear_orders.setObjectName("dangerAction")
+        self._btn_clear_orders.setToolTip("高风险维护：执行前会自动备份，并要求原因、确认短语和二次确认。")
+        self._btn_clear_orders.clicked.connect(self._on_clear_orders)
+        self._btn_bulk_delete_orders = QPushButton("批量删除选中订单")
+        self._btn_bulk_delete_orders.setObjectName("dangerAction")
+        self._btn_bulk_delete_orders.setToolTip("高风险维护：只删除当前选中的订单及对应明细、结算快照。")
+        self._btn_bulk_delete_orders.setEnabled(False)
+        self._btn_bulk_delete_orders.clicked.connect(self._on_bulk_delete_orders)
         self._btn_export_excel = QPushButton("导出订单")
         self._btn_export_excel.setObjectName("primaryAction")
         self._btn_export_excel.setToolTip("按当前查询条件导出 Excel")
@@ -217,16 +227,17 @@ class OrderDetailPage(QWidget):
         self._btn_combined_prize.setObjectName("primaryAction")
         self._btn_combined_prize.setToolTip("只读汇总当前筛选结果，展示返水统计，不写余额、不计算佣金")
         self._btn_combined_prize.clicked.connect(self._on_combined_settlement_summary)
-        self._btn_reset_draw = self._unavailable_button(
-            "重置开奖",
-            "高风险开奖维护入口，需要权限、审计和恢复策略；当前不开放，请使用开奖记录页的新增或修正。",
-        )
+        self._btn_reset_draw = QPushButton("重置开奖")
+        self._btn_reset_draw.setObjectName("dangerAction")
+        self._btn_reset_draw.setToolTip("高风险维护：仅在无结算记录时允许重置开奖记录。")
+        self._btn_reset_draw.clicked.connect(self._on_reset_draws)
         self._btn_expand_prize = QPushButton("扩大兑奖框")
         self._btn_expand_prize.setToolTip("扩大或收起底部结算摘要显示区域")
         self._btn_expand_prize.clicked.connect(self._on_toggle_result_panel_size)
 
         for button in (
             self._btn_clear_orders,
+            self._btn_bulk_delete_orders,
             self._btn_export_excel,
             self._btn_import_orders,
             self._btn_filter_prize,
@@ -897,6 +908,7 @@ class OrderDetailPage(QWidget):
 
     def _on_selection_changed(self) -> None:
         selected = sorted({index.row() for index in self._table.selectionModel().selectedRows()})
+        self._btn_bulk_delete_orders.setEnabled(bool(selected))
         if not selected:
             self._lbl_selected_total.setText("选中总额：0.00")
             self._lbl_order_state.setText("订单状态：未选择")
@@ -1303,6 +1315,128 @@ class OrderDetailPage(QWidget):
             ]
         }
 
+    def _selected_order_ids_from_table(self) -> list[int]:
+        selection_model = self._table.selectionModel()
+        rows = sorted({index.row() for index in selection_model.selectedRows()}) if selection_model else []
+        order_ids: list[int] = []
+        for row in rows:
+            if 0 <= row < len(self._row_order_ids):
+                order_ids.append(self._row_order_ids[row])
+        return order_ids
+
+    def _confirm_high_risk_operation(self, spec):
+        dialog = HighRiskConfirmDialog(spec, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            self._status_label.setText("已取消高风险维护操作，未写入业务数据。")
+            return None
+        return dialog.confirmation()
+
+    def _on_clear_orders(self) -> None:
+        try:
+            spec = self._maintenance_service.build_clear_orders_spec()
+        except Exception as exc:
+            QMessageBox.warning(self, "清空订单", f"读取影响范围失败：{exc}")
+            return
+        confirmation = self._confirm_high_risk_operation(spec)
+        if confirmation is None:
+            return
+        try:
+            result = self._maintenance_service.clear_orders(confirmation)
+        except Exception as exc:
+            QMessageBox.warning(self, "清空订单", f"清空订单失败：{exc}")
+            self._status_label.setText(f"清空订单失败：{exc}")
+            return
+        app_events.orders_changed.emit()
+        app_events.settlements_changed.emit()
+        app_events.logs_changed.emit()
+        self._status_label.setText(f"清空订单完成，已备份到：{result.backup_path}")
+        QMessageBox.information(
+            self,
+            "清空订单",
+            (
+                "清空订单完成\n"
+                f"备份文件：{result.backup_path}\n"
+                f"删除订单：{result.deleted_orders_count}\n"
+                f"删除明细：{result.deleted_order_items_count}\n"
+                f"删除结算快照：{result.deleted_settlement_records_count}\n"
+                f"操作日志ID：{result.operation_log_id}"
+            ),
+        )
+
+    def _on_bulk_delete_orders(self) -> None:
+        order_ids = self._selected_order_ids_from_table()
+        if not order_ids:
+            QMessageBox.warning(self, "批量删除订单", "请先选择要删除的订单。")
+            return
+        try:
+            spec = self._maintenance_service.build_bulk_delete_orders_spec(order_ids)
+        except Exception as exc:
+            QMessageBox.warning(self, "批量删除订单", f"读取影响范围失败：{exc}")
+            return
+        confirmation = self._confirm_high_risk_operation(spec)
+        if confirmation is None:
+            return
+        try:
+            result = self._maintenance_service.bulk_delete_orders(order_ids, confirmation)
+        except Exception as exc:
+            QMessageBox.warning(self, "批量删除订单", f"批量删除订单失败：{exc}")
+            self._status_label.setText(f"批量删除订单失败：{exc}")
+            return
+        app_events.orders_changed.emit()
+        app_events.settlements_changed.emit()
+        app_events.logs_changed.emit()
+        self._status_label.setText(f"批量删除订单完成，已备份到：{result.backup_path}")
+        QMessageBox.information(
+            self,
+            "批量删除订单",
+            (
+                "批量删除订单完成\n"
+                f"备份文件：{result.backup_path}\n"
+                f"删除订单：{result.deleted_orders_count}\n"
+                f"删除明细：{result.deleted_order_items_count}\n"
+                f"删除结算快照：{result.deleted_settlement_records_count}\n"
+                f"操作日志ID：{result.operation_log_id}"
+            ),
+        )
+
+    def _on_reset_draws(self) -> None:
+        try:
+            spec = self._maintenance_service.build_reset_draws_spec()
+        except Exception as exc:
+            QMessageBox.warning(self, "重置开奖", f"读取影响范围失败：{exc}")
+            return
+        if spec.extra_counts.get("settlement_records", 0):
+            message = "存在结算记录，不能直接重置开奖；请先清空订单或使用测试库。"
+            QMessageBox.warning(self, "重置开奖", message)
+            self._status_label.setText(message)
+            return
+        confirmation = self._confirm_high_risk_operation(spec)
+        if confirmation is None:
+            return
+        try:
+            result = self._maintenance_service.reset_draws(confirmation)
+        except MaintenanceError as exc:
+            QMessageBox.warning(self, "重置开奖", str(exc))
+            self._status_label.setText(str(exc))
+            return
+        except Exception as exc:
+            QMessageBox.warning(self, "重置开奖", f"重置开奖失败：{exc}")
+            self._status_label.setText(f"重置开奖失败：{exc}")
+            return
+        app_events.draws_changed.emit()
+        app_events.logs_changed.emit()
+        self._status_label.setText(f"重置开奖记录完成，已备份到：{result.backup_path}")
+        QMessageBox.information(
+            self,
+            "重置开奖",
+            (
+                "重置开奖记录完成\n"
+                f"备份文件：{result.backup_path}\n"
+                f"删除开奖记录：{result.deleted_draws_count}\n"
+                f"操作日志ID：{result.operation_log_id}"
+            ),
+        )
+
     def _on_settlement_preview(self) -> None:
         if self._selected_order_id is None:
             self._status_label.setText("请先选择订单")
@@ -1447,6 +1581,8 @@ class OrderDetailPage(QWidget):
             }
             QPushButton:hover { background: #e8f7f8; border-color: #5fbac2; }
             QPushButton#primaryAction { color: #146c75; font-weight: 600; }
+            QPushButton#dangerAction { color: #9f1d1d; border-color: #d79696; font-weight: 600; }
+            QPushButton#dangerAction:hover { background: #fff2f2; border-color: #c0392b; }
             QPushButton#unavailableAction:disabled { color: #8b999c; background: #f3f5f5; }
             QTableWidget {
                 border: 1px solid #aebfc2;

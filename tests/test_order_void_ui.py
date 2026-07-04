@@ -245,4 +245,5 @@ def test_order_void_ui_uses_service_only() -> None:
     for forbidden in ("Session", "Repository", "sqlite", "OrderRepository", "LogRepository", "data/fortune.db"):
         assert forbidden not in source
     assert "void_order(" in source
-    assert "delete" not in source.lower()
+    assert "session.delete" not in source.lower()
+    assert "delete(" not in source.lower()

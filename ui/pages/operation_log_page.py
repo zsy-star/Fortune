@@ -7,6 +7,7 @@ from datetime import datetime, time, timedelta
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
     QDateEdit,
+    QDialog,
     QFrame,
     QFileDialog,
     QHBoxLayout,
@@ -24,8 +25,9 @@ from PySide6.QtWidgets import (
 from schemas.log_schema import OperationLogResult
 from services.excel_export_service import ExcelExportService
 from services.log_service import LogService
+from services.maintenance_service import MaintenanceService
 from ui.app_events import app_events
-from ui.unavailable import unavailable_text
+from ui.dialogs.high_risk_confirm_dialog import HighRiskConfirmDialog
 
 PAGE_SIZE = 20
 
@@ -57,10 +59,12 @@ class OperationLogPage(QWidget):
         parent=None,
         log_service: LogService | None = None,
         excel_export_service: ExcelExportService | None = None,
+        maintenance_service: MaintenanceService | None = None,
     ):
         super().__init__(parent)
         self._log_service = log_service or LogService()
         self._excel_export_service = excel_export_service or ExcelExportService(self._log_service._session_factory)
+        self._maintenance_service = maintenance_service or MaintenanceService(self._log_service._session_factory)
         self._page = 1
         self._total = 0
 
@@ -130,12 +134,18 @@ class OperationLogPage(QWidget):
             ("重置", self._on_reset, True),
             ("刷新", self.reload_data, True),
             ("导出 Excel", self._on_export_excel, True),
+            ("清空日志", self._on_clear_logs, True),
         ]
         for text, handler, enabled in specs:
             btn = QPushButton(text)
             if text == "导出 Excel":
                 self._btn_export_excel = btn
-            btn.setObjectName("logActionLink")
+            if text == "清空日志":
+                self._btn_clear_logs = btn
+                btn.setObjectName("dangerAction")
+                btn.setToolTip("高风险维护：清空前会自动备份数据库并归档当前日志。")
+            else:
+                btn.setObjectName("logActionLink")
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setEnabled(enabled)
             btn.clicked.connect(handler)
@@ -149,7 +159,7 @@ class OperationLogPage(QWidget):
         row = QHBoxLayout()
         self._lbl_total = QLabel()
         self._lbl_displayed = QLabel()
-        self._lbl_safety = QLabel("清空日志等高风险维护功能暂未开放；后续需要权限系统和审计策略支持。")
+        self._lbl_safety = QLabel("清空日志已开放为高风险维护入口：执行前会备份数据库、归档日志、要求原因和确认短语。")
         self._lbl_safety.setObjectName("safetyHint")
         row.addWidget(self._lbl_total)
         row.addWidget(self._lbl_safety)
@@ -362,6 +372,38 @@ class OperationLogPage(QWidget):
         QMessageBox.information(self, "导出 Excel", _export_success_message(result))
         self._lbl_total.setText(f"导出成功：{result.file_name}")
 
+    def _on_clear_logs(self) -> None:
+        try:
+            spec = self._maintenance_service.build_clear_logs_spec()
+        except Exception as exc:
+            QMessageBox.warning(self, "清空日志", f"读取影响范围失败：{exc}")
+            return
+        dialog = HighRiskConfirmDialog(spec, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            self._lbl_total.setText("已取消清空日志，未写入业务数据。")
+            return
+        try:
+            result = self._maintenance_service.clear_logs(dialog.confirmation())
+        except Exception as exc:
+            QMessageBox.warning(self, "清空日志", f"清空日志失败：{exc}")
+            self._lbl_total.setText(f"清空日志失败：{exc}")
+            return
+        app_events.logs_changed.emit()
+        self._page = 1
+        self.reload_data()
+        self._lbl_total.setText(f"清空日志完成，归档文件：{result.archive_path}")
+        QMessageBox.information(
+            self,
+            "清空日志",
+            (
+                "清空日志完成\n"
+                f"数据库备份：{result.backup_path}\n"
+                f"日志归档：{result.archive_path}\n"
+                f"删除日志：{result.deleted_logs_count}\n"
+                f"新操作日志ID：{result.operation_log_id}"
+            ),
+        )
+
     def _prev_page(self) -> None:
         if self._page > 1:
             self._page -= 1
@@ -372,15 +414,6 @@ class OperationLogPage(QWidget):
         if self._page < max_page:
             self._page += 1
             self.reload_data()
-
-    def _on_clear_disabled(self) -> None:
-        self._lbl_total.setText(
-            unavailable_text(
-                "清空操作日志",
-                "操作日志用于追溯订单、结算、备份恢复等关键行为，当前测试版不提供清空入口。",
-                "后续需要权限系统和审计策略后再评估。",
-            )
-        )
 
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(
@@ -394,6 +427,15 @@ class OperationLogPage(QWidget):
             }
             QPushButton:hover {
                 background: #ebf5fb;
+            }
+            QPushButton#dangerAction {
+                color: #9f1d1d;
+                border-color: #d79696;
+                font-weight: 600;
+            }
+            QPushButton#dangerAction:hover {
+                background: #fff2f2;
+                border-color: #c0392b;
             }
             QPushButton:disabled {
                 color: #95a5a6;

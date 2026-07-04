@@ -28,7 +28,9 @@ from models import LotteryDraw
 from schemas.draw_schema import LotteryDrawCreate
 from services.draw_service import DrawService
 from services.draw_sync_service import DrawSyncResult
+from services.maintenance_service import MaintenanceError, MaintenanceService
 from ui.app_events import app_events
+from ui.dialogs.high_risk_confirm_dialog import HighRiskConfirmDialog
 from ui.workers import DrawSyncTask
 
 REGION_LOTTERY_TYPE = {"澳门": 2, "香港": 1}
@@ -36,9 +38,15 @@ PAGE_SIZE = 20
 
 
 class DrawHistoryPage(QWidget):
-    def __init__(self, parent=None, draw_service: DrawService | None = None):
+    def __init__(
+        self,
+        parent=None,
+        draw_service: DrawService | None = None,
+        maintenance_service: MaintenanceService | None = None,
+    ):
         super().__init__(parent)
         self._draw_service = draw_service or DrawService()
+        self._maintenance_service = maintenance_service or MaintenanceService(self._draw_service._session_factory)
         self._sync_task: DrawSyncTask | None = None
         self._page = 1
         self._total = 0
@@ -111,19 +119,24 @@ class DrawHistoryPage(QWidget):
         self._btn_sync_history = QPushButton("同步历史数据")
         self._btn_manual_add = QPushButton("手工新增开奖")
         self._btn_manual_edit = QPushButton("修正选中开奖")
+        self._btn_reset_draws = QPushButton("重置开奖记录")
         self._btn_sync_latest.setObjectName("fetchButton")
         self._btn_sync_history.setObjectName("fetchButton")
         self._btn_manual_add.setObjectName("fetchButton")
         self._btn_manual_edit.setObjectName("fetchButton")
+        self._btn_reset_draws.setObjectName("dangerAction")
         self._btn_sync_latest.clicked.connect(self._sync_latest)
         self._btn_sync_history.clicked.connect(self._open_history_sync_dialog)
         self._btn_manual_add.clicked.connect(self._on_manual_add_draw)
         self._btn_manual_edit.clicked.connect(self._on_manual_edit_draw)
+        self._btn_reset_draws.clicked.connect(self._on_reset_draws)
+        self._btn_reset_draws.setToolTip("高风险维护：仅在无结算记录时允许清空开奖记录。")
         self._btn_manual_edit.setEnabled(False)
         row.addWidget(self._btn_sync_latest)
         row.addWidget(self._btn_sync_history)
         row.addWidget(self._btn_manual_add)
         row.addWidget(self._btn_manual_edit)
+        row.addWidget(self._btn_reset_draws)
         return row
 
     def _build_table(self) -> QTableWidget:
@@ -396,6 +409,46 @@ class DrawHistoryPage(QWidget):
         self._status_label.setText(f"已修正开奖记录：{updated.region} 第{updated.issue_number}期")
         QMessageBox.information(self, "开奖记录", "开奖记录修正已保存。")
 
+    def _on_reset_draws(self) -> None:
+        try:
+            spec = self._maintenance_service.build_reset_draws_spec()
+        except Exception as exc:
+            self._status_label.setText(f"读取重置影响范围失败：{exc}")
+            QMessageBox.warning(self, "重置开奖记录", f"读取影响范围失败：{exc}")
+            return
+        if spec.extra_counts.get("settlement_records", 0):
+            message = "存在结算记录，不能直接重置开奖；请先清空订单或使用测试库。"
+            self._status_label.setText(message)
+            QMessageBox.warning(self, "重置开奖记录", message)
+            return
+        dialog = HighRiskConfirmDialog(spec, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            self._status_label.setText("已取消重置开奖记录，未写入业务数据。")
+            return
+        try:
+            result = self._maintenance_service.reset_draws(dialog.confirmation())
+        except MaintenanceError as exc:
+            self._status_label.setText(str(exc))
+            QMessageBox.warning(self, "重置开奖记录", str(exc))
+            return
+        except Exception as exc:
+            self._status_label.setText(f"重置开奖记录失败：{exc}")
+            QMessageBox.warning(self, "重置开奖记录", f"重置开奖记录失败：{exc}")
+            return
+        app_events.draws_changed.emit()
+        app_events.logs_changed.emit()
+        self._status_label.setText(f"重置开奖记录完成，已备份到：{result.backup_path}")
+        QMessageBox.information(
+            self,
+            "重置开奖记录",
+            (
+                "重置开奖记录完成\n"
+                f"数据库备份：{result.backup_path}\n"
+                f"删除开奖记录：{result.deleted_draws_count}\n"
+                f"操作日志ID：{result.operation_log_id}"
+            ),
+        )
+
     def _show_manual_error(self, title: str, exc: Exception) -> None:
         message = str(exc) or exc.__class__.__name__
         self._status_label.setText(f"{title}：{message}")
@@ -471,8 +524,17 @@ class DrawHistoryPage(QWidget):
                 background: #ffffff;
                 font-size: 13px;
             }
+            QPushButton#dangerAction {
+                color: #9f1d1d;
+                border-color: #d79696;
+                font-weight: 600;
+            }
             QPushButton:hover {
                 background: #ebf5fb;
+            }
+            QPushButton#dangerAction:hover {
+                background: #fff2f2;
+                border-color: #c0392b;
             }
             QPushButton:disabled {
                 color: #95a5a6;

@@ -246,7 +246,7 @@ def test_split_order_first_stage_handlers_are_not_silent() -> None:
     assert window._result_text.toPlainText() == "1. 兔各10\n2. 马各5"
 
 
-def test_order_detail_page_keeps_supported_actions_and_disables_unopened_buttons(session_factory) -> None:
+def test_order_detail_page_keeps_supported_actions_and_guards_high_risk_buttons(session_factory) -> None:
     app()
     page = OrderDetailPage(
         order_service=OrderService(session_factory),
@@ -258,14 +258,20 @@ def test_order_detail_page_keeps_supported_actions_and_disables_unopened_buttons
     assert "导出订单" in button_texts
     assert page._btn_preview.text() == "结算预览"
     assert page._btn_void.text() == "作废订单"
-    unopened_buttons = (
+    high_risk_buttons = (
         page._btn_clear_orders,
+        page._btn_bulk_delete_orders,
         page._btn_reset_draw,
     )
-    assert all(button.text() in button_texts for button in unopened_buttons)
-    assert all(not button.isEnabled() for button in unopened_buttons)
-    assert "高风险删除入口" in page._btn_clear_orders.toolTip()
-    assert "高风险开奖维护入口" in page._btn_reset_draw.toolTip()
+    assert all(button.text() in button_texts for button in high_risk_buttons)
+    assert page._btn_clear_orders.isEnabled()
+    assert page._btn_clear_orders.objectName() == "dangerAction"
+    assert "自动备份" in page._btn_clear_orders.toolTip()
+    assert not page._btn_bulk_delete_orders.isEnabled()
+    assert page._btn_bulk_delete_orders.objectName() == "dangerAction"
+    assert page._btn_reset_draw.isEnabled()
+    assert page._btn_reset_draw.objectName() == "dangerAction"
+    assert "无结算记录" in page._btn_reset_draw.toolTip()
     assert page._btn_import_orders.text() == "导入订单"
     assert page._btn_import_orders.isEnabled()
     assert "预览" in page._btn_import_orders.toolTip()
@@ -277,23 +283,25 @@ def test_order_detail_page_keeps_supported_actions_and_disables_unopened_buttons
     assert page._btn_expand_prize.isEnabled()
 
 
-def test_operation_log_page_does_not_expose_clear_log_button(session_factory) -> None:
+def test_operation_log_page_exposes_guarded_clear_log_button(session_factory) -> None:
     app()
     page = OperationLogPage(log_service=LogService(session_factory))
     button_texts = set(_texts(page, QPushButton))
 
     assert "查询" in button_texts
     assert "导出 Excel" in button_texts
-    assert "清空日志" not in button_texts
-    assert "清空日志等高风险维护功能暂未开放" in "\n".join(_texts(page, QLabel))
+    assert "清空日志" in button_texts
+    assert page._btn_clear_logs.isEnabled()
+    assert page._btn_clear_logs.objectName() == "dangerAction"
+    assert "归档当前日志" in page._btn_clear_logs.toolTip()
+    assert "备份数据库" in "\n".join(_texts(page, QLabel))
 
 
 def test_high_risk_handler_is_explicit_and_snapshot_detail_is_read_only(session_factory) -> None:
     app()
     log_page = OperationLogPage(log_service=LogService(session_factory))
-    log_page._on_clear_disabled()
-    assert "当前测试版暂未开放：清空操作日志" in log_page._lbl_total.text()
-    assert "审计策略" in log_page._lbl_total.text()
+    assert log_page._btn_clear_logs.objectName() == "dangerAction"
+    assert "归档当前日志" in log_page._btn_clear_logs.toolTip()
 
     ledger_page = SettlementLedgerPage(order_service=OrderService(session_factory))
     assert ledger_page._btn_snapshot_detail.isEnabled()
@@ -311,6 +319,10 @@ def test_draw_history_manual_maintenance_is_opened_safely(session_factory) -> No
     assert not page._btn_manual_edit.isEnabled()
     assert page._btn_sync_latest.isEnabled()
     assert page._btn_sync_history.isEnabled()
+    assert page._btn_reset_draws.text() == "重置开奖记录"
+    assert page._btn_reset_draws.isEnabled()
+    assert page._btn_reset_draws.objectName() == "dangerAction"
+    assert "无结算记录" in page._btn_reset_draws.toolTip()
 
 
 def test_number_catalog_shows_static_reference_notice() -> None:
@@ -529,7 +541,7 @@ def test_commercial_release_acceptance_plan_and_samples_exist() -> None:
         "## 12. 操作日志验收",
         "## 13. 备份恢复验收",
         "## 14. 导出 / 打印文本验收",
-        "## 15. 高风险未开放确认",
+        "## 15. 高风险维护与未开放确认",
         "## 16. 明确不纳入产品范围确认",
         "## 17. 验收通过标准",
     ):
