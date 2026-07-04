@@ -49,9 +49,14 @@ _TABLE_COLUMNS = [
 ]
 
 _TOOLBAR_BUTTONS = [
+    "去除空行",
     "去分割符",
     "订单标记",
     "去空格",
+    "号码补零",
+    "重复提示",
+    "快速预览",
+    "复制预览",
     "标记香港",
     "去小数点",
     "语义转换",
@@ -414,6 +419,20 @@ class RecordOrderWindow(QMainWindow):
         self._lbl_selected_total.setText("当前选择总额: 0")
         self._table_user_adjusted = False
 
+    def _on_clear_output_confirmed(self) -> None:
+        """清空当前输入和预览；不删除任何已保存订单。"""
+        result = QMessageBox.question(
+            self,
+            "清空结果",
+            "确定清空当前输入、预览结果和表格吗？此操作不会删除已保存订单。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if result != QMessageBox.StandardButton.Yes:
+            return
+        self._on_clear_output()
+        self._show_status_message("已清空当前输入和预览")
+
     def _on_add_result(self) -> None:
         """将成功解析的订单添加到上方表格——每个解析结果一行。"""
         if not self._parsed_results:
@@ -646,30 +665,127 @@ class RecordOrderWindow(QMainWindow):
         self._table_user_adjusted = True
         self._update_order_totals()
 
+    def _show_status_message(self, message: str) -> None:
+        self.statusBar().showMessage(message, 3000)
+        self._set_advanced_status(message)
+
+    def _on_remove_blank_lines(self) -> None:
+        """删除输入框中的空白行，不保存订单。"""
+        raw = self._input_text.toPlainText()
+        if not raw:
+            return
+        lines = [line.rstrip() for line in raw.splitlines() if line.strip()]
+        self._input_text.setPlainText("\n".join(lines))
+        self._show_status_message("已去除空白行")
+
+    def _normalize_separator_line(self, line: str) -> str:
+        line = line.replace("，", ",").replace("、", ",")
+        line = re.sub(r"\s*,\s*", ",", line)
+        line = re.sub(r",{2,}", ",", line)
+        line = re.sub(r"(?<=\d)\s+(?=\d{1,2}(?:\D|$))", ",", line)
+        line = re.sub(r"(?<=[一-鿿])\s+(?=[一-鿿])", "", line)
+        line = re.sub(r"\s*(各(?:数)?)\s*", r"\1", line)
+        line = re.sub(r"\s+", " ", line)
+        return line.strip()
+
     def _on_remove_separators(self) -> None:
         """去分隔符：规范化输入文本中的数字分隔符。"""
-        import re
-
         raw = self._input_text.toPlainText()
         if not raw.strip():
             return
 
-        lines: list[str] = []
-        for line in raw.splitlines():
-            # 中文逗号 / 顿号 / 斜杠 → 英文逗号
-            line = line.replace("，", ",").replace("、", ",").replace("/", ",")
-            # 去掉逗号两侧空格
-            line = re.sub(r"\s*,\s*", ",", line)
-            # 相邻汉字之间的空格移除（如「澳 门」→「澳门」）
-            line = re.sub(r"(?<=[一-鿿])\s+(?=[一-鿿])", "", line)
-            # 去掉「各/各数」前后的空格
-            line = re.sub(r"\s*(各(?:数)?)\s*", r"\1", line)
-            # 合并剩余连续空格
-            line = re.sub(r"\s+", " ", line)
-            lines.append(line.strip())
+        lines = [self._normalize_separator_line(line) for line in raw.splitlines()]
 
         self._input_text.setPlainText("\n".join(lines))
+        self._show_status_message("已统一分隔符")
         # textChanged 信号会自动触发 _on_input_changed → 防抖解析
+
+    def _line_context_has_tail_only_bet(self, line: str, start: int) -> bool:
+        prefix = line[:start]
+        return "平尾" in prefix or "连尾" in prefix or "尾数" in prefix
+
+    def _should_pad_number_token(self, line: str, start: int, end: int) -> bool:
+        left = line[:start].rstrip()
+        right = line[end:].lstrip()
+        prev = left[-1:] if left else ""
+        next_ch = right[:1]
+        if prev in {"复", "第", "尾"}:
+            return False
+        if next_ch in {"头", "尾", "岁", "期"}:
+            return False
+        if left.endswith(("各", "各数", "每", "每注", "打", "金额", "总额")):
+            return False
+        if self._line_context_has_tail_only_bet(line, start):
+            return False
+        return True
+
+    def _pad_single_digit_numbers_in_line(self, line: str) -> str:
+        def repl(match: re.Match[str]) -> str:
+            if not self._should_pad_number_token(line, match.start(), match.end()):
+                return match.group(1)
+            return f"0{match.group(1)}"
+
+        return re.sub(r"(?<!\d)([1-9])(?!\d)", repl, line)
+
+    def _on_pad_numbers(self) -> None:
+        """将明显的 1-9 号码补成 01-09，不改金额。"""
+        raw = self._input_text.toPlainText()
+        if not raw.strip():
+            return
+        lines = [self._pad_single_digit_numbers_in_line(line) for line in raw.splitlines()]
+        self._input_text.setPlainText("\n".join(lines))
+        self._show_status_message("已补齐明显号码的前导 0")
+
+    def _extract_obvious_numbers_for_duplicate_check(self, line: str) -> list[str]:
+        cleaned = re.sub(r"(各(?:数)?|每(?:注)?|打)\s*\d+(?:\.\d+)?\s*$", "", line.strip())
+        numbers: list[str] = []
+        for token in re.findall(r"(?<!\d)(\d{1,2})(?!\d)", cleaned):
+            value = int(token)
+            if 1 <= value <= 49:
+                numbers.append(f"{value:02d}")
+        return numbers
+
+    def _find_duplicate_numbers_in_input(self) -> list[str]:
+        counts: dict[str, int] = {}
+        for line in self._input_text.toPlainText().splitlines():
+            for number in self._extract_obvious_numbers_for_duplicate_check(line):
+                counts[number] = counts.get(number, 0) + 1
+        return sorted(number for number, count in counts.items() if count > 1)
+
+    def _on_duplicate_number_hint(self) -> None:
+        """检查明显重复号码，只提示不修改输入。"""
+        duplicates = self._find_duplicate_numbers_in_input()
+        if duplicates:
+            QMessageBox.information(self, "重复号码提示", "发现重复号码：" + ", ".join(duplicates))
+            self._show_status_message("已完成重复号码检查")
+        else:
+            QMessageBox.information(self, "重复号码提示", "未发现明显重复号码")
+            self._show_status_message("未发现明显重复号码")
+
+    def _on_quick_preview(self) -> None:
+        """复用当前解析预览逻辑，不保存订单。"""
+        self._do_parse()
+        self._show_status_message("已重新解析当前输入")
+
+    def _preview_table_as_text(self) -> str:
+        headers = [_TABLE_COLUMNS[col] for col in range(self._order_table.columnCount())]
+        lines = ["\t".join(headers)]
+        for row in range(self._order_table.rowCount()):
+            values = [self._table_text(row, col) for col in range(self._order_table.columnCount())]
+            lines.append("\t".join(values))
+        return "\n".join(lines)
+
+    def _on_copy_preview(self) -> None:
+        """复制当前预览表或解析结果，不写文件、不保存订单。"""
+        if self._order_table.rowCount() > 0:
+            text = self._preview_table_as_text()
+        else:
+            text = self._output_text.toPlainText().strip()
+        if not text:
+            QMessageBox.information(self, "复制预览", "当前没有可复制的预览结果")
+            return
+        QApplication.clipboard().setText(text)
+        self._show_status_message("已复制当前预览结果")
 
     def _on_order_mark(self) -> None:
         """订单标记：弹出对话框输入标记文字，为每条非空行添加前缀。"""
@@ -1133,7 +1249,11 @@ class RecordOrderWindow(QMainWindow):
         for text in _TOOLBAR_BUTTONS:
             btn = QPushButton(text)
             btn.setObjectName("toolButton")
-            if text == "去分割符":
+            if text == "去除空行":
+                btn.setEnabled(True)
+                btn.setToolTip("删除当前输入中的空白行，不保存订单")
+                btn.clicked.connect(self._on_remove_blank_lines)
+            elif text == "去分割符":
                 btn.setEnabled(True)
                 btn.setToolTip("规范化数字分隔符")
                 btn.clicked.connect(self._on_remove_separators)
@@ -1145,6 +1265,22 @@ class RecordOrderWindow(QMainWindow):
                 btn.setEnabled(True)
                 btn.setToolTip("移除所有空格")
                 btn.clicked.connect(self._on_remove_spaces)
+            elif text == "号码补零":
+                btn.setEnabled(True)
+                btn.setToolTip("将明显的 1-9 号码补成 01-09，不处理金额和玩法关键词")
+                btn.clicked.connect(self._on_pad_numbers)
+            elif text == "重复提示":
+                btn.setEnabled(True)
+                btn.setToolTip("检查当前输入中的明显重复号码，只提示不修改")
+                btn.clicked.connect(self._on_duplicate_number_hint)
+            elif text == "快速预览":
+                btn.setEnabled(True)
+                btn.setToolTip("重新解析当前输入，不保存订单")
+                btn.clicked.connect(self._on_quick_preview)
+            elif text == "复制预览":
+                btn.setEnabled(True)
+                btn.setToolTip("复制当前预览表或解析结果，不写文件不保存订单")
+                btn.clicked.connect(self._on_copy_preview)
             elif text == "标记香港":
                 btn.setEnabled(True)
                 btn.setToolTip("将所有订单标记为香港区域")
@@ -1252,7 +1388,7 @@ class RecordOrderWindow(QMainWindow):
         btn_add.setMinimumWidth(88)
         btn_del.setMinimumWidth(88)
         btn_save.setMinimumWidth(88)
-        btn_clear.clicked.connect(self._on_clear_output)
+        btn_clear.clicked.connect(self._on_clear_output_confirmed)
         btn_add.clicked.connect(self._on_add_result)
         btn_del.clicked.connect(self._on_delete_selected)
         btn_save.clicked.connect(self._on_save_order)

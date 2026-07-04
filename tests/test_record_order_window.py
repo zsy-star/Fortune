@@ -593,7 +593,7 @@ class TestClipboardRobustness:
 
 class TestToolbarButtons:
     def test_toolbar_buttons_disabled(self, window):
-        """仅「去分割符」和「订单标记」启用，其余工具栏按钮禁用。"""
+        """录单工具栏安全文本处理按钮均启用。"""
         from PySide6.QtWidgets import QPushButton
 
         all_buttons = window.findChildren(QPushButton)
@@ -601,14 +601,35 @@ class TestToolbarButtons:
             btn for btn in all_buttons
             if btn.objectName() == "toolButton"
         ]
-        assert len(toolbar_buttons) >= 8
+        assert len(toolbar_buttons) >= 12
         enabled_buttons = [btn for btn in toolbar_buttons if btn.isEnabled()]
         enabled_texts = {btn.text() for btn in enabled_buttons}
-        assert "指定替换" in enabled_texts, "「指定替换」应启用"
-        assert len(enabled_buttons) == 8, f"应有 8 个启用的工具栏按钮，实际: {len(enabled_buttons)}"
+        expected = {
+            "去除空行",
+            "去分割符",
+            "订单标记",
+            "去空格",
+            "号码补零",
+            "重复提示",
+            "快速预览",
+            "复制预览",
+            "标记香港",
+            "去小数点",
+            "语义转换",
+            "指定替换",
+            "替换预设",
+        }
+        assert expected.issubset(enabled_texts)
+        assert len(enabled_buttons) == len(toolbar_buttons)
         for btn in toolbar_buttons:
-            if not btn.isEnabled():
-                assert btn.toolTip() == "暂未开放"
+            assert btn.toolTip()
+
+
+class TestRemoveBlankLines:
+    def test_remove_blank_lines(self, window):
+        window._input_text.setPlainText("兔各10\n\n  \n马各5\n")
+        window._on_remove_blank_lines()
+        assert window._input_text.toPlainText() == "兔各10\n马各5"
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -653,6 +674,12 @@ class TestRemoveSeparators:
         window._on_remove_separators()
         assert window._input_text.toPlainText() == "01,02,03各10"
 
+    def test_space_separated_numbers_normalized(self, window):
+        """空格分隔的号码列表整理为逗号分隔。"""
+        window._input_text.setPlainText("平码 01 02 03 各 10")
+        window._on_remove_separators()
+        assert window._input_text.toPlainText() == "平码 01,02,03各10"
+
     def test_empty_input_no_error(self, window):
         """空输入不报错。"""
         window._input_text.clear()
@@ -665,11 +692,16 @@ class TestRemoveSeparators:
         window._on_remove_separators()
         assert window._input_text.toPlainText() == "澳门兔各20"
 
-    def test_slash_to_comma(self, window):
-        """斜杠「/」转为英文逗号。"""
+    def test_slash_group_separator_is_preserved(self, window):
+        """斜杠「/」作为拖式/分组组合分隔符时不被破坏。"""
         window._input_text.setPlainText("01/02/03各10")
         window._on_remove_separators()
-        assert window._input_text.toPlainText() == "01,02,03各10"
+        assert window._input_text.toPlainText() == "01/02/03各10"
+
+    def test_drag_slash_format_is_preserved(self, window):
+        window._input_text.setPlainText("二中二 01，02 / 03，04 各 5")
+        window._on_remove_separators()
+        assert window._input_text.toPlainText() == "二中二 01,02 / 03,04各5"
 
     def test_chinese_category_spaces_removed(self, window):
         """中文类别名中间空格移除。"""
@@ -798,6 +830,108 @@ class TestRemoveSpaces:
         window._input_text.setPlainText("  兔各10  ")
         window._on_remove_spaces()
         assert window._input_text.toPlainText() == "兔各10"
+
+
+class TestPadNumbers:
+    def test_pad_single_digit_numbers(self, window):
+        window._input_text.setPlainText("平码 1,2,9各10")
+        window._on_pad_numbers()
+        assert window._input_text.toPlainText() == "平码 01,02,09各10"
+
+    def test_pad_numbers_does_not_touch_amount(self, window):
+        window._input_text.setPlainText("兔各5")
+        window._on_pad_numbers()
+        assert window._input_text.toPlainText() == "兔各5"
+
+    def test_pad_numbers_does_not_touch_keywords(self, window):
+        window._input_text.setPlainText("复2 1,2各10\n三中二 1,2,3各10\n二中二 1,2各10\n1头各10\n尾1各10")
+        window._on_pad_numbers()
+        assert window._input_text.toPlainText() == (
+            "复2 01,02各10\n"
+            "三中二 01,02,03各10\n"
+            "二中二 01,02各10\n"
+            "1头各10\n"
+            "尾1各10"
+        )
+
+    def test_pad_numbers_does_not_touch_age_writing(self, window):
+        window._input_text.setPlainText("1岁各10")
+        window._on_pad_numbers()
+        assert window._input_text.toPlainText() == "1岁各10"
+
+    def test_pad_numbers_keeps_bracket_group_shape(self, window):
+        window._input_text.setPlainText("二中二 (1-2)各10")
+        window._on_pad_numbers()
+        assert window._input_text.toPlainText() == "二中二 (01-02)各10"
+
+    def test_pad_numbers_keeps_drag_slash_shape(self, window):
+        window._input_text.setPlainText("二中二 1,2/3,4各5")
+        window._on_pad_numbers()
+        assert window._input_text.toPlainText() == "二中二 01,02/03,04各5"
+
+    def test_pad_numbers_does_not_touch_pingwei_tails(self, window):
+        window._input_text.setPlainText("平尾 1,3,4各100")
+        window._on_pad_numbers()
+        assert window._input_text.toPlainText() == "平尾 1,3,4各100"
+
+
+class TestSafePreviewTools:
+    def test_duplicate_hint_does_not_modify_input(self, window):
+        original = "01,02,01各10"
+        window._input_text.setPlainText(original)
+        with patch("ui.windows.record_order_window.QMessageBox.information") as info:
+            window._on_duplicate_number_hint()
+        assert window._input_text.toPlainText() == original
+        assert "01" in info.call_args.args[2]
+
+    def test_quick_preview_reuses_current_parse_logic(self, window):
+        window._input_text.setPlainText("兔各10")
+        window._on_quick_preview()
+        assert len(window._parsed_results) == 1
+        assert window._parsed_results[0].success
+        assert "已重新解析当前输入" in window.statusBar().currentMessage()
+
+    def test_clear_output_confirmed_requires_confirmation_no(self, window):
+        window._input_text.setPlainText("兔各10")
+        window._do_parse()
+        with patch(
+            "ui.windows.record_order_window.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.No,
+        ):
+            window._on_clear_output_confirmed()
+        assert window._input_text.toPlainText() == "兔各10"
+
+    def test_clear_output_confirmed_yes_clears_current_input_and_preview(self, window):
+        window._input_text.setPlainText("兔各10")
+        window._do_parse()
+        window._on_add_result()
+        with patch(
+            "ui.windows.record_order_window.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            window._on_clear_output_confirmed()
+        assert window._input_text.toPlainText() == ""
+        assert window._output_text.toPlainText() == ""
+        assert window._order_table.rowCount() == 0
+
+    def test_copy_preview_result_does_not_save_order(self, window, qapp):
+        window._order_intake_service.save_preview = MagicMock()
+        window._input_text.setPlainText("兔各10")
+        window._do_parse()
+        window._on_add_result()
+        window._on_copy_preview()
+        copied = qapp.clipboard().text()
+        assert "投注类型" in copied
+        assert "特码" in copied
+        window._order_intake_service.save_preview.assert_not_called()
+
+    def test_copy_preview_without_rows_uses_parse_output(self, window, qapp):
+        window._input_text.setPlainText("兔各10")
+        window._do_parse()
+        window._on_copy_preview()
+        copied = qapp.clipboard().text()
+        assert "特码" in copied
+        assert "04,16,28,40" in copied
 
 
 # ══════════════════════════════════════════════════════════════════════
