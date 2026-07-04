@@ -395,6 +395,8 @@ def test_unopened_feature_freeze_list_is_explicit_and_not_misleading() -> None:
         Path(path).read_text(encoding="utf-8")
         for path in ("README.md", "docs/commercial_test_scope.md", "docs/feature_status.md")
     )
+    assert "\u9ad8\u98ce\u9669\u672a\u5f00\u653e" in documents
+    assert "\u660e\u786e\u4e0d\u7eb3\u5165\u5f53\u524d\u4ea7\u54c1\u8303\u56f4" in documents
     required_items = [
         "\u5ba2\u6237\u8d26\u6237",
         "\u5ba2\u6237\u4f59\u989d",
@@ -406,8 +408,9 @@ def test_unopened_feature_freeze_list_is_explicit_and_not_misleading() -> None:
         "\u6279\u91cf\u5220\u9664",
         "\u91cd\u7f6e\u5f00\u5956",
         "\u771f\u5b9e\u4fee\u6539\u539f\u8ba2\u5355\u5f0f\u8c03\u5355",
+        "\u771f\u5b9e\u6253\u5370\u673a\u8c03\u7528",
         "\u4e91\u540c\u6b65 / \u5728\u7ebf\u8d26\u53f7",
-        "\u6b63\u5f0f\u5b89\u88c5\u5305",
+        "\u6b63\u5f0f\u5b89\u88c5\u5305\u548c\u5347\u7ea7\u6d41\u7a0b",
         "\u80c6\u62d6",
         "\u7ec4\u9009",
         "\u5168\u5305",
@@ -420,6 +423,7 @@ def test_unopened_feature_freeze_list_is_explicit_and_not_misleading() -> None:
     assert "\u8fd4\u6c34" in documents
     assert "\u7edf\u8ba1\u9879" in documents
     assert "\u4e0d\u5165\u8d26" in documents
+    assert "\u9700\u8981\u53c2\u8003\u8f6f\u4ef6\u6837\u4f8b" in documents
     assert "\u8fd4\u6c34 / \u4f63\u91d1 | \u6682\u672a\u5f00\u653e" not in documents
 
 
@@ -447,8 +451,54 @@ def test_printing_scope_is_text_only_and_not_a_commercial_gap() -> None:
     assert "\u771f\u5b9e\u6253\u5370\u673a\u8c03\u7528\uff1a\u9700\u8981" not in combined
 
     for path in ("docs/commercial_test_scope.md", "docs/feature_status.md"):
-        unopened_section = documents_by_path[path].split("## \u4ecd\u672a\u5f00\u653e", 1)[1]
-        assert "\u771f\u5b9e\u6253\u5370\u673a\u8c03\u7528" not in unopened_section
+        high_risk_section = documents_by_path[path].split("## \u9ad8\u98ce\u9669\u672a\u5f00\u653e", 1)[1]
+        assert "\u771f\u5b9e\u6253\u5370\u673a\u8c03\u7528" not in high_risk_section
+
+
+def test_docs_split_high_risk_from_out_of_product_scope() -> None:
+    documents_by_path = {
+        path: Path(path).read_text(encoding="utf-8")
+        for path in (
+            "README.md",
+            "docs/commercial_test_scope.md",
+            "docs/feature_status.md",
+            "docs/manual_test_script.md",
+            "docs/commercial_acceptance_checklist.md",
+            "docs/roadmap.md",
+        )
+    }
+    combined = "\n".join(documents_by_path.values())
+
+    assert "\u9ad8\u98ce\u9669\u672a\u5f00\u653e" in combined
+    assert "\u660e\u786e\u4e0d\u7eb3\u5165\u5f53\u524d\u4ea7\u54c1\u8303\u56f4" in combined
+    for phrase in (
+        "\u6743\u9650\u7cfb\u7edf",
+        "\u6e05\u7a7a\u8ba2\u5355",
+        "\u6e05\u7a7a\u65e5\u5fd7",
+        "\u91cd\u7f6e\u5f00\u5956",
+        "\u771f\u6b63\u4fee\u6539\u539f\u8ba2\u5355\u5f0f\u8c03\u5355",
+        "\u9700\u8981\u53c2\u8003\u8f6f\u4ef6\u6837\u4f8b",
+    ):
+        assert phrase in combined
+    for phrase in (
+        "\u5ba2\u6237\u8d26\u6237",
+        "\u5ba2\u6237\u4f59\u989d",
+        "\u4f59\u989d\u6d41\u6c34",
+        "\u94b1\u5305\u7cfb\u7edf",
+        "\u652f\u4ed8\u7cfb\u7edf",
+        "\u771f\u5b9e\u4ed8\u6b3e",
+        "\u771f\u5b9e\u6536\u6b3e",
+        "\u771f\u5b9e\u5151\u5956\u5165\u8d26",
+        "\u771f\u5b9e\u6253\u5370\u673a\u8c03\u7528",
+        "\u6253\u5370\u673a\u9a71\u52a8\u9002\u914d",
+        "\u4e91\u540c\u6b65 / \u5728\u7ebf\u8d26\u53f7",
+    ):
+        assert phrase in combined
+    assert "\u4e0d\u4f5c\u4e3a\u6b63\u5f0f\u5546\u7528\u5fc5\u505a\u7f3a\u53e3" in combined
+    assert "\u5f53\u524d\u7248\u672c\u4e0d\u8ba1\u5212\u5b9e\u73b0" in combined
+    assert "\u4e2d\u5956\u91d1\u989d\u662f\u7ed3\u7b97\u5feb\u7167 / \u7edf\u8ba1\u53c2\u8003" in combined
+    assert "\u4e0d\u4ee3\u8868\u771f\u5b9e\u4ed8\u6b3e" in combined
+    assert "\u4e0d\u5f62\u6210\u5ba2\u6237\u4f59\u989d" in combined
 
 
 def test_permission_design_is_frozen_and_accounting_is_out_of_product_scope() -> None:
