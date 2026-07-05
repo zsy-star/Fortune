@@ -412,6 +412,7 @@ class OrderImportService:
         log_action: str = "order/import",
         log_label: str = "订单导入",
         related_type: str = "order_import",
+        zodiac_year: int | None = None,
     ) -> OrderImportConfirmResult:
         """Save only parse-success rows through OrderIntakeService.
 
@@ -466,6 +467,7 @@ class OrderImportService:
                     customer_name=customer_name,
                     config_plan_name=config_plan_name,
                     source=source,
+                    zodiac_year=zodiac_year,
                 )
             except Exception as exc:
                 save_failed += 1
@@ -545,6 +547,7 @@ class OrderImportService:
         customer_name: str | None,
         config_plan_name: str | None,
         source: str,
+        zodiac_year: int | None,
     ):
         region = row.region if row.region in {"澳门", "香港"} else None
         preview = self._order_intake_service.preview_raw_text(
@@ -554,6 +557,7 @@ class OrderImportService:
             channel=channel,
             region=region,
             source=source,
+            zodiac_year=zodiac_year,
         )
         return self._order_intake_service.save_preview(preview)
 

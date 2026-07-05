@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, selectinload
 from core.database import SessionLocal
 from domain.bet_types import normalize_region
 from domain.zodiac_rules import get_zodiac
+from domain.zodiac_config import get_default_zodiac_year, validate_zodiac_year
 from models import LotteryDraw, Order, SettlementRecord
 from repositories.settings_repository import SettingsRepository
 from repositories.settlement_record_repository import SettlementRecordRepository
@@ -95,7 +96,8 @@ class SettlementService:
             draw = session.get(LotteryDraw, draw_id)
             if draw is None:
                 raise SettlementDataError(f"鏈壘鍒板紑濂栬褰曪細{draw_id}")
-            preview = self._engine.evaluate_order(order, draw)
+            engine, _warning = self._engine_for_order(order)
+            preview = engine.evaluate_order(order, draw)
             return self._apply_payouts(session, order, preview)
 
     def preview_order_by_issue(self, order_id: int, region: str, issue_number: str):
@@ -108,11 +110,13 @@ class SettlementService:
             draw = session.scalars(stmt).first()
             if draw is None:
                 raise SettlementDataError(f"鏈壘鍒板紑濂栬褰曪細{region} {issue_number}")
-            preview = self._engine.evaluate_order(order, draw)
+            engine, _warning = self._engine_for_order(order)
+            preview = engine.evaluate_order(order, draw)
             return self._apply_payouts(session, order, preview)
 
     def preview_order_data(self, order_result, lottery_draw_result):
-        return self._engine.evaluate_order(order_result, lottery_draw_result)
+        engine, _warning = self._engine_for_order(order_result)
+        return engine.evaluate_order(order_result, lottery_draw_result)
 
     def list_settlement_records(
         self,
@@ -236,10 +240,11 @@ class SettlementService:
         if record_repo.get_by_order_id(order.id) is not None:
             raise SettlementDataError(f"订单已有结算记录，不能重复结算：{order.order_no}")
 
+        engine, zodiac_warning = self._engine_for_order(order)
         preview: OrderSettlementPreview = self._apply_payouts(
             session,
             order,
-            self._engine.evaluate_order(order, draw),
+            engine.evaluate_order(order, draw),
         )
         if preview.unsupported_items:
             unsupported = [
@@ -264,7 +269,14 @@ class SettlementService:
             miss_count=preview.losing_items,
             unsupported_count=preview.unsupported_items,
             total_amount=Decimal(order.total_amount),
-            result_snapshot=self._build_result_snapshot(order, draw, preview, settled_at),
+            result_snapshot=self._build_result_snapshot(
+                order,
+                draw,
+                preview,
+                settled_at,
+                zodiac_year=engine.zodiac_year,
+                warnings=[zodiac_warning] if zodiac_warning else [],
+            ),
         )
         record_repo.add(record)
         session.flush()
@@ -301,7 +313,7 @@ class SettlementService:
             order_status_before=status_before,
             order_status_after=order.status,
             results=preview.results,
-            warnings=[],
+            warnings=[zodiac_warning] if zodiac_warning else [],
             operation_log_id=log.id,
             total_bet_amount=preview.total_bet_amount,
             total_payout_amount=preview.total_payout_amount,
@@ -403,6 +415,13 @@ class SettlementService:
             payout_note=f"中奖金额 = 投注金额 {_decimal_money(item.amount)} x 赔率 {_decimal_odds(odds)}",
         )
 
+    def _engine_for_order(self, order: Any) -> tuple[SettlementEngine, str | None]:
+        raw_year = getattr(order, "zodiac_year", None)
+        if raw_year is None:
+            year = get_default_zodiac_year()
+            return SettlementEngine(zodiac_year=year), f"订单未记录生肖年份，使用默认年份 {year} 兼容"
+        return SettlementEngine(zodiac_year=validate_zodiac_year(raw_year)), None
+
     def _apply_item_rebate(
         self,
         item: ItemSettlementResult,
@@ -491,6 +510,9 @@ class SettlementService:
         draw: LotteryDraw,
         preview: OrderSettlementPreview,
         settled_at: datetime,
+        *,
+        zodiac_year: int,
+        warnings: list[str],
     ) -> dict[str, Any]:
         return {
             "order": {
@@ -499,6 +521,7 @@ class SettlementService:
                 "region": order.region,
                 "total_amount": str(order.total_amount),
                 "status_before": order.status,
+                "zodiac_year": order.zodiac_year,
             },
             "draw": {
                 "id": draw.id,
@@ -507,9 +530,10 @@ class SettlementService:
                 "draw_date": draw.draw_date.isoformat(),
                 "regular_numbers": list(draw.regular_numbers),
                 "special_number": draw.special_number,
-                "special_zodiac": get_zodiac(draw.special_number, year=self._engine.zodiac_year),
-                "zodiac_year": self._engine.zodiac_year,
+                "special_zodiac": get_zodiac(draw.special_number, year=zodiac_year),
+                "zodiac_year": zodiac_year,
             },
+            "warnings": warnings,
             "summary": {
                 "total_bet_amount": _decimal_money(preview.total_bet_amount),
                 "total_payout_amount": _decimal_money(preview.total_payout_amount),

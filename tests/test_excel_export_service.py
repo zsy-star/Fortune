@@ -97,6 +97,7 @@ def test_empty_orders_export_creates_excel_with_headers(session_factory, tmp_pat
             "状态",
             "投注总额",
             "来源",
+            "生肖年份",
             "创建时间",
             "更新时间",
         )

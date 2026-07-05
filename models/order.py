@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Index, Numeric, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from models.base import Base
@@ -22,6 +22,7 @@ class Order(Base):
     source: Mapped[str] = mapped_column(String(64), nullable=False)
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)
     total_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
+    zodiac_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

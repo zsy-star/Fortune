@@ -1043,6 +1043,19 @@ def test_order_import_confirm_uses_order_intake_service_save_preview(
     assert save_preview.called
 
 
+def test_order_import_confirm_saves_zodiac_year(session_factory) -> None:
+    app()
+    service = OrderImportService(order_intake_service=OrderIntakeService(session_factory))
+    preview = service.preview_lines(["兔各10"], region_mode="澳门")
+
+    result = service.confirm_import(preview, file_path="orders.txt", zodiac_year=2025)
+
+    assert result.imported_count == 1
+    with session_factory() as session:
+        order = session.scalars(select(Order)).one()
+        assert order.zodiac_year == 2025
+
+
 def test_order_detail_import_button_opens_preview_dialog(session_factory) -> None:
     app()
     page = OrderDetailPage(order_service=OrderService(session_factory))

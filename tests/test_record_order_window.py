@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QCheckBox,
     QPushButton,
+    QSpinBox,
 )
 
 from services.order_parser import ParseResult, parse_order
@@ -206,16 +207,33 @@ class TestAdvancedOptionsFirstStage:
 
     def test_advanced_options_are_enabled_and_default_unchecked(self, window):
         checkboxes = self._checkboxes(window)
+        year_spin = window.findChild(QSpinBox, "zodiacYearSpin")
 
         assert checkboxes["识别地区"].isEnabled()
         assert "自动识别澳门/香港" in checkboxes["识别地区"].toolTip()
         assert checkboxes["智能纠错"].isEnabled()
         assert "低风险规范化" in checkboxes["智能纠错"].toolTip()
+        assert year_spin is not None
+        assert year_spin.value() == 2026
         assert "抄写法" not in checkboxes
         for label in ("特肖模式", "岁写法", "各->各肖"):
             assert checkboxes[label].isEnabled()
             assert not checkboxes[label].isChecked()
             assert checkboxes[label].toolTip()
+
+    def test_zodiac_year_switch_changes_preview_numbers(self, window):
+        year_spin = window.findChild(QSpinBox, "zodiacYearSpin")
+        assert year_spin is not None
+
+        year_spin.setValue(2026)
+        window._input_text.setPlainText("兔各10")
+        window._do_parse()
+        assert window._parsed_results[0].numbers == (4, 16, 28, 40)
+
+        year_spin.setValue(2025)
+        window._do_parse()
+        assert window._parsed_results[0].numbers == (3, 15, 27, 39)
+        assert "生肖年份2025" in window._advanced_status.text()
 
     def test_advanced_options_parse_and_status_text(self, window):
         checkboxes = self._checkboxes(window)
@@ -1374,6 +1392,7 @@ class TestSaveOrder:
 
         from models import Order, OrderItem
 
+        save_window._spin_zodiac_year.setValue(2025)
         save_window._input_text.setPlainText("01/10")
         save_window._do_parse()
         with (
@@ -1393,6 +1412,7 @@ class TestSaveOrder:
             assert order.raw_text == "01/10"
             assert order.source == "record_window"
             assert order.channel == save_window._cmb_channel.currentText()
+            assert order.zodiac_year == 2025
             assert order.total_amount == 10
             assert len(items) == 1
             assert items[0].selection == "01"
@@ -1565,6 +1585,7 @@ class TestSaveOrder:
 
         from models import Order, OrderItem
 
+        save_window._spin_zodiac_year.setValue(2025)
         save_window._input_text.setPlainText("01/10")
         save_window._do_parse()
         save_window._on_add_result()

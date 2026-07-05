@@ -19,6 +19,7 @@ def create_order(
     bet_type: str = "特码",
     selection: str = "01",
     amount: str = "10",
+    zodiac_year: int | None = None,
 ):
     return service.create_order(
         OrderCreate(
@@ -27,6 +28,7 @@ def create_order(
             region=region,
             raw_text=f"{bet_type} {selection} {amount}",
             source="test",
+            zodiac_year=zodiac_year,
             items=[OrderItemCreate(bet_type=bet_type, selection=selection, amount=amount)],
         )
     )
@@ -54,7 +56,7 @@ def test_special_risk_table_expands_numbers_and_semantic_inputs(session_factory)
 
 def test_special_risk_table_uses_configured_zodiac_year(session_factory) -> None:
     order_service = OrderService(session_factory)
-    create_order(order_service, bet_type="特码", selection="蛇", amount="5")
+    create_order(order_service, bet_type="特码", selection="蛇", amount="5", zodiac_year=2025)
     service = RiskAdjustmentService(session_factory, zodiac_year=2025)
 
     rows = service.build_special_risk_table()
@@ -66,6 +68,22 @@ def test_special_risk_table_uses_configured_zodiac_year(session_factory) -> None
     assert by_number["01"].raw_stake_amount == Decimal("5.00")
     assert by_number["02"].raw_stake_amount == Decimal("0.00")
     assert {"01", "13", "25", "37", "49"}.issubset(parsed_by_number)
+
+
+def test_special_risk_table_filters_orders_by_zodiac_year(session_factory) -> None:
+    order_service = OrderService(session_factory)
+    create_order(order_service, bet_type="特码", selection="蛇", amount="5", zodiac_year=2025)
+    create_order(order_service, bet_type="特码", selection="蛇", amount="7", zodiac_year=2026)
+    service = RiskAdjustmentService(session_factory, zodiac_year=2025)
+
+    rows_2025 = {row.number: row for row in service.build_special_risk_table()}
+    service.set_zodiac_year(2026)
+    rows_2026 = {row.number: row for row in service.build_special_risk_table()}
+
+    assert rows_2025["01"].raw_stake_amount == Decimal("5.00")
+    assert rows_2025["02"].raw_stake_amount == Decimal("0.00")
+    assert rows_2026["01"].raw_stake_amount == Decimal("0.00")
+    assert rows_2026["02"].raw_stake_amount == Decimal("7.00")
 
 
 def test_special_suggestions_apply_and_reverse_without_modifying_orders(session_factory) -> None:
@@ -130,8 +148,8 @@ def test_lianxiao_groups_parse_apply_and_reverse(session_factory) -> None:
 
 def test_lianxiao_risk_table_stays_grouped_by_zodiac_and_region(session_factory) -> None:
     order_service = OrderService(session_factory)
-    create_order(order_service, region="澳门", bet_type="连肖", selection="龙羊猴", amount="40")
-    create_order(order_service, region="香港", bet_type="连肖", selection="龙羊猴", amount="60")
+    create_order(order_service, region="澳门", bet_type="连肖", selection="龙羊猴", amount="40", zodiac_year=2025)
+    create_order(order_service, region="香港", bet_type="连肖", selection="龙羊猴", amount="60", zodiac_year=2025)
     service = RiskAdjustmentService(session_factory, zodiac_year=2025)
 
     macau_rows = service.build_lianxiao_risk_table(region="澳门")

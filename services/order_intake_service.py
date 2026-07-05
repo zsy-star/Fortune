@@ -11,6 +11,7 @@ from core.database import SessionLocal
 from domain.bet_types import normalize_bet_type, normalize_region
 from domain.exceptions import DomainError
 from domain.number_rules import normalize_number
+from domain.zodiac_config import get_default_zodiac_year
 from schemas.order_intake_schema import IntakeMetadata, IntakeTableRow, OrderIntakePreview, OrderIntakeSaveResult
 from schemas.order_intake_schema import IntakeItemPreview
 from schemas.order_schema import OrderCreate, OrderItemCreate, OrderResult
@@ -65,6 +66,7 @@ class OrderIntakeService:
         parse_options: ParseOptions | None = None,
         zodiac_year: int | None = None,
     ) -> OrderIntakePreview:
+        selected_zodiac_year = zodiac_year or (parse_options.zodiac_year if parse_options else None) or get_default_zodiac_year()
         metadata = IntakeMetadata(
             customer_name=customer_name,
             config_plan_name=config_plan_name,
@@ -72,8 +74,9 @@ class OrderIntakeService:
             region=region,
             source=source,
             raw_text=raw_text,
+            zodiac_year=selected_zodiac_year,
         )
-        parsed_results = parse_lines(raw_text, options=parse_options, zodiac_year=zodiac_year)
+        parsed_results = parse_lines(raw_text, options=parse_options, zodiac_year=selected_zodiac_year)
         return self.convert_parsed_result(parsed_results, metadata)
 
     def convert_parsed_result(
@@ -103,6 +106,7 @@ class OrderIntakeService:
             config_plan_name=(metadata.config_plan_name or None)
             and metadata.config_plan_name.strip()
             or None,
+            zodiac_year=metadata.zodiac_year,
         )
         if not rows:
             preview.errors.append("表格没有可保存的订单明细")
@@ -183,6 +187,7 @@ class OrderIntakeService:
             region=preview.region,
             raw_text=preview.raw_text,
             source=preview.source,
+            zodiac_year=preview.zodiac_year,
             items=list(preview.order_items),
         )
         try:
@@ -386,6 +391,7 @@ class OrderIntakeService:
             config_plan_name=(metadata.config_plan_name or None)
             and metadata.config_plan_name.strip()
             or None,
+            zodiac_year=metadata.zodiac_year,
         )
 
         if not metadata.raw_text.strip():

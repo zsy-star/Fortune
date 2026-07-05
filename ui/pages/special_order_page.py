@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QPlainTextEdit,
     QRadioButton,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
 from domain.color_rules import get_wave_color
 from domain.number_rules import normalize_number
 from domain.zodiac_rules import get_zodiac
+from domain.zodiac_config import MAX_ZODIAC_YEAR, MIN_ZODIAC_YEAR, get_default_zodiac_year
 from schemas.adjustment_record_schema import AdjustmentRecordCreate
 from services.adjustment_record_service import AdjustmentRecordService
 from services.order_service import OrderService
@@ -89,6 +91,7 @@ class SpecialOrderPage(QWidget):
             AdjustmentRecordService(session_factory) if session_factory is not None else AdjustmentRecordService()
         )
         self._risk_adjustment_service = RiskAdjustmentService(session_factory) if session_factory is not None else RiskAdjustmentService()
+        self._zodiac_year = get_default_zodiac_year()
         self._number_rows: dict[str, NumberSummary] = {}
         self._risk_rows: list[SpecialRiskRow] = []
         self._number_labels: dict[str, QLabel] = {}
@@ -128,6 +131,14 @@ class SpecialOrderPage(QWidget):
         row = QHBoxLayout(frame)
         row.setContentsMargins(8, 4, 8, 4)
         row.addWidget(QLabel("特码调单（保存调单记录，不修改订单、不自动结算）"))
+        row.addWidget(QLabel("生肖年份"))
+        self._spin_zodiac_year = QSpinBox()
+        self._spin_zodiac_year.setObjectName("specialAdjustmentZodiacYearSpin")
+        self._spin_zodiac_year.setRange(MIN_ZODIAC_YEAR, MAX_ZODIAC_YEAR)
+        self._spin_zodiac_year.setValue(self._zodiac_year)
+        self._spin_zodiac_year.setToolTip("调单风险按所选生肖年份统计")
+        self._spin_zodiac_year.valueChanged.connect(self._on_zodiac_year_changed)
+        row.addWidget(self._spin_zodiac_year)
         row.addStretch(1)
         self._region_group = QButtonGroup(self)
         specs = [("全部", None, True), ("只看澳门", "澳门", False), ("只看香港", "香港", False)]
@@ -336,6 +347,7 @@ class SpecialOrderPage(QWidget):
         return frame
 
     def reload_data(self) -> None:
+        self._risk_adjustment_service.set_zodiac_year(self._selected_zodiac_year())
         self._number_rows = self._load_number_summary()
         self._fill_summary_table()
         self._fill_number_grid()
@@ -349,6 +361,14 @@ class SpecialOrderPage(QWidget):
     def _selected_region(self) -> str | None:
         button = self._region_group.checkedButton()
         return button.property("region") if button is not None else None
+
+    def _selected_zodiac_year(self) -> int:
+        spin = getattr(self, "_spin_zodiac_year", None)
+        return int(spin.value()) if spin is not None else self._zodiac_year
+
+    def _on_zodiac_year_changed(self, year: int) -> None:
+        self._zodiac_year = int(year)
+        self.reload_data()
 
     def _load_number_summary(self) -> dict[str, NumberSummary]:
         self._risk_rows = self._risk_adjustment_service.build_special_risk_table(region=self._selected_region())
@@ -432,6 +452,7 @@ class SpecialOrderPage(QWidget):
         lines = [
             "特码调单汇总",
             f"当前筛选区域：{self._selected_region_label()}",
+            f"生肖年份：{self._selected_zodiac_year()}",
             f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             "",
             "左侧号码汇总表",
@@ -695,7 +716,7 @@ class SpecialOrderPage(QWidget):
         return AdjustmentRecordCreate(
             adjustment_type="special",
             region=self._selected_region_label(),
-            source_filter={"region": self._selected_region_label()},
+            source_filter={"region": self._selected_region_label(), "zodiac_year": self._selected_zodiac_year()},
             original_total=_money(original_total),
             adjustment_total=_money(adjustment_total),
             after_total=_money(after_total),
@@ -724,7 +745,7 @@ class SpecialOrderPage(QWidget):
 
     def _number_zodiac(self, number: str) -> str:
         try:
-            return get_zodiac(number)
+            return get_zodiac(number, year=self._selected_zodiac_year())
         except Exception:
             return ""
 

@@ -53,6 +53,47 @@ def test_alembic_upgrade_head_from_empty_sqlite_creates_current_key_tables(
         with engine.connect() as connection:
             version = connection.execute(text("select version_num from alembic_version")).scalar_one()
         assert version == _head(config)
+
+        order_columns = {column["name"] for column in inspect(engine).get_columns("orders")}
+        assert "zodiac_year" in order_columns
+    finally:
+        engine.dispose()
+
+
+def test_add_zodiac_year_migration_keeps_existing_orders_and_amounts(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    db_path = tmp_path / "fortune_existing_orders.db"
+    config = _alembic_config(db_path)
+    monkeypatch.setenv("FORTUNE_DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
+
+    command.upgrade(config, "20260702_0008")
+    engine = create_engine(f"sqlite:///{db_path.as_posix()}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    insert into orders
+                        (order_no, customer_name, channel, region, source, raw_text, total_amount, status)
+                    values
+                        ('ORD-LEGACY-001', 'legacy', 'test', '澳门', 'test', '01各10', 10.00, 'active')
+                    """
+                )
+            )
+
+        command.upgrade(config, "head")
+
+        with engine.connect() as connection:
+            row = connection.execute(
+                text("select order_no, total_amount, zodiac_year from orders where order_no = 'ORD-LEGACY-001'")
+            ).one()
+            version = connection.execute(text("select version_num from alembic_version")).scalar_one()
+        assert row.order_no == "ORD-LEGACY-001"
+        assert float(row.total_amount) == 10.0
+        assert row.zodiac_year == 2026
+        assert version == _head(config)
     finally:
         engine.dispose()
 

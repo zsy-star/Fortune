@@ -6,6 +6,7 @@ from decimal import Decimal
 
 import pytest
 
+from models import Order
 from schemas.draw_schema import LotteryDrawCreate
 from schemas.order_schema import OrderCreate, OrderItemCreate
 from services.draw_service import DrawService
@@ -229,3 +230,62 @@ def test_settlement_service_by_issue_and_missing_data(session_factory) -> None:
 
     with pytest.raises(SettlementDataError):
         SettlementService(session_factory).preview_order(999999, 999999)
+
+
+def test_settlement_service_uses_order_zodiac_year(session_factory) -> None:
+    order_service = OrderService(session_factory)
+    draw_service = DrawService(session_factory)
+    order = order_service.create_order(
+        OrderCreate(
+            region="澳门",
+            raw_text="zodiac year settlement",
+            source="test",
+            zodiac_year=2025,
+            items=[OrderItemCreate(bet_type="特码", selection="蛇", amount="10")],
+        )
+    )
+    draw = draw_service.create_draw(
+        LotteryDrawCreate(
+            region="澳门",
+            issue_number="164",
+            draw_date=date(2026, 6, 13),
+            regular_numbers=["02", "03", "04", "05", "06", "07"],
+            special_number="01",
+        )
+    )
+
+    preview = SettlementService(session_factory).preview_order(order.id, draw.id)
+
+    assert preview.results[0].is_winner is True
+    assert preview.results[0].draw_special_zodiac == "蛇"
+
+
+def test_settlement_service_falls_back_for_legacy_order_without_zodiac_year(session_factory) -> None:
+    order_service = OrderService(session_factory)
+    draw_service = DrawService(session_factory)
+    order = order_service.create_order(
+        OrderCreate(
+            region="澳门",
+            raw_text="legacy zodiac year settlement",
+            source="test",
+            items=[OrderItemCreate(bet_type="特码", selection="马", amount="10")],
+        )
+    )
+    with session_factory() as session:
+        db_order = session.get(Order, order.id)
+        db_order.zodiac_year = None
+        session.commit()
+    draw = draw_service.create_draw(
+        LotteryDrawCreate(
+            region="澳门",
+            issue_number="165",
+            draw_date=date(2026, 6, 14),
+            regular_numbers=["02", "03", "04", "05", "06", "07"],
+            special_number="01",
+        )
+    )
+
+    result = SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+
+    assert result.results[0].is_winner is True
+    assert any("订单未记录生肖年份" in warning for warning in result.warnings)

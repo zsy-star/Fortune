@@ -20,12 +20,14 @@ from PySide6.QtWidgets import (
     QPushButton,
     QPlainTextEdit,
     QRadioButton,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
+from domain.zodiac_config import MAX_ZODIAC_YEAR, MIN_ZODIAC_YEAR, get_default_zodiac_year
 from schemas.adjustment_record_schema import AdjustmentRecordCreate
 from services.adjustment_record_service import AdjustmentRecordService
 from services.order_service import OrderService
@@ -67,6 +69,7 @@ class LianxiaoOrderPage(QWidget):
             AdjustmentRecordService(session_factory) if session_factory is not None else AdjustmentRecordService()
         )
         self._risk_adjustment_service = RiskAdjustmentService(session_factory) if session_factory is not None else RiskAdjustmentService()
+        self._zodiac_year = get_default_zodiac_year()
         self._summaries: list[LianxiaoSummary] = []
         self._risk_rows: list[LianxiaoRiskRow] = []
         self._tables: list[QTableWidget] = []
@@ -97,6 +100,14 @@ class LianxiaoOrderPage(QWidget):
         row.setContentsMargins(4, 0, 4, 0)
         row.setSpacing(6)
         row.addStretch(1)
+        row.addWidget(QLabel("生肖年份"))
+        self._spin_zodiac_year = QSpinBox()
+        self._spin_zodiac_year.setObjectName("lianxiaoAdjustmentZodiacYearSpin")
+        self._spin_zodiac_year.setRange(MIN_ZODIAC_YEAR, MAX_ZODIAC_YEAR)
+        self._spin_zodiac_year.setValue(self._zodiac_year)
+        self._spin_zodiac_year.setToolTip("连肖调单按所选生肖年份的订单统计")
+        self._spin_zodiac_year.valueChanged.connect(self._on_zodiac_year_changed)
+        row.addWidget(self._spin_zodiac_year)
 
         self._region_group = QButtonGroup(self)
         specs = [("全部", None, True), ("只看澳门", "澳门", False), ("只看香港", "香港", False)]
@@ -265,6 +276,7 @@ class LianxiaoOrderPage(QWidget):
         return frame
 
     def reload_data(self) -> None:
+        self._risk_adjustment_service.set_zodiac_year(self._selected_zodiac_year())
         self._summaries = self._load_lianxiao_summary()
         self._fill_tables()
         self._update_stats()
@@ -277,6 +289,14 @@ class LianxiaoOrderPage(QWidget):
     def _selected_region(self) -> str | None:
         button = self._region_group.checkedButton()
         return button.property("region") if button is not None else None
+
+    def _selected_zodiac_year(self) -> int:
+        spin = getattr(self, "_spin_zodiac_year", None)
+        return int(spin.value()) if spin is not None else self._zodiac_year
+
+    def _on_zodiac_year_changed(self, year: int) -> None:
+        self._zodiac_year = int(year)
+        self.reload_data()
 
     def _load_lianxiao_summary(self) -> list[LianxiaoSummary]:
         self._risk_rows = self._risk_adjustment_service.build_lianxiao_risk_table(region=self._selected_region())
@@ -380,6 +400,7 @@ class LianxiaoOrderPage(QWidget):
         lines = [
             "连肖调单汇总",
             f"当前筛选区域：{self._selected_region_label()}",
+            f"生肖年份：{self._selected_zodiac_year()}",
             f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             "",
             "左侧总表",
@@ -574,7 +595,7 @@ class LianxiaoOrderPage(QWidget):
         return AdjustmentRecordCreate(
             adjustment_type="lianxiao",
             region=self._selected_region_label(),
-            source_filter={"region": self._selected_region_label()},
+            source_filter={"region": self._selected_region_label(), "zodiac_year": self._selected_zodiac_year()},
             original_total=_money(total),
             adjustment_total="0.00",
             after_total=_money(total),

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from decimal import Decimal
 
-from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QMessageBox, QPushButton
+from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox
 from sqlalchemy import func, select
 
 from models import AdjustmentRecord, OperationLog, Order, SettlementRecord
@@ -34,6 +34,7 @@ def create_order(
     bet_type: str = "特码",
     selection: str = "01",
     amount: str = "10",
+    zodiac_year: int | None = None,
 ):
     return service.create_order(
         OrderCreate(
@@ -42,6 +43,7 @@ def create_order(
             region=region,
             raw_text=f"{bet_type} {selection} {amount}",
             source="test",
+            zodiac_year=zodiac_year,
             items=[OrderItemCreate(bet_type=bet_type, selection=selection, amount=amount)],
         )
     )
@@ -66,6 +68,7 @@ def test_special_order_page_creates_and_shows_empty_state(session_factory) -> No
     app()
     page = SpecialOrderPage(order_service=OrderService(session_factory))
 
+    assert page.findChild(QSpinBox, "specialAdjustmentZodiacYearSpin") is not None
     assert page._summary_table.rowCount() == 49
     assert len(page._adjust_edits) == 49
     assert len(page._total_edits) == 49
@@ -88,6 +91,32 @@ def test_special_order_page_reads_existing_special_order_summary(session_factory
     assert rows["01"] == Decimal("15.00")
     assert rows["02"] == Decimal("10.00")
     assert "特码总额：25.00" in page._lbl_special_total.text()
+
+
+def test_special_order_page_zodiac_year_filter_prevents_mixed_year_summary(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    create_order(service, selection="蛇", amount="5", zodiac_year=2025)
+    create_order(service, selection="蛇", amount="7", zodiac_year=2026)
+
+    page = SpecialOrderPage(order_service=service)
+    spin = page.findChild(QSpinBox, "specialAdjustmentZodiacYearSpin")
+    assert spin is not None
+
+    rows_2026 = {
+        page._summary_table.item(row, 0).text(): Decimal(page._summary_table.item(row, 2).text())
+        for row in range(page._summary_table.rowCount())
+    }
+    spin.setValue(2025)
+    rows_2025 = {
+        page._summary_table.item(row, 0).text(): Decimal(page._summary_table.item(row, 2).text())
+        for row in range(page._summary_table.rowCount())
+    }
+
+    assert rows_2026["01"] == Decimal("0.00")
+    assert rows_2026["02"] == Decimal("7.00")
+    assert rows_2025["01"] == Decimal("5.00")
+    assert rows_2025["02"] == Decimal("0.00")
 
 
 def test_special_order_page_saves_adjustment_record_and_keeps_orders_unchanged(
@@ -212,6 +241,7 @@ def test_lianxiao_order_page_creates_and_shows_empty_state(session_factory) -> N
     app()
     page = LianxiaoOrderPage(order_service=OrderService(session_factory))
 
+    assert page.findChild(QSpinBox, "lianxiaoAdjustmentZodiacYearSpin") is not None
     assert page._summary_table.rowCount() == 1
     assert page._summary_table.item(0, 0).text() == "暂无数据"
     assert len(page._tables) == 4
@@ -270,6 +300,24 @@ def test_lianxiao_order_page_reads_existing_lianxiao_summary(session_factory) ->
     assert page._tables[0].item(0, 0).text() == "马,牛"
     assert page._tables[0].item(0, 1).text() == "150.00"
     assert "连肖总额：150.00" in page._lbl_lianxiao_total.text()
+
+
+def test_lianxiao_order_page_zodiac_year_filter_keeps_group_summary(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    create_order(service, bet_type="连肖", selection="牛,马", amount="40", zodiac_year=2025)
+    create_order(service, bet_type="连肖", selection="牛,马", amount="70", zodiac_year=2026)
+
+    page = LianxiaoOrderPage(order_service=service)
+    spin = page.findChild(QSpinBox, "lianxiaoAdjustmentZodiacYearSpin")
+    assert spin is not None
+
+    assert page._summary_table.rowCount() == 1
+    assert page._summary_table.item(0, 1).text() == "70.00"
+    spin.setValue(2025)
+    assert page._summary_table.rowCount() == 1
+    assert set(page._summary_table.item(0, 0).text().split(",")) == {"牛", "马"}
+    assert page._summary_table.item(0, 1).text() == "40.00"
 
 
 def test_lianxiao_order_page_actions_are_readonly(session_factory) -> None:

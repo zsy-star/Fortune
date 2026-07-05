@@ -6,6 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import Select, func, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, selectinload
 
 from models import Order, OrderItem, SettlementRecord
@@ -16,6 +17,10 @@ WINNING_STATUS_HIT = "命中"
 WINNING_STATUS_MISS = "未中"
 WINNING_STATUS_PARTIAL = "部分命中"
 WINNING_STATUS_UNSUPPORTED = "含不支持"
+
+
+def _is_missing_zodiac_year_error(exc: OperationalError) -> bool:
+    return "zodiac_year" in str(exc)
 
 
 class OrderRepository:
@@ -140,7 +145,13 @@ class OrderRepository:
         if winning_status:
             stmt = stmt.distinct()
         stmt = stmt.order_by(Order.created_at.desc(), Order.id.desc()).limit(limit).offset(offset)
-        return list(self.session.scalars(stmt))
+        try:
+            return list(self.session.scalars(stmt))
+        except OperationalError as exc:
+            if not _is_missing_zodiac_year_error(exc):
+                raise
+            self.session.rollback()
+            return []
 
     def list_for_analysis(
         self,
@@ -150,7 +161,13 @@ class OrderRepository:
         stmt: Select[tuple[Order]] = select(Order).options(selectinload(Order.items))
         stmt = self._apply_filters(stmt, exclude_statuses=exclude_statuses)
         stmt = stmt.order_by(Order.created_at.desc(), Order.id.desc())
-        return list(self.session.scalars(stmt))
+        try:
+            return list(self.session.scalars(stmt))
+        except OperationalError as exc:
+            if not _is_missing_zodiac_year_error(exc):
+                raise
+            self.session.rollback()
+            return []
 
     def _apply_settlement_ledger_filters(
         self,
@@ -195,7 +212,13 @@ class OrderRepository:
             end_date=end_date,
         )
         stmt = stmt.order_by(Order.updated_at.desc(), Order.id.desc()).limit(limit).offset(offset)
-        return list(self.session.scalars(stmt))
+        try:
+            return list(self.session.scalars(stmt))
+        except OperationalError as exc:
+            if not _is_missing_zodiac_year_error(exc):
+                raise
+            self.session.rollback()
+            return []
 
     def count_settlement_ledger(
         self,

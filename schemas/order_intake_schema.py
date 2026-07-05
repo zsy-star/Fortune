@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from domain.zodiac_config import get_default_zodiac_year, validate_zodiac_year
 from schemas.order_schema import OrderCreate, OrderItemCreate, OrderResult
 
 
@@ -16,6 +17,10 @@ class IntakeMetadata:
     region: str | None = None
     source: str = "record_window"
     raw_text: str = ""
+    zodiac_year: int | None = None
+
+    def __post_init__(self) -> None:
+        self.zodiac_year = validate_zodiac_year(self.zodiac_year or get_default_zodiac_year())
 
 
 @dataclass(slots=True)
@@ -53,6 +58,7 @@ class OrderIntakePreview:
     channel: str | None
     source: str
     config_plan_name: str | None = None
+    zodiac_year: int | None = None
     items: list[IntakeItemPreview] = field(default_factory=list)
     total_amount: Decimal = Decimal("0")
     valid_items: int = 0
@@ -64,6 +70,7 @@ class OrderIntakePreview:
 
     def __post_init__(self) -> None:
         self.total_amount = Decimal(str(self.total_amount))
+        self.zodiac_year = validate_zodiac_year(self.zodiac_year or get_default_zodiac_year())
 
 
 @dataclass(slots=True)

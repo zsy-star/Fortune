@@ -24,7 +24,7 @@ Fortune 不做客户账户、不做客户余额、不做余额流水、不做真
 | 特码调单 / 连肖调单 | 正式功能第一阶段可用 | 调单不是新玩法，不修改原订单；支持风险汇总、抛出记录、撤销记录和调整后风险展示，不自动兑奖、不写余额。 |
 | 打印文本 | 已开放 | 支持生成打印文本、复制打印文本、导出打印文本或统计结果；不接入真实打印机。 |
 | 设置中心、备份恢复、号码大全、计算器 | 已开放 | 本地辅助功能。 |
-| 统一生肖年份配置 | 已开放 | 生肖号码按开奖年份生成；号码大全可切换年份，录单解析、结算和调单共用 `domain.zodiac_config`。旧订单无 `zodiac_year` 时第一阶段按默认年份兼容。 |
+| 统一生肖年份配置 | 已开放 | 生肖号码按开奖年份生成；号码大全可切换年份，录单解析、结算和调单共用 `domain.zodiac_config`。新订单保存 `orders.zodiac_year`；旧订单字段为空时按默认年份兼容并提示人工确认。 |
 
 ## 复杂玩法边界
 
@@ -71,13 +71,13 @@ Fortune 不做客户账户、不做客户余额、不做余额流水、不做真
 
 ## 调单正式功能第一阶段口径
 
-- 特码调单按 01-49 生成风险表，展示号码、生肖、投注折算金额、预计赔付、原始风险、已抛出和调整后风险；生肖折算读取统一生肖年份配置。
+- 特码调单按 01-49 生成风险表，展示号码、生肖、投注折算金额、预计赔付、原始风险、已抛出和调整后风险；生肖折算读取统一生肖年份配置，并按页面所选生肖年份统计对应订单，避免跨年份混算。
 - 特码调单最大亏损建议公式：`throw_amount = adjusted_risk_amount - max_loss`，仅当 `adjusted_risk_amount > max_loss` 时生成，输出格式为 `号码=金额`。
 - 特码抛出输入支持 `25=100`、多行 / 逗号分隔，以及部分语义展开：红波大、红波小、红单、蓝双、合大、合小、合单、合双、尾1、1头等。
 - 连肖调单按生肖组合汇总风险；同一组合按固定生肖顺序归一，普通连肖一组为一注，不按生肖个数乘金额。
 - 连肖抛出输入支持 `龙羊猴=100`、`龙,羊,猴=100`、`龙-羊-猴=100`。
 - 抛出记录写入 `adjustment_records` 的 JSON 快照字段，类型为 `special_throw` 或 `lianxiao_throw`；撤销写入新的 reversal 记录，类型为 `special_throw_reversal` 或 `lianxiao_throw_reversal`，不删除原记录。
-- 调单记录通过事件流计算 active / reversed / reversal / legacy 状态；本阶段复用现有 JSON 快照字段，不新增迁移。
+- 调单记录通过事件流计算 active / reversed / reversal / legacy 状态；本阶段复用现有 JSON 快照字段，不为调单快照新增迁移。
 - 风险统计公式：特码 `risk_amount = potential_payout_amount + rebate_amount - raw_stake_amount`；连肖 `risk_amount = potential_payout_amount + rebate_amount - raw_amount`；调整后风险为 `risk_amount - thrown_amount`，允许显示负数。
 - 调单当前仍只按地区汇总，不新增日期、期号、申报人、渠道、订单状态或结算状态筛选。
 
@@ -94,5 +94,5 @@ Fortune 不做客户账户、不做客户余额、不做余额流水、不做真
 ## 数据库口径
 
 - `20260701_0006_create_customer_accounts.py` 和 `20260702_0007_add_settlement_payout_posting.py` 作为历史迁移保留。
-- 当前 head 通过 `20260702_0008_remove_accounting_ledger_and_payout_posting.py` 清理客户账户、余额流水和真实兑奖入账结构。
+- 当前 head 通过 `20260705_0009_add_order_zodiac_year.py` 新增 `orders.zodiac_year`；`20260702_0008_remove_accounting_ledger_and_payout_posting.py` 已清理客户账户、余额流水和真实兑奖入账结构。
 - 保留 `orders`、`order_items`、`lottery_draws`、`operation_logs`、`settlement_records`、`odds_rebate_plans`、`odds_rebate_items` 等核心表。

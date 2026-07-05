@@ -20,6 +20,7 @@ def test_create_order_with_multiple_items(session_factory) -> None:
             region="澳门",
             raw_text="1各0.10\n2各0.20",
             source="manual",
+            zodiac_year=2025,
             items=[
                 OrderItemCreate(bet_type="特码", selection="1", amount="0.10"),
                 OrderItemCreate(bet_type="特码", selection="2", amount=Decimal("0.20")),
@@ -29,10 +30,12 @@ def test_create_order_with_multiple_items(session_factory) -> None:
 
     assert result.total_amount == Decimal("0.30")
     assert result.item_count == 2
+    assert result.zodiac_year == 2025
 
     with session_factory() as session:
         order = session.scalars(select(Order).where(Order.id == result.id)).one()
         assert order.total_amount == Decimal("0.30")
+        assert order.zodiac_year == 2025
         assert [item.selection for item in order.items] == ["01", "02"]
         logs = session.scalars(select(OperationLog)).all()
         assert len(logs) == 1

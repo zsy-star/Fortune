@@ -656,6 +656,7 @@ def test_repository_safety_ignores_runtime_files_and_keeps_migrations_frozen() -
         "20260701_0006_create_customer_accounts.py",
         "20260702_0007_add_settlement_payout_posting.py",
         "20260702_0008_remove_accounting_ledger_and_payout_posting.py",
+        "20260705_0009_add_order_zodiac_year.py",
     ]
 
 def test_order_analysis_dead_demo_code_removed() -> None:

@@ -968,11 +968,12 @@ class OrderDetailPage(QWidget):
             self._btn_void.setToolTip(f"当前订单状态不能作废：{detail.status}")
         self._detail_info.setText(
             "订单号：{no}    申报人：{customer}    渠道：{channel}    地区：{region}    "
-            "来源：{source}    状态：{status}    总金额：{total}".format(
+            "生肖年份：{zodiac_year}    来源：{source}    状态：{status}    总金额：{total}".format(
                 no=detail.order_no,
                 customer=_dash(detail.customer_name),
                 channel=_dash(detail.channel),
                 region=detail.region,
+                zodiac_year=_dash(detail.zodiac_year),
                 source=_dash(detail.source),
                 status=_status_text(detail.status),
                 total=_money(detail.total_amount),

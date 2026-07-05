@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 
 from domain.bet_types import normalize_bet_type, normalize_region
 from domain.exceptions import InvalidAmountError
+from domain.zodiac_config import get_default_zodiac_year, validate_zodiac_year
 
 
 def to_decimal_amount(value: Decimal | int | float | str, *, allow_zero: bool = False) -> Decimal:
@@ -55,6 +56,7 @@ class OrderCreate:
     customer_name: str | None = None
     channel: str | None = None
     config_plan_name: str | None = None
+    zodiac_year: int | None = None
 
     def __post_init__(self) -> None:
         self.region = normalize_region(self.region)
@@ -78,6 +80,7 @@ class OrderCreate:
             self.channel = self.channel.strip() or None
         if self.config_plan_name is not None:
             self.config_plan_name = self.config_plan_name.strip() or None
+        self.zodiac_year = validate_zodiac_year(self.zodiac_year or get_default_zodiac_year())
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +91,7 @@ class OrderResult:
     total_amount: Decimal
     status: str
     item_count: int
+    zodiac_year: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +130,7 @@ class OrderSummary:
     created_at: datetime
     updated_at: datetime
     item_count: int
+    zodiac_year: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,3 +181,4 @@ class OrderDetailResult:
     created_at: datetime
     updated_at: datetime
     items: list[OrderItemResult]
+    zodiac_year: int | None = None

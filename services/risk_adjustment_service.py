@@ -10,6 +10,7 @@ import re
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, selectinload
 
 from core.database import SessionLocal
@@ -121,12 +122,15 @@ class RiskAdjustmentService:
 
     def __init__(self, session_factory: Callable[[], Session] = SessionLocal, *, zodiac_year: int | None = None):
         self._session_factory = session_factory
-        self._zodiac_year = validate_zodiac_year(zodiac_year or get_default_zodiac_year())
+        self.set_zodiac_year(zodiac_year or get_default_zodiac_year())
+        self._adjustment_records = AdjustmentRecordService(session_factory)
+
+    def set_zodiac_year(self, zodiac_year: int) -> None:
+        self._zodiac_year = validate_zodiac_year(zodiac_year)
         self._zodiac_map = get_zodiac_number_map(self._zodiac_year)
         self._zodiac_order = tuple(self._zodiac_map.keys())
         self._zodiac_rank = {zodiac: index for index, zodiac in enumerate(self._zodiac_order)}
         self._normalizer = BetTypeNormalizer(zodiac_year=self._zodiac_year)
-        self._adjustment_records = AdjustmentRecordService(session_factory)
 
     def build_special_risk_table(self, *, region: str | None = None) -> list[SpecialRiskRow]:
         aggregates = {
@@ -139,7 +143,7 @@ class RiskAdjustmentService:
             for number in range(1, 50)
         }
         with self._session_factory() as session:
-            for order in self._iter_orders(session, region=region):
+            for order in self._iter_orders(session, region=region, zodiac_year=self._zodiac_year):
                 plan_items = self._plan_items_for_order(session, order)
                 for item in order.items:
                     if item.bet_type == "连肖":
@@ -213,7 +217,7 @@ class RiskAdjustmentService:
             }
         )
         with self._session_factory() as session:
-            for order in self._iter_orders(session, region=region):
+            for order in self._iter_orders(session, region=region, zodiac_year=self._zodiac_year):
                 plan_items = self._plan_items_for_order(session, order)
                 for item in order.items:
                     try:
@@ -338,7 +342,7 @@ class RiskAdjustmentService:
         return self._adjustment_records.create_record_with_action(
             adjustment_type="special_throw",
             region=region,
-            source_filter={"region": region},
+            source_filter={"region": region, "zodiac_year": self._zodiac_year},
             original_total=_money(sum((row.risk_amount for row in before_rows), Decimal("0"))),
             adjustment_total=_money(total),
             after_total=_money(sum((row.adjusted_risk_amount for row in before_rows), Decimal("0")) - total),
@@ -395,7 +399,7 @@ class RiskAdjustmentService:
         return self._adjustment_records.create_record_with_action(
             adjustment_type="lianxiao_throw",
             region=region,
-            source_filter={"region": region},
+            source_filter={"region": region, "zodiac_year": self._zodiac_year},
             original_total=_money(sum((row.risk_amount for row in before_rows), Decimal("0"))),
             adjustment_total=_money(total),
             after_total=_money(sum((row.adjusted_risk_amount for row in before_rows), Decimal("0")) - total),
@@ -478,12 +482,27 @@ class RiskAdjustmentService:
     def can_reverse(self, record_id: int, adjustment_type: str) -> bool:
         return adjustment_type in THROW_TYPES and not self._is_record_reversed(record_id)
 
-    def _iter_orders(self, session: Session, *, region: str | None = None) -> list[Order]:
+    def _iter_orders(self, session: Session, *, region: str | None = None, zodiac_year: int | None = None) -> list[Order]:
         stmt = select(Order).options(selectinload(Order.items))
         if region:
             stmt = stmt.where(Order.region == region)
         stmt = stmt.where(Order.status != "void")
-        return list(session.scalars(stmt))
+        try:
+            orders = list(session.scalars(stmt))
+        except OperationalError as exc:
+            if "zodiac_year" not in str(exc):
+                raise
+            session.rollback()
+            return []
+        if zodiac_year is None:
+            return orders
+        selected_year = validate_zodiac_year(zodiac_year)
+        default_year = get_default_zodiac_year()
+        return [
+            order
+            for order in orders
+            if validate_zodiac_year(order.zodiac_year or default_year) == selected_year
+        ]
 
     def _plan_items_for_order(self, session: Session, order: Order) -> list[Any]:
         repo = SettingsRepository(session)

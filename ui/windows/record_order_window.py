@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QScrollArea,
     QSplitter,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -28,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from domain.zodiac_config import MAX_ZODIAC_YEAR, MIN_ZODIAC_YEAR, get_default_zodiac_year
 from schemas.order_intake_schema import IntakeMetadata, IntakeTableRow
 from services.order_intake_service import OrderIntakeService
 from services.order_parser import ParseOptions, ParseResult, format_result, parse_lines
@@ -240,11 +242,16 @@ class RecordOrderWindow(QMainWindow):
         checkbox = getattr(self, attr_name, None)
         return bool(checkbox is not None and checkbox.isChecked())
 
+    def _selected_zodiac_year(self) -> int:
+        spin = getattr(self, "_spin_zodiac_year", None)
+        return int(spin.value()) if spin is not None else get_default_zodiac_year()
+
     def _advanced_parse_options(self) -> ParseOptions:
         return ParseOptions(
             special_zodiac_mode=self._is_checked("_chk_special_zodiac_mode"),
             age_writing=self._is_checked("_chk_age_writing"),
             zodiac_each_mode=self._is_checked("_chk_zodiac_each_mode"),
+            zodiac_year=self._selected_zodiac_year(),
         )
 
     def _enabled_advanced_option_labels(self) -> list[str]:
@@ -255,6 +262,7 @@ class RecordOrderWindow(QMainWindow):
             labels.append("各->各肖")
         if self._is_checked("_chk_special_zodiac_mode"):
             labels.append("特肖模式")
+        labels.append(f"生肖年份{self._selected_zodiac_year()}")
         return labels
 
     def _prepare_raw_text(self, raw: str) -> tuple[str, str | None]:
@@ -544,6 +552,7 @@ class RecordOrderWindow(QMainWindow):
                 region=self._current_region(),
                 source="record_window",
                 parse_options=self._advanced_parse_options(),
+                zodiac_year=self._selected_zodiac_year(),
             )
             if not preview.can_save:
                 reason = "\n".join(preview.errors) if preview.errors else "预览结果不可保存"
@@ -591,6 +600,7 @@ class RecordOrderWindow(QMainWindow):
                     region=self._current_region(),
                     source="record_window_adjusted",
                     raw_text=raw,
+                    zodiac_year=self._selected_zodiac_year(),
                 ),
             )
         except Exception as exc:
@@ -1359,6 +1369,14 @@ class RecordOrderWindow(QMainWindow):
         self._advanced_status = QLabel("")
         self._advanced_status.setObjectName("advancedOptionStatus")
         self._advanced_status.setMinimumWidth(180)
+        checks.addWidget(QLabel("生肖年份"))
+        self._spin_zodiac_year = QSpinBox()
+        self._spin_zodiac_year.setObjectName("zodiacYearSpin")
+        self._spin_zodiac_year.setRange(MIN_ZODIAC_YEAR, MAX_ZODIAC_YEAR)
+        self._spin_zodiac_year.setValue(get_default_zodiac_year())
+        self._spin_zodiac_year.setToolTip("录单解析和保存订单使用的生肖年份")
+        self._spin_zodiac_year.valueChanged.connect(lambda _value: self._do_parse())
+        checks.addWidget(self._spin_zodiac_year)
         checks.addWidget(self._advanced_status)
         checks.addStretch(1)
         outer.addLayout(checks)

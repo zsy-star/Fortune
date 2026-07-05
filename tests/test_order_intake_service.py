@@ -84,6 +84,7 @@ def test_preview_raw_text_passes_zodiac_year_to_parser() -> None:
     preview = _preview("兔各10", region="澳门", parse_options=ParseOptions(zodiac_year=2025))
 
     assert preview.can_save
+    assert preview.zodiac_year == 2025
     assert [item.selection for item in preview.order_items] == ["03", "15", "27", "39"]
     assert [item.amount for item in preview.order_items] == [Decimal("10")] * 4
     assert preview.total_amount == Decimal("40")

@@ -137,6 +137,7 @@ def test_order_detail_page_loads_filters_and_details(session_factory) -> None:
     page._table.selectRow(0)
     page._on_selection_changed()
     assert result.order_no in page._detail_info.text()
+    assert f"生肖年份：{result.zodiac_year}" in page._detail_info.text()
     assert page._item_table.rowCount() == 2
     assert page._item_table.item(0, 2).text() == "10.00"
     assert LogService(session_factory).count_logs(module="订单详情", action="查看订单") == 1

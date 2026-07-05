@@ -286,6 +286,7 @@ def test_confirm_save_only_checked_success_rows_and_emits_events(session_factory
             assert order.customer_name == "林林"
             assert order.channel == "文本拆单"
             assert order.source == "split_order"
+            assert order.zodiac_year == 2026
             log = session.scalars(
                 select(OperationLog).where(OperationLog.action == "split_order/save")
             ).one()

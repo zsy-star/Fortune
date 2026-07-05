@@ -86,6 +86,7 @@ class ExcelExportService:
             "状态",
             "投注总额",
             "来源",
+            "生肖年份",
             "创建时间",
             "更新时间",
         ]
@@ -99,6 +100,7 @@ class ExcelExportService:
                 order.status,
                 _decimal_to_float(order.total_amount),
                 _dash(order.source),
+                order.zodiac_year if order.zodiac_year is not None else "-",
                 order.created_at,
                 order.updated_at,
             ]
@@ -284,6 +286,7 @@ class ExcelExportService:
                 created_at=detail.created_at,
                 updated_at=detail.updated_at,
                 item_count=len(detail.items),
+                zodiac_year=detail.zodiac_year,
             )
             return [
                 summary
