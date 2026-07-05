@@ -6,31 +6,25 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QPushButton,
+    QSpinBox,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
+from domain.zodiac_config import (
+    MAX_ZODIAC_YEAR,
+    MIN_ZODIAC_YEAR,
+    get_default_zodiac_year,
+    get_zodiac_number_map,
+)
+
 _RED = {1, 2, 7, 8, 12, 13, 18, 19, 23, 24, 29, 30, 34, 35, 40, 45, 46}
 _BLUE = {3, 4, 9, 10, 14, 15, 20, 25, 26, 31, 36, 37, 41, 42, 47, 48}
 _GREEN = {n for n in range(1, 50) if n not in _RED and n not in _BLUE}
-
-_ZODIAC_2026: tuple[tuple[str, tuple[int, ...]], ...] = (
-    ("马", (1, 13, 25, 37, 49)),
-    ("蛇", (2, 14, 26, 38)),
-    ("龙", (3, 15, 27, 39)),
-    ("兔", (4, 16, 28, 40)),
-    ("虎", (5, 17, 29, 41)),
-    ("牛", (6, 18, 30, 42)),
-    ("鼠", (7, 19, 31, 43)),
-    ("猪", (8, 20, 32, 44)),
-    ("狗", (9, 21, 33, 45)),
-    ("鸡", (10, 22, 34, 46)),
-    ("猴", (11, 23, 35, 47)),
-    ("羊", (12, 24, 36, 48)),
-)
 
 _WUXING = (
     ("金", (3, 4, 11, 12, 25, 26, 33, 34, 41, 42)),
@@ -83,19 +77,18 @@ def _colorize(nums: set[int] | tuple[int, ...], color: str, *, font_size: int = 
     return f'<span style="color:{color};{extra}">{text}</span>'
 
 
-def _build_catalog_text() -> str:
+def _build_catalog_text(year: int | None = None) -> str:
+    selected_year = year or get_default_zodiac_year()
     lines: list[str] = [
         "静态号码参考表",
-        "当前版本不会自动随年份更新",
-        "请以实际开奖年份配置为准",
-        "",
-        "2026最新",
+        "生肖号码按所选开奖年份显示，请以实际开奖年份为准。",
+        f"当前生肖年份：{selected_year}",
         "",
     ]
 
     lines.append("十二生肖")
-    for animal, nums in _ZODIAC_2026:
-        lines.append(f"({animal}: {_fmt_nums(nums)})")
+    for animal, nums in get_zodiac_number_map(selected_year).items():
+        lines.append(f"({animal}: {' '.join(nums)})")
     lines.append("")
 
     lines.append("五行")
@@ -173,23 +166,24 @@ _WX_COLORS = {
 }
 
 
-def _build_catalog_html() -> str:
+def _build_catalog_html(year: int | None = None) -> str:
+    selected_year = year or get_default_zodiac_year()
     parts: list[str] = [
         _card(
             '<h2 style="font-size:18px;font-weight:bold;color:#1a5276;'
             'margin:0 0 6px 0;">静态号码参考表</h2>'
             '<div style="font-size:14px;color:#5d6d7e;line-height:1.6;">'
-            "当前版本不会自动随年份更新<br>"
-            "请以实际开奖年份配置为准"
+            "生肖号码按所选开奖年份显示，请以实际开奖年份为准。<br>"
+            f"当前生肖年份：{selected_year}"
             "</div>"
         )
     ]
 
     # ---- 十二生肖 ----
     zx_cells: list[str] = []
-    for i, (animal, nums) in enumerate(_ZODIAC_2026):
+    for i, (animal, nums) in enumerate(get_zodiac_number_map(selected_year).items()):
         bg = _ZX_BG[i % 4]
-        num_str = " ".join(f"{n:02d}" for n in nums)
+        num_str = " ".join(nums)
         zx_cells.append(
             f'<td style="background:{bg};border-radius:4px;padding:8px 10px;'
             f'text-align:center;width:25%;">'
@@ -307,6 +301,7 @@ def _build_catalog_html() -> str:
 class NumberCatalogPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._zodiac_year = get_default_zodiac_year()
 
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 12, 16, 12)
@@ -315,7 +310,7 @@ class NumberCatalogPage(QWidget):
         root.addLayout(self._build_search_bar())
         self._content = QTextEdit()
         self._content.setReadOnly(True)
-        self._content.setHtml(_build_catalog_html())
+        self._content.setHtml(_build_catalog_html(self._zodiac_year))
         root.addWidget(self._content, stretch=1)
 
         self._apply_stylesheet()
@@ -323,6 +318,15 @@ class NumberCatalogPage(QWidget):
     def _build_search_bar(self) -> QHBoxLayout:
         row = QHBoxLayout()
         row.setSpacing(8)
+
+        self._year_label = QLabel(f"当前生肖年份：{self._zodiac_year}")
+        self._year_label.setObjectName("zodiacYearLabel")
+        self._year_spin = QSpinBox()
+        self._year_spin.setObjectName("zodiacYearSpin")
+        self._year_spin.setRange(MIN_ZODIAC_YEAR, MAX_ZODIAC_YEAR)
+        self._year_spin.setValue(self._zodiac_year)
+        self._year_spin.setPrefix("生肖年份 ")
+        self._year_spin.valueChanged.connect(self._on_year_changed)
 
         self._search_edit = QLineEdit()
         self._search_edit.setPlaceholderText("请输入查找的内容")
@@ -337,11 +341,19 @@ class NumberCatalogPage(QWidget):
         btn_prev.clicked.connect(lambda: self._search_next(backward=True))
         btn_next.clicked.connect(self._search_next)
 
+        row.addWidget(self._year_label)
+        row.addWidget(self._year_spin)
         row.addWidget(self._search_edit, stretch=1)
         row.addWidget(btn_search)
         row.addWidget(btn_prev)
         row.addWidget(btn_next)
         return row
+
+    def _on_year_changed(self, year: int) -> None:
+        self._zodiac_year = year
+        self._year_label.setText(f"当前生肖年份：{year}")
+        self._content.setHtml(_build_catalog_html(year))
+        self._content.setExtraSelections([])
 
     def _search_next(self, backward: bool = False) -> None:
         keyword = self._search_edit.text().strip()

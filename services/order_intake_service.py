@@ -63,6 +63,7 @@ class OrderIntakeService:
         region: str | None = None,
         source: str = "record_window",
         parse_options: ParseOptions | None = None,
+        zodiac_year: int | None = None,
     ) -> OrderIntakePreview:
         metadata = IntakeMetadata(
             customer_name=customer_name,
@@ -72,7 +73,7 @@ class OrderIntakeService:
             source=source,
             raw_text=raw_text,
         )
-        parsed_results = parse_lines(raw_text, options=parse_options)
+        parsed_results = parse_lines(raw_text, options=parse_options, zodiac_year=zodiac_year)
         return self.convert_parsed_result(parsed_results, metadata)
 
     def convert_parsed_result(
@@ -203,6 +204,7 @@ class OrderIntakeService:
         region: str | None = None,
         source: str = "record_window",
         parse_options: ParseOptions | None = None,
+        zodiac_year: int | None = None,
     ) -> OrderIntakeSaveResult:
         preview = self.preview_raw_text(
             raw_text,
@@ -212,6 +214,7 @@ class OrderIntakeService:
             region=region,
             source=source,
             parse_options=parse_options,
+            zodiac_year=zodiac_year,
         )
         if not preview.can_save:
             return OrderIntakeSaveResult(

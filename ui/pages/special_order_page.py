@@ -724,7 +724,7 @@ class SpecialOrderPage(QWidget):
 
     def _number_zodiac(self, number: str) -> str:
         try:
-            return get_zodiac(number, year=2026)
+            return get_zodiac(number)
         except Exception:
             return ""
 

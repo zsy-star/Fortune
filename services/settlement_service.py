@@ -507,7 +507,8 @@ class SettlementService:
                 "draw_date": draw.draw_date.isoformat(),
                 "regular_numbers": list(draw.regular_numbers),
                 "special_number": draw.special_number,
-                "special_zodiac": get_zodiac(draw.special_number),
+                "special_zodiac": get_zodiac(draw.special_number, year=self._engine.zodiac_year),
+                "zodiac_year": self._engine.zodiac_year,
             },
             "summary": {
                 "total_bet_amount": _decimal_money(preview.total_bet_amount),

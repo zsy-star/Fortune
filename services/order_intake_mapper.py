@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 from domain.bet_types import REGION_MACAU, normalize_bet_type, normalize_region
 from domain.exceptions import InvalidBetTypeError, InvalidNumberError, InvalidRegionError
 from domain.number_rules import normalize_number
-from domain.zodiac_rules import get_zodiac_map
+from domain.zodiac_config import get_default_zodiac_year, get_zodiac_number_map
 from schemas.order_intake_schema import IntakeItemPreview
 from schemas.order_schema import OrderItemCreate
 from services.order_parser import ParseResult
@@ -32,7 +32,7 @@ _SINGLE_ITEM_CATEGORIES: dict[str, tuple[str, str]] = {
 }
 
 _EXPAND_NUMBER_CATEGORIES = frozenset({"单号投注", "纯数字"})
-_ZODIAC_NAMES = frozenset(get_zodiac_map(2026))
+_ZODIAC_NAMES = frozenset(get_zodiac_number_map(get_default_zodiac_year()))
 _ELEMENTS = frozenset({"金", "木", "水", "火", "土"})
 _SUM_LABELS = frozenset({"合单", "合双", "合大", "合小"})
 _TAIL_PATTERN = re.compile(r"^尾[0-9]$")

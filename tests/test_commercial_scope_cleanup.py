@@ -9,7 +9,7 @@ import matplotlib
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QCheckBox, QLabel, QLineEdit, QPushButton
+from PySide6.QtWidgets import QApplication, QCheckBox, QLabel, QLineEdit, QPushButton, QSpinBox
 
 from schemas.order_schema import OrderCreate, OrderItemCreate
 from services.adjustment_record_service import AdjustmentRecordService
@@ -326,14 +326,28 @@ def test_draw_history_manual_maintenance_is_opened_safely(session_factory) -> No
     assert "无结算记录" in page._btn_reset_draws.toolTip()
 
 
-def test_number_catalog_shows_static_reference_notice() -> None:
+def test_number_catalog_supports_zodiac_year_switching() -> None:
     app()
     page = NumberCatalogPage()
+    year_spin = page.findChild(QSpinBox, "zodiacYearSpin")
+
+    assert year_spin is not None
+    year_spin.setValue(2026)
     text = page._content.toPlainText()
 
     assert "静态号码参考表" in text
-    assert "当前版本不会自动随年份更新" in text
-    assert "请以实际开奖年份配置为准" in text
+    assert "生肖号码按所选开奖年份显示，请以实际开奖年份为准。" in text
+    assert "当前生肖年份：2026" in text
+    assert "马" in text
+    assert "01 13 25 37 49" in text
+    old_notice = "当前版本不会" + "自动随年份更新"
+    assert old_notice not in text
+
+    year_spin.setValue(2025)
+    changed_text = page._content.toPlainText()
+    assert "当前生肖年份：2025" in changed_text
+    assert "蛇" in changed_text
+    assert changed_text != text
 
 
 def test_record_order_window_marks_unimplemented_options_and_footer_scope() -> None:

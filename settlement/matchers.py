@@ -16,6 +16,7 @@ from domain.number_rules import (
     tail_number,
 )
 from domain.zodiac_rules import get_zodiac
+from domain.zodiac_config import get_default_zodiac_year
 
 
 def match_special_number(selection: str, special_number: str) -> tuple[bool, str | None, str]:
@@ -25,9 +26,10 @@ def match_special_number(selection: str, special_number: str) -> tuple[bool, str
     return matched, special if matched else None, f"特码 {special} {'命中' if matched else '未命中'}号码 {selection}"
 
 
-def match_zodiac(selection: str, special_number: str, *, year: int = 2026) -> tuple[bool, str | None, str]:
+def match_zodiac(selection: str, special_number: str, *, year: int | None = None) -> tuple[bool, str | None, str]:
+    selected_year = year or get_default_zodiac_year()
     special = normalize_number(special_number)
-    actual = get_zodiac(special, year=year)
+    actual = get_zodiac(special, year=selected_year)
     matched = actual == selection
     return matched, special if matched else None, f"特码 {special} 生肖为{actual}，投注{selection}"
 
@@ -36,10 +38,11 @@ def match_zodiac_group(
     selection: str,
     special_number: str,
     *,
-    year: int = 2026,
+    year: int | None = None,
 ) -> tuple[bool, str | None, str]:
+    selected_year = year or get_default_zodiac_year()
     special = normalize_number(special_number)
-    actual = get_zodiac(special, year=year)
+    actual = get_zodiac(special, year=selected_year)
     selected = [token for token in selection.split(",") if token]
     matched = actual in selected
     selected_text = "、".join(selected)
@@ -287,10 +290,11 @@ def match_six_special_zodiac(
     selection: str,
     special_number: str,
     *,
-    year: int = 2026,
+    year: int | None = None,
 ) -> tuple[bool, str | None, str]:
+    selected_year = year or get_default_zodiac_year()
     special = normalize_number(special_number)
-    actual = get_zodiac(special, year=year)
+    actual = get_zodiac(special, year=selected_year)
     selected = [token for token in selection.split(",") if token]
     matched = actual in selected
     selected_text = "、".join(selected)

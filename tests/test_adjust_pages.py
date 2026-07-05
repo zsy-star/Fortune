@@ -82,7 +82,7 @@ def test_special_order_page_reads_existing_special_order_summary(session_factory
     page = SpecialOrderPage(order_service=service)
 
     rows = {
-        page._summary_table.item(row, 0).text(): Decimal(page._summary_table.item(row, 1).text())
+        page._summary_table.item(row, 0).text(): Decimal(page._summary_table.item(row, 2).text())
         for row in range(page._summary_table.rowCount())
     }
     assert rows["01"] == Decimal("15.00")
@@ -161,7 +161,7 @@ def test_special_order_page_export_text_and_buttons(session_factory) -> None:
     text = page._build_export_text()
     assert "特码调单汇总" in text
     assert "当前筛选区域：全部" in text
-    assert "号码\t下注数\t盈亏\tID" in text
+    assert "号码\t生肖\t下注数\t预计赔付\t原始风险\t已抛出\t调整后风险\t备注" in text
     assert "号码\t原金额\t调整\t总计" in text
     assert "保存调整仅写入调单记录" in text
     assert "不修改订单" in text
@@ -215,23 +215,29 @@ def test_lianxiao_order_page_creates_and_shows_empty_state(session_factory) -> N
     assert page._summary_table.rowCount() == 1
     assert page._summary_table.item(0, 0).text() == "暂无数据"
     assert len(page._tables) == 4
-    assert [page._summary_table.horizontalHeaderItem(column).text() for column in range(3)] == [
+    assert [page._summary_table.horizontalHeaderItem(column).text() for column in range(6)] == [
         "生肖组",
         "下注数",
-        "盈亏",
+        "预计赔付",
+        "原始风险",
+        "已抛出",
+        "调整后风险",
     ]
     for table in page._tables:
-        assert [table.horizontalHeaderItem(column).text() for column in range(3)] == [
+        assert [table.horizontalHeaderItem(column).text() for column in range(6)] == [
             "生肖组",
             "下注数",
-            "盈亏",
+            "预计赔付",
+            "原始风险",
+            "已抛出",
+            "调整后风险",
         ]
     labels = "\n".join(label.text() for label in page.findChildren(QLabel))
     assert "原金额" not in labels
     assert "总计" not in labels
     assert "原连肖数据" in labels
     assert "调整后数据" in labels
-    assert not page.findChildren(QLineEdit)
+    assert page._throw_reason_edit in page.findChildren(QLineEdit)
     button_texts = {button.text() for button in page.findChildren(QPushButton)}
     assert "保存本次调整" in button_texts
     assert "调整记录" in button_texts
@@ -258,10 +264,10 @@ def test_lianxiao_order_page_reads_existing_lianxiao_summary(session_factory) ->
     page = LianxiaoOrderPage(order_service=service)
 
     assert page._summary_table.rowCount() == 1
-    assert page._summary_table.item(0, 0).text() == "牛,马"
+    assert page._summary_table.item(0, 0).text() == "马,牛"
     assert page._summary_table.item(0, 1).text() == "150.00"
     assert page._tables[0].rowCount() == 1
-    assert page._tables[0].item(0, 0).text() == "牛,马"
+    assert page._tables[0].item(0, 0).text() == "马,牛"
     assert page._tables[0].item(0, 1).text() == "150.00"
     assert "连肖总额：150.00" in page._lbl_lianxiao_total.text()
 
@@ -315,7 +321,7 @@ def test_lianxiao_order_page_saves_current_snapshot_record(
         assert record.adjustment_total == "0.00"
         assert record.after_total == "100.00"
         assert record.item_count == 1
-        assert record.record_snapshot["summary_table"][0]["group"] == "牛,马"
+        assert record.record_snapshot["summary_table"][0]["group"] == "马,牛"
         assert session.scalar(
             select(func.count(OperationLog.id)).where(OperationLog.module == "adjustment")
         ) == 1
@@ -334,7 +340,7 @@ def test_lianxiao_order_page_export_text_and_copy_export_behaviors(
     text = page._build_export_text()
     assert "连肖调单汇总" in text
     assert "当前筛选区域：全部" in text
-    assert "生肖组\t下注数\t盈亏" in text
+    assert "生肖组\t下注数\t预计赔付\t原始风险\t已抛出\t调整后风险" in text
     assert "第 1 列表" in text
     assert "保存调整仅写入调单记录" in text
     assert "不修改订单" in text

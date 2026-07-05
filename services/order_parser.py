@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from domain.zodiac_config import get_default_zodiac_year, get_zodiac_number_map, validate_zodiac_year
+
 # ======================================================================
 # 工具函数
 # ======================================================================
@@ -27,43 +29,35 @@ def _digit_root(n: int) -> int:
 # 生肖数据（含别名映射）
 # ======================================================================
 
-# 2026 年马年起始
-_ZODIAC_ENTRIES: tuple[tuple[tuple[str, ...], tuple[int, ...]], ...] = (
-    (("午马", "午", "马"), (1, 13, 25, 37, 49)),
-    (("巳蛇", "巳", "蛇"), (2, 14, 26, 38)),
-    (("辰龙", "辰", "龙"), (3, 15, 27, 39)),
-    (("卯兔", "卯", "兔"), (4, 16, 28, 40)),
-    (("寅虎", "寅", "虎"), (5, 17, 29, 41)),
-    (("丑牛", "丑", "牛"), (6, 18, 30, 42)),
-    (("子鼠", "子", "鼠"), (7, 19, 31, 43)),
-    (("亥猪", "亥", "猪"), (8, 20, 32, 44)),
-    (("戌狗", "戌", "狗"), (9, 21, 33, 45)),
-    (("酉鸡", "酉", "鸡"), (10, 22, 34, 46)),
-    (("申猴", "申", "猴"), (11, 23, 35, 47)),
-    (("未羊", "未", "羊"), (12, 24, 36, 48)),
+_ZODIAC_ALIASES: tuple[tuple[str, ...], ...] = (
+    ("午马", "午", "马"),
+    ("巳蛇", "巳", "蛇"),
+    ("辰龙", "辰", "龙"),
+    ("卯兔", "卯", "兔"),
+    ("寅虎", "寅", "虎"),
+    ("丑牛", "丑", "牛"),
+    ("子鼠", "子", "鼠"),
+    ("亥猪", "亥", "猪"),
+    ("戌狗", "戌", "狗"),
+    ("酉鸡", "酉", "鸡"),
+    ("申猴", "申", "猴"),
+    ("未羊", "未", "羊"),
 )
+_ZODIAC_ALIAS_BY_NAME = {aliases[-1]: aliases for aliases in _ZODIAC_ALIASES}
+_ZODIAC_ENTRIES: tuple[tuple[tuple[str, ...], tuple[int, ...]], ...] = ()
+_active_zodiac_year = 0
 
 # 标识符 → 号码 快速查找
 _zodiac_by_id: dict[str, tuple[int, ...]] = {}
-for _aliases, _nums in _ZODIAC_ENTRIES:
-    for _a in _aliases:
-        _zodiac_by_id[_a] = _nums
 
 # 标识符按长度降序（最长匹配优先）
-_ZODIAC_IDS_BY_LEN: list[str] = sorted(_zodiac_by_id.keys(), key=len, reverse=True)
+_ZODIAC_IDS_BY_LEN: list[str] = []
 
 # 标识符 → 标准名（单字全名）
 _zodiac_name: dict[str, str] = {}
-for _aliases, _ in _ZODIAC_ENTRIES:
-    _std = _aliases[-1]  # 最后一个别名是单字全名
-    for _a in _aliases:
-        _zodiac_name[_a] = _std
 
 # 号码 → 标准生肖名（反向查询）
 _number_to_zodiac: dict[int, str] = {}
-for _aliases, _nums in _ZODIAC_ENTRIES:
-    for _n in _nums:
-        _number_to_zodiac[_n] = _aliases[-1]
 
 # ======================================================================
 # 类别规则
@@ -185,6 +179,47 @@ _RULES.append(
 
 _RULES.sort(key=lambda r: r.priority)
 
+
+def _zodiac_entries_for_year(year: int) -> tuple[tuple[tuple[str, ...], tuple[int, ...]], ...]:
+    mapping = get_zodiac_number_map(validate_zodiac_year(year))
+    return tuple(
+        (_ZODIAC_ALIAS_BY_NAME[zodiac], tuple(int(number) for number in numbers))
+        for zodiac, numbers in mapping.items()
+    )
+
+
+def _configure_zodiac_year(year: int | None) -> int:
+    """Refresh parser zodiac lookup tables for the selected lottery year."""
+    global _ZODIAC_ENTRIES, _ZODIAC_IDS_BY_LEN, _active_zodiac_year
+
+    selected_year = validate_zodiac_year(year or get_default_zodiac_year())
+    if selected_year == _active_zodiac_year:
+        return selected_year
+
+    _ZODIAC_ENTRIES = _zodiac_entries_for_year(selected_year)
+    _zodiac_by_id.clear()
+    _zodiac_name.clear()
+    _number_to_zodiac.clear()
+
+    for aliases, nums in _ZODIAC_ENTRIES:
+        std = aliases[-1]
+        for alias in aliases:
+            _zodiac_by_id[alias] = nums
+            _zodiac_name[alias] = std
+        for number in nums:
+            _number_to_zodiac[number] = std
+
+    _ZODIAC_IDS_BY_LEN = sorted(_zodiac_by_id.keys(), key=len, reverse=True)
+
+    non_zodiac_rules = [rule for rule in _RULES if rule.priority != 1]
+    zodiac_rules = [CategoryRule(aliases, nums, aliases[-1], 1) for aliases, nums in _ZODIAC_ENTRIES]
+    _RULES[:] = sorted([*zodiac_rules, *non_zodiac_rules], key=lambda r: r.priority)
+    _active_zodiac_year = selected_year
+    return selected_year
+
+
+_configure_zodiac_year(get_default_zodiac_year())
+
 # ======================================================================
 # 连肖关键词
 # ======================================================================
@@ -248,6 +283,7 @@ class ParseOptions:
     special_zodiac_mode: bool = False
     age_writing: bool = False
     zodiac_each_mode: bool = False
+    zodiac_year: int | None = None
 
 
 # ======================================================================
@@ -975,13 +1011,22 @@ def _resolve_parse_options(
     special_zodiac_mode: bool = False,
     age_writing: bool = False,
     zodiac_each_mode: bool = False,
+    zodiac_year: int | None = None,
 ) -> ParseOptions:
     if options is not None:
+        if options.zodiac_year is None and zodiac_year is not None:
+            return ParseOptions(
+                special_zodiac_mode=options.special_zodiac_mode,
+                age_writing=options.age_writing,
+                zodiac_each_mode=options.zodiac_each_mode,
+                zodiac_year=zodiac_year,
+            )
         return options
     return ParseOptions(
         special_zodiac_mode=special_zodiac_mode,
         age_writing=age_writing,
         zodiac_each_mode=zodiac_each_mode,
+        zodiac_year=zodiac_year,
     )
 
 
@@ -992,6 +1037,7 @@ def parse_order(
     special_zodiac_mode: bool = False,
     age_writing: bool = False,
     zodiac_each_mode: bool = False,
+    zodiac_year: int | None = None,
 ) -> ParseResult:
     """解析一行订单文本，返回展开结果。
 
@@ -1006,7 +1052,9 @@ def parse_order(
         special_zodiac_mode=special_zodiac_mode,
         age_writing=age_writing,
         zodiac_each_mode=zodiac_each_mode,
+        zodiac_year=zodiac_year,
     )
+    _configure_zodiac_year(options.zodiac_year)
     text = _normalize_smart_text(text.strip())
     if not text:
         return ParseResult(success=False, error="输入为空")
@@ -1713,6 +1761,7 @@ def parse_lines(
     special_zodiac_mode: bool = False,
     age_writing: bool = False,
     zodiac_each_mode: bool = False,
+    zodiac_year: int | None = None,
 ) -> list[ParseResult]:
     """解析多行文本，支持上下文标题行和口语自然语言清洗。
 
@@ -1729,7 +1778,9 @@ def parse_lines(
         special_zodiac_mode=special_zodiac_mode,
         age_writing=age_writing,
         zodiac_each_mode=zodiac_each_mode,
+        zodiac_year=zodiac_year,
     )
+    _configure_zodiac_year(options.zodiac_year)
     text, declared_total = _extract_declared_total(text)
     results: list[ParseResult] = []
     ctx_region = ""

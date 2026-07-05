@@ -88,9 +88,21 @@ def test_special_number_matchers() -> None:
 def test_zodiac_rules_use_domain_mapping() -> None:
     assert match_zodiac("马", "01", year=2026)[0] is True
     assert match_zodiac("蛇", "01", year=2026)[0] is False
+    assert match_zodiac("蛇", "01", year=2025)[0] is True
+    assert match_zodiac("马", "01", year=2025)[0] is False
 
-    with pytest.raises(Exception):
-        match_zodiac("马", "01", year=2025)
+
+def test_settlement_engine_uses_configured_zodiac_year() -> None:
+    order = OrderLike(items=[ItemLike(1, "特码生肖", "蛇")])
+    draw = DrawLike(special_number="01")
+
+    preview_2026 = SettlementEngine(zodiac_year=2026).evaluate_order(order, draw)
+    preview_2025 = SettlementEngine(zodiac_year=2025).evaluate_order(order, draw)
+
+    assert preview_2026.results[0].is_winner is False
+    assert preview_2026.results[0].draw_special_zodiac == "马"
+    assert preview_2025.results[0].is_winner is True
+    assert preview_2025.results[0].draw_special_zodiac == "蛇"
 
 
 def test_color_half_wave_and_invalid_selection() -> None:

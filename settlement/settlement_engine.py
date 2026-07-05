@@ -8,6 +8,7 @@ from typing import Any
 from domain.color_rules import get_wave_color
 from domain.number_rules import normalize_number, odd_even_label, size_label, tail_number
 from domain.zodiac_rules import get_zodiac
+from domain.zodiac_config import get_default_zodiac_year, validate_zodiac_year
 from schemas.settlement_schema import ItemSettlementResult, OrderSettlementPreview
 from settlement.bet_normalizer import (
     LINKED_TAIL,
@@ -95,9 +96,13 @@ MATCHERS: dict[str, Matcher] = {
 class SettlementEngine:
     """Evaluate order items against an explicitly supplied lottery draw."""
 
-    def __init__(self, normalizer: BetTypeNormalizer | None = None, *, zodiac_year: int = 2026):
-        self._normalizer = normalizer or BetTypeNormalizer()
-        self._zodiac_year = zodiac_year
+    def __init__(self, normalizer: BetTypeNormalizer | None = None, *, zodiac_year: int | None = None):
+        self._zodiac_year = validate_zodiac_year(zodiac_year or get_default_zodiac_year())
+        self._normalizer = normalizer or BetTypeNormalizer(zodiac_year=self._zodiac_year)
+
+    @property
+    def zodiac_year(self) -> int:
+        return self._zodiac_year
 
     def evaluate_item(self, order_item: Any, lottery_draw: Any) -> ItemSettlementResult:
         draw = self._validate_draw(lottery_draw)

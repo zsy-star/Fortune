@@ -9,7 +9,7 @@ from itertools import combinations
 from domain.color_rules import FIVE_ELEMENT_NUMBERS, WAVE_NUMBERS
 from domain.exceptions import InvalidNumberError
 from domain.number_rules import normalize_number
-from domain.zodiac_rules import get_zodiac_map
+from domain.zodiac_config import get_default_zodiac_year, get_zodiac_number_map, validate_zodiac_year
 from settlement.exceptions import InvalidSelectionError, UnsupportedBetTypeError
 
 SPECIAL_NUMBER = "special_number"
@@ -133,6 +133,9 @@ class NormalizedBet:
 
 class BetTypeNormalizer:
     """Normalize known settlement bet labels without guessing unknown rules."""
+
+    def __init__(self, *, zodiac_year: int | None = None):
+        self._zodiac_year = validate_zodiac_year(zodiac_year or get_default_zodiac_year())
 
     def normalize(self, bet_type: str, selection: str, note: str | None = None) -> NormalizedBet:
         original_bet_type = (bet_type or "").strip()
@@ -295,7 +298,7 @@ class BetTypeNormalizer:
         return tokens
 
     def _normalize_zodiac_group_selection(self, selection: str) -> str:
-        zodiacs = set(get_zodiac_map(2026))
+        zodiacs = set(get_zodiac_number_map(self._zodiac_year))
         tokens = [token for token in re.split(r"[\s,，、/|+-]+", selection.strip()) if token]
         if len(tokens) <= 1:
             compact = "".join(tokens) if tokens else selection.strip()
@@ -311,7 +314,7 @@ class BetTypeNormalizer:
         return ",".join(unique_tokens)
 
     def _normalize_six_special_zodiac_selection(self, selection: str) -> str:
-        zodiacs = set(get_zodiac_map(2026))
+        zodiacs = set(get_zodiac_number_map(self._zodiac_year))
         tokens = [token for token in re.split(r"[\s,，、/|+-]+", selection.strip()) if token]
         if len(tokens) <= 1:
             compact = "".join(tokens) if tokens else selection.strip()
@@ -427,7 +430,7 @@ class BetTypeNormalizer:
         return bool(tokens) and all(token.isdigit() for token in tokens)
 
     def _is_zodiac(self, value: str) -> bool:
-        return value in get_zodiac_map(2026)
+        return value in get_zodiac_number_map(self._zodiac_year)
 
     def _is_half_wave(self, value: str) -> bool:
         if len(value) < 2:

@@ -23,7 +23,8 @@ from domain.number_rules import (
     size_label,
     tail_number,
 )
-from domain.zodiac_rules import get_zodiac, get_zodiac_map
+from domain.zodiac_rules import get_zodiac
+from domain.zodiac_config import get_default_zodiac_year, get_zodiac_number_map, validate_zodiac_year
 from models import Order
 from repositories.settings_repository import SettingsRepository
 from settlement.bet_normalizer import (
@@ -77,7 +78,7 @@ SPECIAL_ODDS_CANDIDATES: dict[str, tuple[str, ...]] = {
     SPECIAL_ZODIAC_GROUP: ("连肖", "多生肖", "生肖"),
 }
 LIANXIAO_ALIASES = {"连肖", "多生肖"}
-ZODIAC_ORDER = tuple(get_zodiac_map(2026).keys())
+ZODIAC_ORDER = tuple(get_zodiac_number_map(get_default_zodiac_year()).keys())
 ZODIAC_RANK = {zodiac: index for index, zodiac in enumerate(ZODIAC_ORDER)}
 
 
@@ -118,9 +119,13 @@ class ThrowEntry:
 class RiskAdjustmentService:
     """Service used by the adjustment UI; it never mutates orders or balances."""
 
-    def __init__(self, session_factory: Callable[[], Session] = SessionLocal):
+    def __init__(self, session_factory: Callable[[], Session] = SessionLocal, *, zodiac_year: int | None = None):
         self._session_factory = session_factory
-        self._normalizer = BetTypeNormalizer()
+        self._zodiac_year = validate_zodiac_year(zodiac_year or get_default_zodiac_year())
+        self._zodiac_map = get_zodiac_number_map(self._zodiac_year)
+        self._zodiac_order = tuple(self._zodiac_map.keys())
+        self._zodiac_rank = {zodiac: index for index, zodiac in enumerate(self._zodiac_order)}
+        self._normalizer = BetTypeNormalizer(zodiac_year=self._zodiac_year)
         self._adjustment_records = AdjustmentRecordService(session_factory)
 
     def build_special_risk_table(self, *, region: str | None = None) -> list[SpecialRiskRow]:
@@ -185,7 +190,7 @@ class RiskAdjustmentService:
             rows.append(
                 SpecialRiskRow(
                     number=key,
-                    zodiac=get_zodiac(key, year=2026),
+                    zodiac=get_zodiac(key, year=self._zodiac_year),
                     raw_stake_amount=raw,
                     potential_payout_amount=payout,
                     rebate_amount=rebate,
@@ -515,11 +520,11 @@ class RiskAdjustmentService:
         if normalized_type == SPECIAL_NUMBER:
             return [normalize_number(token) for token in selection.split(",") if token]
         if normalized_type == SPECIAL_ZODIAC:
-            return [f"{number:02d}" for number in get_zodiac_map(2026)[selection]]
+            return list(self._zodiac_map[selection])
         if normalized_type == SPECIAL_ZODIAC_GROUP:
             numbers: list[str] = []
             for zodiac in selection.split(","):
-                numbers.extend(f"{number:02d}" for number in get_zodiac_map(2026)[zodiac])
+                numbers.extend(self._zodiac_map[zodiac])
             return sorted(set(numbers))
         return self._expand_special_expression(selection)
 
@@ -531,8 +536,8 @@ class RiskAdjustmentService:
             return [normalize_number(text)]
         except Exception:
             pass
-        if text in get_zodiac_map(2026):
-            return [f"{number:02d}" for number in get_zodiac_map(2026)[text]]
+        if text in self._zodiac_map:
+            return list(self._zodiac_map[text])
         if text in WAVE_NUMBERS:
             return _format_numbers(WAVE_NUMBERS[text])
         if text in FIVE_ELEMENT_NUMBERS:
@@ -593,7 +598,7 @@ class RiskAdjustmentService:
             tokens = list("".join(tokens) if tokens else expression.strip())
         if len(tokens) < 2:
             raise ValueError("连肖组合至少需要 2 个生肖")
-        invalid = [token for token in tokens if token not in ZODIAC_RANK]
+        invalid = [token for token in tokens if token not in self._zodiac_rank]
         if invalid:
             raise ValueError(f"无效生肖：{','.join(invalid)}")
         if len(set(tokens)) != len(tokens):
@@ -602,10 +607,10 @@ class RiskAdjustmentService:
 
     def _stable_zodiac_group(self, zodiacs: Iterable[str]) -> str:
         unique = list(dict.fromkeys(zodiacs))
-        return ",".join(sorted(unique, key=lambda zodiac: ZODIAC_RANK[zodiac]))
+        return ",".join(sorted(unique, key=lambda zodiac: self._zodiac_rank[zodiac]))
 
     def _zodiac_group_sort_key(self, group: str) -> tuple[int, ...]:
-        return tuple(ZODIAC_RANK[zodiac] for zodiac in group.split(",") if zodiac)
+        return tuple(self._zodiac_rank[zodiac] for zodiac in group.split(",") if zodiac)
 
     def _active_special_thrown_amounts(self, session: Session, *, region: str | None) -> dict[str, Decimal]:
         amounts: dict[str, Decimal] = defaultdict(Decimal)

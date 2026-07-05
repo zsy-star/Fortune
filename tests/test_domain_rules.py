@@ -13,6 +13,7 @@ from domain.number_rules import (
     size_label,
     tail_number,
 )
+from domain.zodiac_config import get_number_zodiac_map, get_zodiac_number_map
 from domain.zodiac_rules import get_zodiac
 
 
@@ -32,8 +33,32 @@ def test_2026_zodiac_rules_do_not_use_simple_modulo() -> None:
     assert get_zodiac(49, year=2026) == "马"
     assert get_zodiac(10, year=2026) == "鸡"
     assert get_zodiac(12, year=2026) == "羊"
+    assert get_zodiac(1, year=2025) == "蛇"
+
+
+def test_unified_zodiac_config_2026_baseline() -> None:
+    mapping = get_zodiac_number_map(2026)
+
+    assert mapping["马"] == ["01", "13", "25", "37", "49"]
+    assert mapping["蛇"] == ["02", "14", "26", "38"]
+    assert mapping["兔"] == ["04", "16", "28", "40"]
+
+
+def test_zodiac_config_rotates_by_year_and_covers_all_numbers() -> None:
+    assert get_zodiac_number_map(2025) != get_zodiac_number_map(2026)
+    assert get_number_zodiac_map(2025)["01"] != get_number_zodiac_map(2026)["01"]
+
+    for year in (2025, 2026, 2027):
+        mapping = get_zodiac_number_map(year)
+        all_numbers = [number for numbers in mapping.values() for number in numbers]
+        assert len(mapping) == 12
+        assert sorted(all_numbers) == [f"{number:02d}" for number in range(1, 50)]
+        assert len(all_numbers) == len(set(all_numbers))
+
+
+def test_zodiac_config_rejects_out_of_range_year() -> None:
     with pytest.raises(UnsupportedYearError):
-        get_zodiac(1, year=2025)
+        get_zodiac_number_map(1999)
 
 
 def test_wave_and_half_wave_rules() -> None:

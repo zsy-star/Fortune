@@ -52,6 +52,22 @@ def test_special_risk_table_expands_numbers_and_semantic_inputs(session_factory)
     assert parsed_by_number["19"] >= Decimal("4.00")
 
 
+def test_special_risk_table_uses_configured_zodiac_year(session_factory) -> None:
+    order_service = OrderService(session_factory)
+    create_order(order_service, bet_type="特码", selection="蛇", amount="5")
+    service = RiskAdjustmentService(session_factory, zodiac_year=2025)
+
+    rows = service.build_special_risk_table()
+    by_number = {row.number: row for row in rows}
+    parsed = service.parse_special_throw_text("蛇=10")
+    parsed_by_number = {entry.number for entry in parsed}
+
+    assert by_number["01"].zodiac == "蛇"
+    assert by_number["01"].raw_stake_amount == Decimal("5.00")
+    assert by_number["02"].raw_stake_amount == Decimal("0.00")
+    assert {"01", "13", "25", "37", "49"}.issubset(parsed_by_number)
+
+
 def test_special_suggestions_apply_and_reverse_without_modifying_orders(session_factory) -> None:
     order_service = OrderService(session_factory)
     settings = SettingsService(session_factory)
@@ -110,3 +126,19 @@ def test_lianxiao_groups_parse_apply_and_reverse(session_factory) -> None:
     assert after_reverse["龙,猴,羊"].thrown_amount == Decimal("0.00")
     with pytest.raises(ValueError, match="重复生肖"):
         service.parse_lianxiao_throw_text("龙龙羊=10")
+
+
+def test_lianxiao_risk_table_stays_grouped_by_zodiac_and_region(session_factory) -> None:
+    order_service = OrderService(session_factory)
+    create_order(order_service, region="澳门", bet_type="连肖", selection="龙羊猴", amount="40")
+    create_order(order_service, region="香港", bet_type="连肖", selection="龙羊猴", amount="60")
+    service = RiskAdjustmentService(session_factory, zodiac_year=2025)
+
+    macau_rows = service.build_lianxiao_risk_table(region="澳门")
+    all_rows = service.build_lianxiao_risk_table()
+
+    assert len(macau_rows) == 1
+    assert macau_rows[0].zodiac_group == "龙,猴,羊"
+    assert macau_rows[0].raw_amount == Decimal("40.00")
+    assert len(all_rows) == 1
+    assert all_rows[0].raw_amount == Decimal("100.00")

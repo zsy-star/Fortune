@@ -1384,6 +1384,13 @@ class TestRecordWindowAdvancedParseOptions:
         assert len(r.numbers) == 9
         assert r.total == 90
 
+    def test_zodiac_bet_parsing_uses_zodiac_year(self) -> None:
+        r_2026 = parse_order("兔各10", zodiac_year=2026)
+        r_2025 = parse_order("兔各10", zodiac_year=2025)
+
+        assert r_2026.numbers == (4, 16, 28, 40)
+        assert r_2025.numbers == (3, 15, 27, 39)
+
     def test_zodiac_each_mode_counts_zodiac_groups(self) -> None:
         r = parse_order("羊马各10", zodiac_each_mode=True)
         assert r.success
@@ -1391,12 +1398,38 @@ class TestRecordWindowAdvancedParseOptions:
         assert [name for name, _ in r.zodiac_groups] == ["羊", "马"]
         assert r.total == 20
 
+    def test_zodiac_each_mode_uses_zodiac_year_without_amount_change(self) -> None:
+        r = parse_order("兔马各10", zodiac_each_mode=True, zodiac_year=2025)
+        assert r.success
+        assert r.category == "平特一肖"
+        assert r.zodiac_groups == [("兔", (3, 15, 27, 39)), ("马", (12, 24, 36, 48))]
+        assert r.total == 20
+
+    def test_lianxiao_uses_zodiac_year_without_amount_change(self) -> None:
+        r = parse_order("连肖 兔马 各30", zodiac_year=2025)
+
+        assert r.success
+        assert r.category == "连肖"
+        assert r.zodiac_groups == [("兔", (3, 15, 27, 39)), ("马", (12, 24, 36, 48))]
+        assert r.total == 30
+
     def test_special_zodiac_mode_counts_single_zodiac(self) -> None:
         r = parse_order("马10", special_zodiac_mode=True)
         assert r.success
         assert r.category == "平特一肖"
         assert [name for name, _ in r.zodiac_groups] == ["马"]
         assert r.total == 10
+
+    def test_pingte_and_special_zodiac_modes_use_zodiac_year(self) -> None:
+        pingte = parse_order("兔平特一肖各10", zodiac_year=2025)
+        special_mode = parse_order("兔10", special_zodiac_mode=True, zodiac_year=2025)
+
+        assert pingte.success
+        assert pingte.category == "平特一肖"
+        assert pingte.zodiac_groups == [("兔", (3, 15, 27, 39))]
+        assert special_mode.success
+        assert special_mode.category == "平特一肖"
+        assert special_mode.zodiac_groups == [("兔", (3, 15, 27, 39))]
 
     def test_special_zodiac_mode_counts_multiple_zodiacs(self) -> None:
         r = parse_order("马蛇10", special_zodiac_mode=True)
@@ -1424,6 +1457,13 @@ class TestRecordWindowAdvancedParseOptions:
         assert r.category == "纯数字"
         assert r.numbers == (1,)
         assert r.total == 10
+
+    def test_age_writing_still_works_with_zodiac_year(self) -> None:
+        r = parse_order("1岁各10", age_writing=True, zodiac_year=2025)
+
+        assert r.success
+        assert r.category == "纯数字"
+        assert r.numbers == (1,)
 
     def test_buzhong_zhi(self) -> None:
         """「至」也是合法范围分隔符。"""
