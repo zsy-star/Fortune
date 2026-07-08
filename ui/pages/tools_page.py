@@ -211,7 +211,7 @@ class ToolsPage(QWidget):
         box.setReadOnly(True)
         box.setObjectName("comingSoonBox")
         box.setPlainText(
-            "当前测试版已开放：数据库备份/恢复、计算器、拆单助手第一阶段文本整理。\n"
+            "当前已开放：数据库备份/恢复、计算器、拆单助手文本整理。\n"
             "拆单助手可整理文本、预览订单并确认保存解析成功行；不自动结算、不计算赔付或余额。"
         )
         box.setMinimumHeight(160)

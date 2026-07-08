@@ -1,5 +1,6 @@
 """我要录单弹窗（布局参照业务录单界面，功能后续实现）。"""
 
+import html
 import re
 from decimal import Decimal, InvalidOperation
 
@@ -31,8 +32,9 @@ from PySide6.QtWidgets import (
 
 from domain.zodiac_config import MAX_ZODIAC_YEAR, MIN_ZODIAC_YEAR, get_default_zodiac_year
 from schemas.order_intake_schema import IntakeMetadata, IntakeTableRow
+from services.order_intake_display_formatter import format_parse_result
 from services.order_intake_service import OrderIntakeService
-from services.order_parser import ParseOptions, ParseResult, format_result, parse_lines
+from services.order_parser import ParseOptions, ParseResult, parse_lines
 from services.settings_service import SettingsService
 from ui.app_events import app_events
 from ui.unavailable import UNAVAILABLE_TOOLTIP
@@ -76,7 +78,7 @@ _CHECKBOX_LABELS = [
 ]
 
 _FOOTER_HINT = (
-    "当前测试版重点支持特码类录入和结算；"
+    "当前版本重点支持特码类录入和结算；"
     "其他玩法可能可录入，但暂不保证结算；"
     "高级选项仅影响本窗口录单解析，不会触发结算或余额变动。"
 )
@@ -383,7 +385,8 @@ class RecordOrderWindow(QMainWindow):
             result = ParseResult(success=False, error=advanced_error)
             self._parsed_results = []
             self._last_parse_results = [result]
-            text = format_result(result).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            default_region = "澳门" if self._radio_macau.isChecked() else "香港"
+            text = html.escape(format_parse_result(result, default_region=default_region))
             self._output_text.setHtml(f"<pre style='margin:0;'><span style='color:red;'>{text}</span></pre>")
             return
 
@@ -405,14 +408,12 @@ class RecordOrderWindow(QMainWindow):
         # 显示结果（错误行红色，其余保持纯文本格式）
         blocks: list[str] = []
         for r in results:
-            text = format_result(r)
-            # 转义 HTML 特殊字符
-            text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            text = html.escape(format_parse_result(r, default_region=default_region))
             if not r.success:
                 text = f"<span style='color:red;'>{text}</span>"
             blocks.append(text)
-        html = "<pre style='margin:0;'>" + "\n\n".join(blocks) + "</pre>"
-        self._output_text.setHtml(html)
+        output_html = "<pre style='margin:0;'>" + "\n".join(blocks) + "</pre>"
+        self._output_text.setHtml(output_html)
 
     def _on_clear_output(self) -> None:
         """清空输入、输出、表格及解析状态。"""
@@ -1163,8 +1164,8 @@ class RecordOrderWindow(QMainWindow):
         self._lbl_declarer_plan = QLabel("配置方案：未绑定配置方案")
         self._lbl_declarer_plan.setObjectName("declarerPlanLabel")
 
-        self._radio_macau = QRadioButton("澳门 (ALT+1)")
-        self._radio_hk = QRadioButton("香港 (ALT+2)")
+        self._radio_macau = QRadioButton("澳门（快捷键1）")
+        self._radio_hk = QRadioButton("香港（快捷键2）")
         self._radio_macau.setChecked(True)
 
         self._cmb_calc = QComboBox()
@@ -1251,7 +1252,7 @@ class RecordOrderWindow(QMainWindow):
         outer.setSpacing(6)
 
         toolbar = QHBoxLayout()
-        link = QLabel("识别异常请先检查格式；当前测试版不提供在线帮助入口。")
+        link = QLabel("识别异常请先检查格式；当前版本不提供在线帮助入口。")
         link.setObjectName("helpLink")
         toolbar.addWidget(link)
         toolbar.addStretch(1)

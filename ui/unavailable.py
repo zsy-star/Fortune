@@ -1,11 +1,11 @@
-"""Shared text helpers for features intentionally unavailable in the MVP."""
+"""Shared text helpers for intentionally unavailable features."""
 
 from __future__ import annotations
 
 from PySide6.QtWidgets import QPushButton
 
-UNAVAILABLE_PREFIX = "当前测试版暂未开放"
-UNAVAILABLE_TOOLTIP = "当前测试版暂未开放；后续版本开放前不会执行业务写入。"
+UNAVAILABLE_PREFIX = "该功能暂未开放"
+UNAVAILABLE_TOOLTIP = "该功能暂未开放；开放前不会执行业务写入。"
 
 
 def unavailable_text(feature: str, reason: str, next_step: str | None = None) -> str:

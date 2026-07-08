@@ -227,7 +227,7 @@ class AdjustmentRecordDialog(QDialog):
             self,
             "导出调整记录详情",
             f"调整记录-{self._selected_record.id}.txt",
-            "Text Files (*.txt);;All Files (*)",
+            "文本文件 (*.txt);;所有文件 (*)",
         )
         if not path:
             self._status_label.setText("已取消导出")

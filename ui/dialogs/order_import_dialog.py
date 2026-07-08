@@ -249,7 +249,7 @@ class OrderImportDialog(QDialog):
             self,
             "选择订单导入文件",
             "",
-            "订单文件 (*.txt *.csv *.xlsx);;Text Files (*.txt);;CSV Files (*.csv);;Excel Files (*.xlsx);;All Files (*)",
+            "订单文件 (*.txt *.csv *.xlsx);;文本文件 (*.txt);;表格文件 (*.csv *.xlsx);;所有文件 (*)",
         )
         if not path:
             self._stats_label.setText("已取消选择文件；尚未确认导入")
@@ -261,7 +261,7 @@ class OrderImportDialog(QDialog):
             self,
             "下载导入模板",
             "订单导入模板.xlsx",
-            "Excel Files (*.xlsx);;CSV Files (*.csv);;Text Files (*.txt);;All Files (*)",
+            "表格文件 (*.xlsx *.csv);;文本文件 (*.txt);;所有文件 (*)",
         )
         if not path:
             self._stats_label.setText("已取消生成导入模板")
@@ -560,13 +560,13 @@ class OrderImportDialog(QDialog):
             self,
             "导出导入结果",
             "订单导入结果报告.txt",
-            "Text Files (*.txt);;CSV Files (*.csv);;All Files (*)",
+            "文本文件 (*.txt);;表格文件 (*.csv);;所有文件 (*)",
         )
         if not path:
             self._stats_label.setText("已取消导出导入结果")
             return
         try:
-            if Path(path).suffix.lower() == ".csv" or "CSV" in selected_filter:
+            if Path(path).suffix.lower() == ".csv" or "csv" in selected_filter.lower():
                 self._write_result_csv(path)
             else:
                 Path(path).write_text(report, encoding="utf-8")

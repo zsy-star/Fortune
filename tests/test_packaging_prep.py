@@ -96,7 +96,7 @@ def test_build_dry_run_does_not_invoke_pyinstaller(
     result = run_build(
         tmp_path,
         Path("packaging/fortune_test.spec"),
-        Path("dist/Fortune-Test"),
+        Path("dist/Fortune"),
         Path("build/fortune_test"),
         dry_run=True,
     )
@@ -120,7 +120,7 @@ def test_build_rejects_when_pre_release_check_fails(
     result = run_build(
         tmp_path,
         Path("packaging/fortune_test.spec"),
-        Path("dist/Fortune-Test"),
+        Path("dist/Fortune"),
         Path("build/fortune_test"),
         dry_run=False,
     )
@@ -136,11 +136,11 @@ def test_check_test_release_module_importable() -> None:
 
 
 def test_check_test_release_accepts_internal_docs(tmp_path: Path) -> None:
-    release = tmp_path / "Fortune-Test"
+    release = tmp_path / "Fortune"
     internal_docs = release / "_internal" / "docs"
     internal_docs.mkdir(parents=True)
     (internal_docs / "manual_test_script.md").write_text("# test\n", encoding="utf-8")
-    (release / "Fortune-Test.exe").write_bytes(b"MZ")
+    (release / "Fortune.exe").write_bytes(b"MZ")
 
     result = run_check_test_release(release)
 
@@ -150,7 +150,7 @@ def test_check_test_release_accepts_internal_docs(tmp_path: Path) -> None:
 
 
 def test_sync_release_docs_copies_to_release_root(tmp_path: Path) -> None:
-    release = tmp_path / "Fortune-Test"
+    release = tmp_path / "Fortune"
     internal_docs = release / "_internal" / "docs"
     internal_docs.mkdir(parents=True)
     (internal_docs / "readme.md").write_text("# doc\n", encoding="utf-8")
@@ -160,21 +160,21 @@ def test_sync_release_docs_copies_to_release_root(tmp_path: Path) -> None:
 
 
 def test_check_test_release_detects_missing_exe(tmp_path: Path) -> None:
-    release = tmp_path / "Fortune-Test"
+    release = tmp_path / "Fortune"
     release.mkdir()
     (release / "docs").mkdir()
 
     result = run_check_test_release(release)
 
     assert result["ok"] is False
-    assert any("Fortune-Test.exe" in item for item in result["failures"])
+    assert any("Fortune.exe" in item for item in result["failures"])
 
 
 def test_check_test_release_detects_forbidden_fortune_db(tmp_path: Path) -> None:
-    release = tmp_path / "Fortune-Test"
+    release = tmp_path / "Fortune"
     (release / "data").mkdir(parents=True)
     (release / "data" / "fortune.db").write_bytes(b"sqlite")
-    (release / "Fortune-Test.exe").write_bytes(b"MZ")
+    (release / "Fortune.exe").write_bytes(b"MZ")
     (release / "docs").mkdir()
 
     result = run_check_test_release(release)
@@ -184,7 +184,7 @@ def test_check_test_release_detects_forbidden_fortune_db(tmp_path: Path) -> None
 
 
 def test_check_test_release_does_not_delete_files(tmp_path: Path) -> None:
-    release = tmp_path / "Fortune-Test"
+    release = tmp_path / "Fortune"
     (release / "data").mkdir(parents=True)
     db = release / "data" / "fortune.db"
     db.write_bytes(b"keep")
@@ -206,7 +206,7 @@ def test_pyinstaller_test_build_doc_exists_with_key_steps() -> None:
         "pre_release_check",
         "dry-run",
         "--build",
-        "dist/Fortune-Test",
+        "dist/Fortune",
         "fortune.db",
         "data/backups",
         "exports",

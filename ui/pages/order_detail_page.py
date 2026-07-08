@@ -213,7 +213,7 @@ class OrderDetailPage(QWidget):
         self._btn_bulk_delete_orders.clicked.connect(self._on_bulk_delete_orders)
         self._btn_export_excel = QPushButton("导出订单")
         self._btn_export_excel.setObjectName("primaryAction")
-        self._btn_export_excel.setToolTip("按当前查询条件导出 Excel")
+        self._btn_export_excel.setToolTip("按当前查询条件导出表格")
         self._btn_export_excel.clicked.connect(self._on_export_excel)
         self._btn_import_orders = QPushButton("导入订单")
         self._btn_import_orders.setObjectName("primaryAction")
@@ -275,7 +275,7 @@ class OrderDetailPage(QWidget):
         button = QPushButton(text)
         button.setObjectName("unavailableAction")
         button.setEnabled(False)
-        button.setToolTip(f"{text}：当前版本不开放。{reason}")
+        button.setToolTip(f"{text}：当前功能未开放。{reason}")
         button.setStatusTip(reason)
         return button
 

@@ -1,6 +1,6 @@
 # Fortune
 
-Fortune 是一个本地桌面版六合彩记账本 / 订单账本 / 结算统计工具。当前版本状态统一为：商用测试版 / 内部试用版。当前目标是小范围商用记账验证，重点是号码录入、订单统计、开奖核对、中奖金额快照、返水金额统计、数据可追溯和可导出对账。
+Fortune 是一个本地桌面版六合彩记账本 / 订单账本 / 结算统计工具。当前定位为正式小范围单机商用版，重点是号码录入、订单统计、开奖核对、中奖金额快照、返水金额统计、数据可追溯和可导出对账。
 
 Fortune 不做客户账户、不做客户余额、不做余额流水、不做真实兑奖入账，不涉及真实资金支付。返水只是按投注额 / 有效投注额计算出来的统计项，不入账、不付款、不形成客户余额。
 
@@ -45,17 +45,17 @@ data/fortune.db
 - 操作日志查询
 - 数据总览、订单分析真实数据库统计
 - 数据库备份 / 恢复后端与 UI
-- 订单、结算流水、操作日志 Excel 导出
+- 订单、结算流水、操作日志表格导出
 - 设置中心：赔率/返水配置方案、申报人配置、导入/导出秘钥本地持久化
 - 拆单助手第一阶段：文本整理、订单预览、勾选保存成功行、写操作日志、保存 txt
 - 特码调单第一阶段：只读汇总 + 页面内临时调整 + 调单快照记录
 - 连肖调单第一阶段：左侧总表 + 右侧四列表只读汇总 + 调单快照记录
-- 结算第一阶段：命中 / 未中 / unsupported、已支持玩法基础中奖金额、结算快照展示
+- 结算第一阶段：命中 / 未中 / 不支持、已支持玩法基础中奖金额、结算快照展示
 - 全局数据变更自动刷新：订单、日志、结算、开奖、设置、数据库恢复
 - 号码大全静态参考表
 - 计算器工具
 
-## 当前测试版第一阶段可用 / 只读展示
+## 当前已开放 / 只读展示
 
 - 拆单助手可做文本整理、订单预览、勾选保存解析成功行；不自动结算、不计算赔付或余额。
 - 特码调单保存的是调单快照记录，不修改原订单、不自动兑奖、不写余额。
@@ -75,7 +75,7 @@ data/fortune.db
 - 批量删除：需要权限、审计和恢复策略支持，当前不开放。
 - 重置开奖：会影响结算依据，需要权限、审计和恢复策略支持。
 - 真实修改原订单式调单：需要审计、权限和回滚策略，当前调单只保存快照。
-- 正式安装包和升级流程：当前可做测试版打包检查，发布和升级流程未冻结。
+- 正式安装包和升级流程：当前可做发布包打包检查，发布和升级流程未冻结。
 - 录单窗口未确认的其他高级写法：除已开放的特肖模式、岁写法、各->各肖外，未冻结规则的写法不强行识别。
 - 未确认规则的复杂玩法：连肖复选、正码特、特串、独立名义的胆拖、组选、全包等；需要参考软件样例确认前不接入正式结算。
 
@@ -110,11 +110,11 @@ data/fortune.db
 - [商用测试前验收清单](docs/commercial_acceptance_checklist.md)
 - [打包前自检清单](docs/pre_packaging_checklist.md)
 - [人工验收脚本](docs/manual_test_script.md)
-- [PyInstaller 打包测试版说明](docs/pyinstaller_test_build.md)
-- [测试版发布目录结构说明](docs/test_release_structure.md)
+- [PyInstaller 发布包说明](docs/pyinstaller_test_build.md)
+- [发布目录结构说明](docs/test_release_structure.md)
 - 打包前只读自检：`python scripts/pre_release_check.py --project-root .`
-- 测试版构建 dry-run：`python scripts/build_test_release.py --project-root . --dry-run`
-- 测试版发布目录检查：`python scripts/check_test_release.py --release-dir dist/Fortune-Test`
+- 发布包构建预演：`python scripts/build_test_release.py --project-root . --dry-run`
+- 发布目录检查：`python scripts/check_test_release.py --release-dir dist/Fortune`
 
 ## 后续规划
 

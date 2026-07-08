@@ -290,7 +290,7 @@ def test_operation_log_page_exposes_guarded_clear_log_button(session_factory) ->
     button_texts = set(_texts(page, QPushButton))
 
     assert "查询" in button_texts
-    assert "导出 Excel" in button_texts
+    assert "导出表格" in button_texts
     assert "清空日志" in button_texts
     assert page._btn_clear_logs.isEnabled()
     assert page._btn_clear_logs.objectName() == "dangerAction"
@@ -365,7 +365,7 @@ def test_record_order_window_marks_unimplemented_options_and_footer_scope() -> N
         assert checkboxes[label].isEnabled()
         assert not checkboxes[label].isChecked()
         assert checkboxes[label].toolTip()
-    assert "当前测试版重点支持特码类录入和结算" in window.findChild(QLabel, "footerHint").text()
+    assert "当前版本重点支持特码类录入和结算" in window.findChild(QLabel, "footerHint").text()
     assert "不会触发结算或余额变动" in window.findChild(QLabel, "footerHint").text()
     assert "全面支持" not in window.findChild(QLabel, "footerHint").text()
     assert "三中三" not in window.findChild(QLabel, "footerHint").text()
@@ -392,7 +392,7 @@ def test_record_order_advanced_option_docs_match_current_scope() -> None:
     assert "\u5404->\u5404\u8096\u7981\u7528" not in combined
 
 
-def test_readme_and_scope_document_describe_commercial_test_scope() -> None:
+def test_readme_and_scope_document_describe_small_commercial_scope() -> None:
     documents = [
         Path("README.md").read_text(encoding="utf-8"),
         Path("docs/commercial_test_scope.md").read_text(encoding="utf-8"),
@@ -404,8 +404,7 @@ def test_readme_and_scope_document_describe_commercial_test_scope() -> None:
     combined = "\n".join(documents)
 
     for document in documents:
-        assert "\u5546\u7528\u6d4b\u8bd5\u7248 / \u5185\u90e8\u8bd5\u7528\u7248" in document
-        assert "\u6b63\u5f0f\u7248" not in document
+        assert "\u5c0f\u8303\u56f4" in document
         assert "\u5b8c\u6574\u5546\u4e1a\u7248" not in document
         assert "\u5df2\u5b8c\u6210\u5168\u90e8\u529f\u80fd" not in document
         assert "\u4f59\u989d\u5df2\u5b9e\u73b0" not in document

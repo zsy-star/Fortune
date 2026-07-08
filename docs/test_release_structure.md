@@ -1,12 +1,12 @@
-# 测试版发布目录结构
+# 发布目录结构
 
-Fortune 测试版采用 PyInstaller **onedir** 模式，发布物为文件夹 `Fortune-Test/`，不是单一安装程序。
+Fortune 采用 PyInstaller **onedir** 模式，发布物为文件夹 `Fortune/`，不是单一安装程序。
 
 ## 标准结构
 
 ```text
-Fortune-Test/
-  Fortune-Test.exe          # 主程序入口
+Fortune/
+  Fortune.exe               # 主程序入口
   docs/                     # build 后由脚本从 _internal/docs/ 同步
   _internal/                # PyInstaller 运行时依赖（含原始 docs/）
   data/                     # 首次运行自动创建
@@ -22,12 +22,12 @@ Fortune-Test/
 
 - `data/` — SQLite 数据库 `fortune.db` 在首次 `init_db()` 时创建表结构
 - `data/backups/` — 用户点击「立即备份」后写入 `.db` 文件
-- `exports/` — 用户导出 Excel 时使用（也可另选目录）
+- `exports/` — 用户导出表格时使用（也可另选目录）
 
 ## 必须随包提供
 
-- 整个 `Fortune-Test/` 文件夹（含 `_internal/`）
-- 不要只复制 `Fortune-Test.exe`
+- 整个 `Fortune/` 文件夹（含 `_internal/`）
+- 不要只复制 `Fortune.exe`
 
 ## 禁止出现在发布包中
 
@@ -38,14 +38,14 @@ Fortune-Test/
 | `exports/*.xlsx` | 测试导出 |
 | 根目录或任意层级的测试 `.xlsx` | 对账测试文件 |
 | `.pytest_tmp*` / `.pytest_tmp_cursor*` | pytest 临时目录 |
-| `启动Fortune.bat` | 开发用脚本，非测试版必需 |
+| `启动Fortune.bat` | 开发用脚本，发布包非必需 |
 
 ## 打包前 vs 打包后检查
 
 | 阶段 | 命令 |
 |------|------|
 | 打包前 | `python scripts/pre_release_check.py --project-root .` |
-| 打包后 | `python scripts/check_test_release.py --release-dir dist/Fortune-Test` |
+| 打包后 | `python scripts/check_test_release.py --release-dir dist/Fortune` |
 
 两个脚本均为**只读**，不删除任何文件。
 
@@ -53,7 +53,7 @@ Fortune-Test/
 
 源码开发时使用 `python main.py`，数据默认在项目根 `data/fortune.db`。
 
-测试版 exe 运行时，数据在 **exe 所在目录** 的 `data/fortune.db`（通过 `scripts/runtime_init.py` 处理 frozen 路径）。
+exe 运行时，数据在 **exe 所在目录** 的 `data/fortune.db`（通过 `scripts/runtime_init.py` 处理 frozen 路径）。
 
 ## 给测试人员的说明要点
 
@@ -63,5 +63,5 @@ Fortune-Test/
 
 ## 相关文档
 
-- [PyInstaller 测试版打包说明](pyinstaller_test_build.md)
+- [PyInstaller 发布包说明](pyinstaller_test_build.md)
 - [人工验收脚本](manual_test_script.md)

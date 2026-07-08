@@ -57,7 +57,7 @@ def count_settlements(session_factory) -> int:
 def test_split_order_window_creates() -> None:
     window = make_window()
     try:
-        assert window.windowTitle() == "拆单助手 V0.1"
+        assert window.windowTitle() == "拆单助手"
         assert window._btn_split.isEnabled()
         assert window._btn_style.isEnabled()
         assert window._btn_save.isEnabled()

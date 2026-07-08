@@ -1,8 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
-# Fortune 测试版 PyInstaller spec
+# Fortune PyInstaller spec
 #
 # 入口：main.py
-# 产物：dist/Fortune-Test/Fortune-Test.exe（onedir）
+# 产物：dist/Fortune/Fortune.exe（onedir）
 #
 # 禁止打包进安装包的目录/文件（切勿加入 datas 或 binaries）：
 #   - data/fortune.db          真实业务数据库
@@ -83,7 +83,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="Fortune-Test",
+    name="Fortune",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -105,5 +105,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="Fortune-Test",
+    name="Fortune",
 )

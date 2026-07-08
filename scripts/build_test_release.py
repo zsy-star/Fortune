@@ -1,4 +1,4 @@
-"""Build Fortune Windows test release with PyInstaller."""
+"""Build Fortune Windows release with PyInstaller."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 DEFAULT_SPEC = Path("packaging/fortune_test.spec")
-DEFAULT_DIST_DIR = Path("dist/Fortune-Test")
+DEFAULT_DIST_DIR = Path("dist/Fortune")
 DEFAULT_BUILD_DIR = Path("build/fortune_test")
 
 
@@ -61,13 +61,13 @@ def plan_build_steps(
             f"--workpath {build_dir} {spec_path}"
         )
     steps.append(f"步骤 5：预期输出目录：{dist_dir}")
-    steps.append("步骤 6：将 _internal/docs/ 同步到发布根 docs/（便于测试人员查阅）")
+    steps.append("步骤 6：将 _internal/docs/ 同步到发布根 docs/（便于使用人员查阅）")
     steps.append("步骤 7：构建后运行 check_test_release.py 验证发布目录")
     return steps
 
 
 def sync_release_docs(release_dir: Path) -> bool:
-    """Copy PyInstaller bundled docs to release root for testers."""
+    """Copy PyInstaller bundled docs to release root."""
     internal_docs = release_dir / "_internal" / "docs"
     target_docs = release_dir / "docs"
     if not internal_docs.is_dir():
@@ -150,7 +150,7 @@ def run_build(
 
 
 def format_build_report(result: dict[str, Any]) -> str:
-    lines = ["Fortune 测试版打包"]
+    lines = ["Fortune 发布包打包"]
     lines.append(f"模式：{'dry-run' if result.get('dry_run') else 'build'}")
     lines.append("")
     for step in result.get("steps", []):
@@ -167,7 +167,7 @@ def format_build_report(result: dict[str, Any]) -> str:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Fortune 测试版 PyInstaller 打包脚本")
+    parser = argparse.ArgumentParser(description="Fortune PyInstaller 发布包打包脚本")
     parser.add_argument("--project-root", type=Path, default=Path("."))
     parser.add_argument("--spec", type=Path, default=DEFAULT_SPEC)
     parser.add_argument("--dist-dir", type=Path, default=DEFAULT_DIST_DIR)

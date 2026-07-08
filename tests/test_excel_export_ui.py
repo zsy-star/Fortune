@@ -85,8 +85,8 @@ def test_export_buttons_exist_on_target_pages(session_factory) -> None:
     )
 
     assert order_page._btn_export_excel.text() == "导出订单"
-    assert ledger_page._btn_export_excel.text() == "导出 Excel"
-    assert log_page._btn_export_excel.text() == "导出 Excel"
+    assert ledger_page._btn_export_excel.text() == "导出表格"
+    assert log_page._btn_export_excel.text() == "导出表格"
 
 
 def test_cancel_directory_selection_does_not_call_export_service(session_factory, tmp_path) -> None:

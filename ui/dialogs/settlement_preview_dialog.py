@@ -203,7 +203,7 @@ class SettlementPreviewDialog(QDialog):
           (
               ("订单明细总数", self._lbl_total_items),
               ("支持判定数量", self._lbl_supported),
-              ("暂不支持数量", self._lbl_unsupported),
+              ("不支持数量", self._lbl_unsupported),
               ("中奖数量", self._lbl_winning),
               ("未中奖数量", self._lbl_losing),
               ("投注本金", self._lbl_total_bet),

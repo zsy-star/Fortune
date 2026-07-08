@@ -133,12 +133,12 @@ class OperationLogPage(QWidget):
             ("查询", self._on_query, True),
             ("重置", self._on_reset, True),
             ("刷新", self.reload_data, True),
-            ("导出 Excel", self._on_export_excel, True),
+            ("导出表格", self._on_export_excel, True),
             ("清空日志", self._on_clear_logs, True),
         ]
         for text, handler, enabled in specs:
             btn = QPushButton(text)
-            if text == "导出 Excel":
+            if text == "导出表格":
                 self._btn_export_excel = btn
             if text == "清空日志":
                 self._btn_clear_logs = btn
@@ -150,7 +150,7 @@ class OperationLogPage(QWidget):
             btn.setEnabled(enabled)
             btn.clicked.connect(handler)
             if not enabled:
-                btn.setToolTip("本阶段暂未开放")
+                btn.setToolTip("暂未开放")
             row.addWidget(btn)
         row.addStretch(1)
         return row
@@ -365,11 +365,11 @@ class OperationLogPage(QWidget):
                 output_dir=output_dir,
             )
         except Exception as exc:
-            QMessageBox.warning(self, "导出 Excel", f"导出失败：{exc}")
+            QMessageBox.warning(self, "导出表格", f"导出失败：{exc}")
             self._lbl_total.setText(f"导出失败：{exc}")
             return
 
-        QMessageBox.information(self, "导出 Excel", _export_success_message(result))
+        QMessageBox.information(self, "导出表格", _export_success_message(result))
         self._lbl_total.setText(f"导出成功：{result.file_name}")
 
     def _on_clear_logs(self) -> None:

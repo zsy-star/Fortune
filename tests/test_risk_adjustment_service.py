@@ -86,6 +86,36 @@ def test_special_risk_table_filters_orders_by_zodiac_year(session_factory) -> No
     assert rows_2026["02"].raw_stake_amount == Decimal("7.00")
 
 
+def test_special_risk_table_excludes_voided_orders(session_factory) -> None:
+    order_service = OrderService(session_factory)
+    active = create_order(order_service, bet_type="特码", selection="25", amount="100")
+    voided = create_order(order_service, bet_type="特码", selection="25", amount="80")
+    legacy_void = create_order(order_service, bet_type="特码", selection="25", amount="60")
+    order_service.void_order(voided.id, "risk exclusion")
+    with session_factory() as session:
+        session.get(Order, legacy_void.id).status = "void"
+        session.commit()
+
+    rows = {row.number: row for row in RiskAdjustmentService(session_factory).build_special_risk_table()}
+
+    assert order_service.get_order(active.id).status == "active"
+    assert order_service.get_order(voided.id).status == "voided"
+    assert rows["25"].raw_stake_amount == Decimal("100.00")
+
+
+def test_lianxiao_risk_table_excludes_voided_orders(session_factory) -> None:
+    order_service = OrderService(session_factory)
+    create_order(order_service, bet_type="连肖", selection="龙羊猴", amount="40")
+    voided = create_order(order_service, bet_type="连肖", selection="龙羊猴", amount="60")
+    order_service.void_order(voided.id, "risk exclusion")
+
+    rows = RiskAdjustmentService(session_factory).build_lianxiao_risk_table()
+
+    assert len(rows) == 1
+    assert rows[0].zodiac_group == "龙,猴,羊"
+    assert rows[0].raw_amount == Decimal("40.00")
+
+
 def test_special_suggestions_apply_and_reverse_without_modifying_orders(session_factory) -> None:
     order_service = OrderService(session_factory)
     settings = SettingsService(session_factory)

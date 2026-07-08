@@ -50,7 +50,7 @@ class SplitOrderWindow(QMainWindow):
         settings_service: SettingsService | None = None,
     ):
         super().__init__(parent)
-        self.setWindowTitle("拆单助手 V0.1")
+        self.setWindowTitle("拆单助手")
         self.resize(980, 760)
         self.setMinimumSize(820, 640)
         self._import_service = import_service or OrderImportService()
@@ -252,7 +252,7 @@ class SplitOrderWindow(QMainWindow):
             self,
             "保存拆分结果",
             "split_order_result.txt",
-            "Text Files (*.txt);;All Files (*)",
+            "文本文件 (*.txt);;所有文件 (*)",
         )
         if not path:
             self._set_status("已取消保存")

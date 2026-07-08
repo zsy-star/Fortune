@@ -50,6 +50,7 @@ SPECIAL_ADJUSTMENT_TYPES = {"special_throw", "special_throw_reversal"}
 LIANXIAO_ADJUSTMENT_TYPES = {"lianxiao_throw", "lianxiao_throw_reversal"}
 THROW_TYPES = {"special_throw", "lianxiao_throw"}
 REVERSAL_TYPES = {"special_throw_reversal", "lianxiao_throw_reversal"}
+EXCLUDED_ORDER_STATUSES = {"voided", "void"}
 SPECIAL_SCOPE_TYPES = {
     SPECIAL_NUMBER,
     SPECIAL_ZODIAC,
@@ -486,7 +487,7 @@ class RiskAdjustmentService:
         stmt = select(Order).options(selectinload(Order.items))
         if region:
             stmt = stmt.where(Order.region == region)
-        stmt = stmt.where(Order.status != "void")
+        stmt = stmt.where(Order.status.not_in(EXCLUDED_ORDER_STATUSES))
         try:
             orders = list(session.scalars(stmt))
         except OperationalError as exc:

@@ -1,4 +1,4 @@
-"""Read-only post-build checks for Fortune test release directory."""
+"""Read-only post-build checks for Fortune release directory."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-DEFAULT_EXE_NAME = "Fortune-Test.exe"
+DEFAULT_EXE_NAME = "Fortune.exe"
 FORBIDDEN_RELATIVE_PATHS = (
     "data/fortune.db",
 )
@@ -102,7 +102,7 @@ def run_check_test_release(release_dir: Path, exe_name: str = DEFAULT_EXE_NAME) 
             )
     else:
         checks["docs"] = "missing"
-        warnings.append("docs/ 目录缺失或无 .md 文件（测试人员可能缺少说明）")
+        warnings.append("docs/ 目录缺失或无 .md 文件（使用说明可能缺失）")
 
     forbidden = _find_forbidden_items(root)
     checks["forbidden_items"] = ",".join(forbidden) if forbidden else "none"
@@ -123,7 +123,7 @@ def run_check_test_release(release_dir: Path, exe_name: str = DEFAULT_EXE_NAME) 
 
 
 def format_report(result: dict[str, Any]) -> str:
-    lines = ["Fortune 测试版发布目录自检（只读）"]
+    lines = ["Fortune 发布目录自检（只读）"]
     lines.append(f"目录：{result['release_dir']}")
     lines.append("")
     for section, key in (("[信息]", "info"), ("[警告]", "warnings"), ("[失败]", "failures")):
@@ -141,7 +141,7 @@ def format_report(result: dict[str, Any]) -> str:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Fortune 测试版发布目录只读自检")
+    parser = argparse.ArgumentParser(description="Fortune 发布目录只读自检")
     parser.add_argument("--release-dir", type=Path, required=True)
     parser.add_argument("--exe-name", default=DEFAULT_EXE_NAME)
     return parser.parse_args(argv)

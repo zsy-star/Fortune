@@ -169,7 +169,7 @@ class TestInputParsing:
         window._input_text.setPlainText("01,02,03各10")
         window._do_parse()
         output = window._output_text.toPlainText()
-        assert "01,02,03" in output
+        assert "澳门: 特码: 01-02-03 各数 10" in output
         # total 保留在 ParseResult 中，输出不显示总计行
         assert window._parsed_results[0].total == 30.0
 
@@ -949,7 +949,7 @@ class TestSafePreviewTools:
         window._on_copy_preview()
         copied = qapp.clipboard().text()
         assert "特码" in copied
-        assert "04,16,28,40" in copied
+        assert "兔 各数 10" in copied
 
 
 # ══════════════════════════════════════════════════════════════════════

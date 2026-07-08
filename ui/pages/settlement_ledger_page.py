@@ -348,10 +348,10 @@ class SettlementLedgerPage(QWidget):
             ("查询", self._on_query),
             ("重置", self._on_reset),
             ("刷新", self.reload_data),
-            ("导出 Excel", self._on_export_excel),
+            ("导出表格", self._on_export_excel),
         ):
             btn = QPushButton(text)
-            if text == "导出 Excel":
+            if text == "导出表格":
                 self._btn_export_excel = btn
             btn.clicked.connect(handler)
             row.addWidget(btn)
@@ -584,11 +584,11 @@ class SettlementLedgerPage(QWidget):
                 output_dir=output_dir,
             )
         except Exception as exc:
-            QMessageBox.warning(self, "导出 Excel", f"导出失败：{exc}")
+            QMessageBox.warning(self, "导出表格", f"导出失败：{exc}")
             self._lbl_total.setText(f"导出失败：{exc}")
             return
 
-        QMessageBox.information(self, "导出 Excel", _export_success_message(result))
+        QMessageBox.information(self, "导出表格", _export_success_message(result))
         self._lbl_total.setText(f"导出成功：{result.file_name}")
 
     def _selected_record_id(self) -> int | None:
