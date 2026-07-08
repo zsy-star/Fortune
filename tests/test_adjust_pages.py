@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import os
 from decimal import Decimal
+from unittest.mock import patch
 
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QRadioButton, QSpinBox
 
 from schemas.order_schema import OrderCreate, OrderItemCreate
+from services.adjustment_record_service import AdjustmentRecordService
 from services.order_service import OrderService
+from services.risk_adjustment_service import RiskAdjustmentService
 from ui.pages.lianxiao_order_page import LianxiaoOrderPage
 from ui.pages.special_order_page import SpecialOrderPage
 
@@ -151,3 +154,123 @@ def test_lianxiao_adjust_page_refreshes_summary_and_prints(session_factory) -> N
     output = page._output.toPlainText()
     assert "连肖调整" in output
     assert "调整后" in output
+
+
+def test_special_adjust_page_saves_valid_throw_record(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    create_order(service, selection="12", amount="100")
+    page = SpecialOrderPage(order_service=service)
+
+    page._adjustment_input.setText("12=40")
+    page._on_apply_adjustment_input()
+    page._on_save_adjustment()
+
+    records = AdjustmentRecordService(session_factory).list_records(adjustment_type="special_throw", region="澳门")
+    assert len(records) == 1
+    record = records[0]
+    assert record.adjustment_total == "40.00"
+    assert record.record_snapshot["entries"][0]["number"] == "12"
+    assert record.record_snapshot["entries"][0]["amount"] == "40.00"
+    assert record.record_snapshot["reason"] == "特码调单"
+    assert RiskAdjustmentService(session_factory).can_reverse(record.id, record.adjustment_type)
+    assert "已保存本次特码调单抛出记录" in page._output.toPlainText()
+
+
+def test_special_adjust_page_empty_adjustment_does_not_crash_or_save(session_factory) -> None:
+    app()
+    page = SpecialOrderPage(order_service=OrderService(session_factory))
+
+    page._on_save_adjustment()
+
+    assert "当前没有调整内容，无需保存" in page._output.toPlainText()
+    assert AdjustmentRecordService(session_factory).count_records(adjustment_type="special_throw") == 0
+
+
+def test_special_adjust_page_rejects_adjustment_over_original_amount(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    create_order(service, selection="12", amount="30")
+    page = SpecialOrderPage(order_service=service)
+
+    page._adjustment_input.setText("12=40")
+    page._on_apply_adjustment_input()
+    with patch("ui.pages.special_order_page.QMessageBox.warning") as warning:
+        page._on_save_adjustment()
+
+    assert warning.called
+    assert "不能超过当前可调整金额" in page._output.toPlainText()
+    assert AdjustmentRecordService(session_factory).count_records(adjustment_type="special_throw") == 0
+
+
+def test_special_adjust_clear_and_reset_keep_history_records(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    create_order(service, selection="12", amount="100")
+    page = SpecialOrderPage(order_service=service)
+
+    page._adjustment_input.setText("12=20")
+    page._on_apply_adjustment_input()
+    page._on_save_adjustment()
+    record_service = AdjustmentRecordService(session_factory)
+    assert record_service.count_records(adjustment_type="special_throw") == 1
+
+    page._on_clear_adjustments()
+    assert page._adjustments == {}
+    assert page._adjustment_input.text() == ""
+    assert record_service.count_records(adjustment_type="special_throw") == 1
+
+    page._on_reset_all_data()
+    assert page._adjustments == {}
+    assert record_service.count_records(adjustment_type="special_throw") == 1
+
+
+def test_lianxiao_adjust_page_saves_valid_throw_record(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    create_order(service, bet_type="连肖", selection="狗羊猴", amount="200")
+    page = LianxiaoOrderPage(order_service=service)
+
+    page._adjustment_input.setText("狗羊猴=100")
+    page._on_apply_adjustment_input()
+    page._on_save_adjustment()
+
+    records = AdjustmentRecordService(session_factory).list_records(adjustment_type="lianxiao_throw", region="澳门")
+    assert len(records) == 1
+    record = records[0]
+    assert record.adjustment_total == "100.00"
+    assert record.record_snapshot["entries"][0]["amount"] == "100.00"
+    assert record.record_snapshot["entries"][0]["zodiac_group"]
+    assert record.record_snapshot["reason"] == "连肖调单"
+    assert RiskAdjustmentService(session_factory).can_reverse(record.id, record.adjustment_type)
+    assert "已保存本次连肖调单抛出记录" in page._output.toPlainText()
+
+
+def test_lianxiao_adjust_page_rejects_missing_group(session_factory) -> None:
+    app()
+    page = LianxiaoOrderPage(order_service=OrderService(session_factory))
+
+    page._adjustment_input.setText("狗羊猴=100")
+    page._on_apply_adjustment_input()
+    with patch("ui.pages.lianxiao_order_page.QMessageBox.warning") as warning:
+        page._on_save_adjustment()
+
+    assert warning.called
+    assert "生肖组合不存在于当前汇总" in page._output.toPlainText()
+    assert AdjustmentRecordService(session_factory).count_records(adjustment_type="lianxiao_throw") == 0
+
+
+def test_lianxiao_adjust_page_rejects_adjustment_over_group_amount(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    create_order(service, bet_type="连肖", selection="狗羊猴", amount="50")
+    page = LianxiaoOrderPage(order_service=service)
+
+    page._adjustment_input.setText("狗羊猴=60")
+    page._on_apply_adjustment_input()
+    with patch("ui.pages.lianxiao_order_page.QMessageBox.warning") as warning:
+        page._on_save_adjustment()
+
+    assert warning.called
+    assert "不能超过当前组合金额" in page._output.toPlainText()
+    assert AdjustmentRecordService(session_factory).count_records(adjustment_type="lianxiao_throw") == 0

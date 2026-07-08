@@ -28,10 +28,10 @@ from PySide6.QtWidgets import (
 
 from domain.color_rules import get_wave_color
 from domain.zodiac_config import MAX_ZODIAC_YEAR, MIN_ZODIAC_YEAR, get_default_zodiac_year
-from schemas.adjustment_record_schema import AdjustmentRecordCreate
 from services.adjustment_record_service import AdjustmentRecordService
 from services.adjustment_summary_service import AdjustmentSummaryService, TemaSummary, money
 from services.order_service import OrderService
+from services.risk_adjustment_service import RiskAdjustmentService
 from ui.app_events import app_events
 from ui.dialogs.adjustment_record_dialog import AdjustmentRecordDialog
 
@@ -53,6 +53,7 @@ class SpecialOrderPage(QWidget):
         parent=None,
         order_service: OrderService | None = None,
         adjustment_record_service: AdjustmentRecordService | None = None,
+        risk_adjustment_service: RiskAdjustmentService | None = None,
     ):
         super().__init__(parent)
         self._order_service = order_service or OrderService()
@@ -60,6 +61,9 @@ class SpecialOrderPage(QWidget):
         self._summary_service = AdjustmentSummaryService(session_factory) if session_factory else AdjustmentSummaryService()
         self._adjustment_record_service = adjustment_record_service or (
             AdjustmentRecordService(session_factory) if session_factory else AdjustmentRecordService()
+        )
+        self._risk_adjustment_service = risk_adjustment_service or (
+            RiskAdjustmentService(session_factory) if session_factory else RiskAdjustmentService()
         )
         self._zodiac_year = get_default_zodiac_year()
         self._adjustments: dict[str, Decimal] = {}
@@ -327,6 +331,7 @@ class SpecialOrderPage(QWidget):
 
     def reload_data(self) -> None:
         self._summary_service.set_zodiac_year(self._selected_zodiac_year())
+        self._risk_adjustment_service.set_zodiac_year(self._selected_zodiac_year())
         self._summary = self._summary_service.summarize_tema(
             region=self._selected_region(),
             adjustments=self._adjustments,
@@ -435,6 +440,7 @@ class SpecialOrderPage(QWidget):
 
     def _on_clear_adjustments(self) -> None:
         self._adjustments.clear()
+        self._adjustment_input.clear()
         self.reload_data()
         self._append_output("已清空当前调单，原始订单汇总保留。")
 
@@ -443,6 +449,7 @@ class SpecialOrderPage(QWidget):
 
     def _on_reset_all_data(self) -> None:
         self._adjustments.clear()
+        self._adjustment_input.clear()
         self.reload_data()
         self._append_output("已重新从订单数据计算原始汇总，并清空调整。")
 
@@ -453,55 +460,33 @@ class SpecialOrderPage(QWidget):
         if self._summary is None or not self._adjustments:
             self._append_output("当前没有调整内容，无需保存。")
             return
-        payload = AdjustmentRecordCreate(
-            adjustment_type="special",
-            region=self._selected_region(),
-            source_filter={"region": self._selected_region(), "zodiac_year": self._selected_zodiac_year()},
-            original_total=money(self._summary.original_total - self._summary.adjustment_total),
-            adjustment_total=money(self._summary.adjustment_total),
-            after_total=money(self._summary.after_total),
-            item_count=len(self._adjustments),
-            positive_count=sum(1 for value in self._adjustments.values() if value > 0),
-            negative_count=sum(1 for value in self._adjustments.values() if value < 0),
-            record_snapshot={
-                "adjusted_numbers": [
-                    {
-                        "number": row.number,
-                        "zodiac": row.zodiac,
-                        "original_amount": money(row.original_amount),
-                        "adjustment_amount": money(row.adjustment_amount),
-                        "after_amount": money(row.total_amount),
-                        "profit_loss": money(row.profit_loss),
-                    }
-                    for row in self._summary.rows
-                    if row.adjustment_amount != 0
-                ]
-            },
-            summary_snapshot={
-                "original_stats": {
-                    "total": self._lbl_original_total.text(),
-                    "max_profit": self._lbl_original_max_profit.text(),
-                    "max_loss": self._lbl_original_max_loss.text(),
-                },
-                "adjusted_stats": {
-                    "eat_total": self._lbl_eat_total.text(),
-                    "adjustment_total": self._lbl_adjustment_total.text(),
-                    "max_profit": self._lbl_adjusted_max_profit.text(),
-                    "max_loss": self._lbl_adjusted_max_loss.text(),
-                },
-            },
-            note="特码调单快照；不修改订单、不执行结算。",
-        )
         try:
-            result = self._adjustment_record_service.create_record(payload)
+            result = self._risk_adjustment_service.apply_special_adjustments(
+                self._adjustments,
+                region=self._selected_region(),
+                reason="特码调单",
+            )
         except Exception as exc:
             QMessageBox.warning(self, "保存本次调整", f"保存失败：{exc}")
+            self._append_output(f"保存失败：{exc}")
             return
         app_events.logs_changed.emit()
-        self._append_output(f"已保存本次特码调整记录 ID：{result.record.id}，操作日志 ID：{result.operation_log_id}。")
+        self._append_output(
+            "已保存本次特码调单抛出记录：\n"
+            f"记录 ID：{result.record.id}\n"
+            f"操作日志 ID：{result.operation_log_id}\n"
+            f"地区：{result.record.region}\n"
+            f"调整金额：{result.record.adjustment_total}\n"
+            "历史订单和结算记录未被修改，可在“调整记录”中查看或撤销。"
+        )
 
     def _on_adjust_records(self) -> None:
-        dialog = AdjustmentRecordDialog(self, default_type="special", service=self._adjustment_record_service)
+        dialog = AdjustmentRecordDialog(
+            self,
+            default_type="special_all",
+            service=self._adjustment_record_service,
+            risk_service=self._risk_adjustment_service,
+        )
         dialog.exec()
 
     def _append_output(self, message: str) -> None:

@@ -309,6 +309,77 @@ class RiskAdjustmentService:
             for group, data in sorted(grouped.items(), key=lambda item: self._zodiac_group_sort_key(item[0]))
         ]
 
+    def apply_special_adjustments(
+        self,
+        adjustments: dict[str, Decimal],
+        *,
+        region: str,
+        reason: str = "特码调单",
+        operator: str = "系统操作员",
+    ):
+        """Validate page adjustments and persist them as reversible special throw records."""
+
+        clean: dict[str, Decimal] = {}
+        for number, amount in adjustments.items():
+            normalized = normalize_number(str(number))
+            clean[normalized] = _money_decimal(clean.get(normalized, Decimal("0")) + _positive_decimal(amount, "调整金额"))
+        if not clean:
+            raise ValueError("调整内容不能为空")
+
+        rows = {row.number: row for row in self.build_special_risk_table(region=None if region == "全部" else region)}
+        entries: list[ThrowEntry] = []
+        for number, amount in sorted(clean.items()):
+            row = rows.get(number)
+            if row is None:
+                raise ValueError(f"号码不存在于当前汇总：{number}")
+            available = _money_decimal(row.raw_stake_amount - row.thrown_amount)
+            if available <= 0:
+                raise ValueError(f"{number} 当前没有可调整金额")
+            if amount > available:
+                raise ValueError(f"{number} 调整金额不能超过当前可调整金额 {available:.2f}")
+            entries.append(ThrowEntry(number=number, amount=amount, source_expression=number))
+        return self.apply_special_throw(entries, region=region, reason=reason, operator=operator)
+
+    def apply_lianxiao_adjustments(
+        self,
+        adjustments: dict[str, Decimal],
+        *,
+        region: str,
+        reason: str = "连肖调单",
+        operator: str = "系统操作员",
+    ):
+        """Validate page adjustments and persist them as reversible lianxiao throw records."""
+
+        clean: dict[str, dict[str, Any]] = {}
+        for group, amount in adjustments.items():
+            stable_group = self._parse_lianxiao_group(str(group))
+            entry = clean.setdefault(stable_group, {"amount": Decimal("0"), "sources": []})
+            entry["amount"] += _positive_decimal(amount, "调整金额")
+            entry["sources"].append(str(group))
+        if not clean:
+            raise ValueError("调整内容不能为空")
+
+        rows = {row.zodiac_group: row for row in self.build_lianxiao_risk_table(region=None if region == "全部" else region)}
+        entries: list[ThrowEntry] = []
+        for group, data in sorted(clean.items(), key=lambda item: self._zodiac_group_sort_key(item[0])):
+            row = rows.get(group)
+            if row is None:
+                raise ValueError(f"生肖组合不存在于当前汇总：{group.replace(',', '')}")
+            amount = _money_decimal(data["amount"])
+            available = _money_decimal(row.raw_amount - row.thrown_amount)
+            if available <= 0:
+                raise ValueError(f"{group.replace(',', '')} 当前没有可调整金额")
+            if amount > available:
+                raise ValueError(f"{group.replace(',', '')} 调整金额不能超过当前组合金额 {available:.2f}")
+            entries.append(
+                ThrowEntry(
+                    zodiac_group=group,
+                    amount=amount,
+                    source_expression=",".join(dict.fromkeys(data["sources"])),
+                )
+            )
+        return self.apply_lianxiao_throw(entries, region=region, reason=reason, operator=operator)
+
     def apply_special_throw(
         self,
         entries: list[ThrowEntry],
