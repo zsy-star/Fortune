@@ -9,7 +9,7 @@ import matplotlib
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QCheckBox, QLabel, QLineEdit, QPushButton, QSpinBox
+from PySide6.QtWidgets import QApplication, QCheckBox, QLabel, QLineEdit, QPushButton, QRadioButton, QSpinBox
 
 from schemas.order_schema import OrderCreate, OrderItemCreate
 from services.adjustment_record_service import AdjustmentRecordService
@@ -130,7 +130,10 @@ def test_commercial_test_version_main_pages_and_dialogs_create_offscreen(session
 
 def test_lianxiao_order_page_first_stage_is_readonly(session_factory) -> None:
     app()
-    page = LianxiaoOrderPage(order_service=OrderService(session_factory))
+    order_service = OrderService(session_factory)
+    page = LianxiaoOrderPage(order_service=order_service)
+    before_order_count = order_service.count_orders()
+    before_settlement_count = order_service.count_settlement_ledger()
 
     labels = "\n".join(_texts(page, QLabel))
     assert "原金额" not in labels
@@ -138,58 +141,80 @@ def test_lianxiao_order_page_first_stage_is_readonly(session_factory) -> None:
     assert "原连肖数据" in labels
     assert "调整后数据" in labels
     assert page._summary_table.rowCount() == 1
-    assert len(page._tables) == 4
-    assert page._throw_reason_edit in page.findChildren(QLineEdit)
-    assert "暂无数据" in page._output.toPlainText()
+    assert len(page._tables) == 5
+    for table in (page._summary_table, *page._tables):
+        assert [table.horizontalHeaderItem(index).text() for index in range(table.columnCount())] == [
+            "生肖组",
+            "下注数",
+            "盈亏",
+        ]
+    assert {"只看澳门", "只看香港"}.issubset({radio.text() for radio in page.findChildren(QRadioButton)})
+    assert page._adjustment_input in page.findChildren(QLineEdit)
     button_texts = {button.text() for button in page.findChildren(QPushButton)}
+    assert "打印连肖调整" in button_texts
+    assert "清空输出框" in button_texts
+    assert "重置调整" in button_texts
     assert "保存本次调整" in button_texts
+    assert "打开扩展" in button_texts
     assert "调整记录" in button_texts
     assert "调整成为 10 的倍数" not in button_texts
     assert "清空当前调整" not in button_texts
     assert "连肖兑奖" not in button_texts
     assert page._btn_save_adjustment.isEnabled()
     assert page._btn_print.isEnabled()
-    assert page._btn_copy_summary.isEnabled()
-    assert page._btn_export_summary.isEnabled()
     assert page._btn_reset.isEnabled()
     assert page._btn_clear_output.isEnabled()
     assert page._btn_adjust_records.isEnabled()
-    assert page._btn_apply_throw.isEnabled()
     page._on_print_adjustment()
+    assert "连肖调整" in page._output.toPlainText()
     page._on_reset_adjustment()
-    assert "只是生成可复制/导出的打印文本" in page._output.toPlainText()
-    assert "未调用系统打印机" in page._output.toPlainText()
-    assert "数据库订单未被修改" in page._output.toPlainText()
+    assert "保留原始订单汇总" in page._output.toPlainText()
+    assert order_service.count_orders() == before_order_count
+    assert order_service.count_settlement_ledger() == before_settlement_count
 
 
 def test_special_order_page_is_tema_readonly_first_stage(session_factory) -> None:
     app()
-    page = SpecialOrderPage(order_service=OrderService(session_factory))
+    order_service = OrderService(session_factory)
+    page = SpecialOrderPage(order_service=order_service)
+    before_order_count = order_service.count_orders()
+    before_settlement_count = order_service.count_settlement_ledger()
     labels = "\n".join(_texts(page, QLabel))
 
-    assert "特码调单" in labels
-    assert "不修改订单" in labels
+    assert {"只看澳门", "只看香港"}.issubset({radio.text() for radio in page.findChildren(QRadioButton)})
+    assert [page._summary_table.horizontalHeaderItem(index).text() for index in range(page._summary_table.columnCount())] == [
+        "号码",
+        "下注数",
+        "盈亏",
+        "ID",
+    ]
+    for expected in ("号码", "原特码数据", "调整后数据", "最大亏损", "调整额"):
+        assert expected in labels
     assert "连码调单" not in labels
     assert page._summary_table.rowCount() == 49
     assert len(page._adjust_edits) == 49
-    assert not page._btn_open_extension.isEnabled()
-    assert not page._btn_reset_all.isEnabled()
-    assert not page._btn_special_settlement.isEnabled()
-    assert "拓展调单规则尚未确认" in page._btn_open_extension.toolTip()
-    assert "清空或重置数据需要权限" in page._btn_reset_all.toolTip()
-    assert "\u771f\u5b9e\u5151\u5956\u5165\u8d26\u4e0d\u5c5e\u4e8e\u5f53\u524d\u4ea7\u54c1\u8303\u56f4" in page._btn_special_settlement.toolTip()
+    button_texts = {button.text() for button in page.findChildren(QPushButton)}
+    for expected in (
+        "保存本次调整",
+        "调整为10的倍数",
+        "清空当前调单",
+        "清空输出框",
+        "重置所有数据",
+        "结码总奖",
+        "打开扩展",
+        "调整记录",
+    ):
+        assert expected in button_texts
     assert page._btn_adjust_records.isEnabled()
-    assert page._btn_copy_summary.isEnabled()
-    assert page._btn_export_summary.isEnabled()
-    assert "暂无数据" in page._output.toPlainText()
     page._on_save_adjustment()
     page._on_reset_all_data()
     page._on_special_settlement()
     output = page._output.toPlainText()
     assert "当前没有调整内容，无需保存" in output
-    assert "重置所有数据未开放" in output
-    assert "不执行兑奖" in output
-    assert "不计算赔付金额" in output
+    assert "重新从订单数据计算原始汇总" in output
+    assert "不执行结算入账" in output
+    assert order_service.count_orders() == before_order_count
+    assert order_service.count_settlement_ledger() == before_settlement_count
 
 
 def test_main_window_tema_nav_direct_and_hover_only_lianxiao() -> None:
