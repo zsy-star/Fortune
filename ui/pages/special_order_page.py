@@ -102,6 +102,7 @@ class SpecialOrderPage(QWidget):
         root.addWidget(self._build_bottom_bar())
 
         self._apply_stylesheet()
+        app_events.orders_changed.connect(self.refresh_data)
         self.reload_data()
 
     def _build_filter_bar(self) -> QFrame:
@@ -350,6 +351,17 @@ class SpecialOrderPage(QWidget):
             f"已加载{self._selected_region()}特码汇总："
             f"{sum(1 for row in self._summary.rows if row.original_amount > 0)} 个号码有下注。"
         )
+
+    def refresh_data(self) -> None:
+        """Reload order summaries and active throws, clearing only temporary edits."""
+
+        self._adjustments.clear()
+        if hasattr(self, "_adjustment_input"):
+            self._adjustment_input.clear()
+        try:
+            self.reload_data()
+        except Exception as exc:
+            self._append_output(f"调单页面刷新失败：{exc}")
 
     def _selected_region(self) -> str:
         button = self._region_group.checkedButton()

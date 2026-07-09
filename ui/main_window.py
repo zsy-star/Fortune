@@ -151,11 +151,25 @@ class MainWindow(QMainWindow):
         stack_idx = mapping.get(nav_id)
         if stack_idx is not None:
             self._stack.setCurrentIndex(stack_idx)
+            self._refresh_adjust_page_if_needed(stack_idx)
 
     def _on_adjust_page_selected(self, stack_idx: int) -> None:
         self._stack.setCurrentIndex(stack_idx)
         if self._adjust_nav:
             self._adjust_nav.main_button().setChecked(True)
+        self._refresh_adjust_page_if_needed(stack_idx)
+
+    def _refresh_adjust_page_if_needed(self, stack_idx: int) -> None:
+        if stack_idx not in {_SPECIAL_ORDER_STACK, _LIANXIAO_ORDER_STACK}:
+            return
+        page = self._stack.widget(stack_idx)
+        refresh_data = getattr(page, "refresh_data", None)
+        if not callable(refresh_data):
+            return
+        try:
+            refresh_data()
+        except Exception:
+            logger.exception("Failed to refresh adjustment page %s on navigation", type(page).__name__)
 
     def _open_record_order_window(self) -> None:
         if self._record_order_window is None:

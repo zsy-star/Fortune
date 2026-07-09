@@ -1423,6 +1423,48 @@ class TestSaveOrder:
         assert save_window._order_table.rowCount() == 0
         assert save_window._lbl_total.text() == "当前总额: 0"
 
+    def test_successful_save_emits_orders_changed_once(self, save_window):
+        """保存成功后发出一次订单数据变化通知。"""
+        event_counts = {"orders": 0}
+
+        def on_orders_changed():
+            event_counts["orders"] += 1
+
+        app_events.orders_changed.connect(on_orders_changed)
+        try:
+            save_window._input_text.setPlainText("01/10")
+            save_window._do_parse()
+            with (
+                patch(
+                    "ui.windows.record_order_window.QMessageBox.question",
+                    return_value=QMessageBox.StandardButton.Yes,
+                ),
+                patch("ui.windows.record_order_window.QMessageBox.information"),
+            ):
+                save_window._on_save_order()
+        finally:
+            app_events.orders_changed.disconnect(on_orders_changed)
+
+        assert event_counts["orders"] == 1
+
+    def test_failed_save_does_not_emit_orders_changed(self, save_window):
+        """保存失败时不发订单变化通知。"""
+        event_counts = {"orders": 0}
+
+        def on_orders_changed():
+            event_counts["orders"] += 1
+
+        app_events.orders_changed.connect(on_orders_changed)
+        try:
+            save_window._input_text.setPlainText("全包各10")
+            save_window._do_parse()
+            with patch("ui.windows.record_order_window.QMessageBox.warning"):
+                save_window._on_save_order()
+        finally:
+            app_events.orders_changed.disconnect(on_orders_changed)
+
+        assert event_counts["orders"] == 0
+
     def test_special_zodiac_mode_save_uses_order_intake_service_chain(self, save_window, session_factory):
         """特肖模式保存仍走 OrderIntakeService，并保存为平特一肖。"""
         from sqlalchemy import select

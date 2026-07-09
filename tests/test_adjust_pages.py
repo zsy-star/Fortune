@@ -10,6 +10,7 @@ from schemas.order_schema import OrderCreate, OrderItemCreate
 from services.adjustment_record_service import AdjustmentRecordService
 from services.order_service import OrderService
 from services.risk_adjustment_service import RiskAdjustmentService
+from ui.main_window import MainWindow
 from ui.pages.lianxiao_order_page import LianxiaoOrderPage
 from ui.pages.special_order_page import SpecialOrderPage
 
@@ -155,6 +156,59 @@ def test_special_adjust_page_ignores_reversed_throw_for_holding_amount(session_f
     assert "active 抛出记录：无" in page._total_edits["12"].toolTip()
 
 
+def test_special_refresh_data_reloads_latest_orders_and_clears_temporary_input(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    page = SpecialOrderPage(order_service=service)
+    assert page._original_edits["01"].text() == "0.00"
+
+    create_order(service, selection="01", amount="100")
+    create_order(service, selection="马", amount="50")
+    page._adjustment_input.setText("01=10")
+    page._on_apply_adjustment_input()
+    assert page._adjust_edits["01"].text() == "10.00"
+
+    page.refresh_data()
+
+    assert page._adjustments == {}
+    assert page._adjustment_input.text() == ""
+    assert page._original_edits["01"].text() == "150.00"
+    horse_numbers = [row.number for row in page._summary.rows if row.zodiac == "马"]  # type: ignore[union-attr]
+    assert horse_numbers
+    assert any(page._original_edits[number].text() == "50.00" for number in horse_numbers)
+
+
+def test_special_refresh_data_keeps_active_throw_effect(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    create_order(service, selection="12", amount="100")
+    RiskAdjustmentService(session_factory).apply_special_adjustments(
+        {"12": Decimal("30")},
+        region="澳门",
+        reason="active history",
+    )
+    page = SpecialOrderPage(order_service=service)
+    page._adjustment_input.setText("12=10")
+    page._on_apply_adjustment_input()
+
+    page.refresh_data()
+
+    assert page._adjust_edits["12"].text() == ""
+    assert page._thrown_edits["12"].text() == "30.00"
+    assert page._total_edits["12"].text() == "70.00"
+
+
+def test_special_refresh_data_empty_database_is_safe(session_factory) -> None:
+    app()
+    page = SpecialOrderPage(order_service=OrderService(session_factory))
+
+    page.refresh_data()
+
+    assert page._summary_table.rowCount() == 49
+    assert page._original_edits["01"].text() == "0.00"
+    assert page._total_edits["01"].text() == "0.00"
+
+
 def test_lianxiao_adjust_page_creates_with_required_layout(session_factory) -> None:
     app()
     page = LianxiaoOrderPage(order_service=OrderService(session_factory))
@@ -239,6 +293,58 @@ def test_lianxiao_adjust_page_ignores_reversed_throw_for_holding_amount(session_
     assert holding == Decimal("200.00")
     assert profit_loss == Decimal("-200.00")
     assert "active 抛出记录：无" in page._summary_table.item(0, 1).toolTip()
+
+
+def test_lianxiao_refresh_data_reloads_latest_orders_and_clears_temporary_input(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    page = LianxiaoOrderPage(order_service=service)
+    assert page._summary_table.item(0, 0).text() == "暂无数据"
+
+    create_order(service, bet_type="连肖", selection="狗羊猴", amount="100")
+    page._adjustment_input.setText("狗羊猴=20")
+    page._on_apply_adjustment_input()
+    _group, holding_before_refresh, _profit_loss = lianxiao_row_values(page, "狗羊猴")
+    assert holding_before_refresh == Decimal("80.00")
+
+    page.refresh_data()
+
+    _group, holding_after_refresh, profit_loss = lianxiao_row_values(page, "狗羊猴")
+    assert page._adjustments == {}
+    assert page._adjustment_input.text() == ""
+    assert holding_after_refresh == Decimal("100.00")
+    assert profit_loss == Decimal("-100.00")
+
+
+def test_lianxiao_refresh_data_keeps_active_throw_effect(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    create_order(service, bet_type="连肖", selection="狗羊猴", amount="200")
+    RiskAdjustmentService(session_factory).apply_lianxiao_adjustments(
+        {"狗羊猴": Decimal("50")},
+        region="澳门",
+        reason="active history",
+    )
+    page = LianxiaoOrderPage(order_service=service)
+    page._adjustment_input.setText("狗羊猴=20")
+    page._on_apply_adjustment_input()
+
+    page.refresh_data()
+
+    _group, holding, profit_loss = lianxiao_row_values(page, "狗羊猴")
+    assert page._adjustments == {}
+    assert holding == Decimal("150.00")
+    assert profit_loss == Decimal("-150.00")
+
+
+def test_lianxiao_refresh_data_empty_database_is_safe(session_factory) -> None:
+    app()
+    page = LianxiaoOrderPage(order_service=OrderService(session_factory))
+
+    page.refresh_data()
+
+    assert page._summary_table.rowCount() == 1
+    assert page._summary_table.item(0, 0).text() == "暂无数据"
 
 
 def test_special_adjust_page_saves_valid_throw_record(session_factory) -> None:
@@ -402,3 +508,41 @@ def test_lianxiao_adjust_page_rejects_adjustment_over_group_amount(session_facto
     assert warning.called
     assert "不能超过当前组合金额" in page._output.toPlainText()
     assert AdjustmentRecordService(session_factory).count_records(adjustment_type="lianxiao_throw") == 0
+
+
+def test_main_window_refreshes_special_adjust_page_on_navigation() -> None:
+    app()
+    window = MainWindow()
+    page = window._stack.widget(2)
+    calls = {"count": 0}
+
+    def refresh_spy():
+        calls["count"] += 1
+
+    page.refresh_data = refresh_spy  # type: ignore[method-assign]
+    try:
+        window._on_nav_clicked(2)
+    finally:
+        window.close()
+        window.deleteLater()
+
+    assert calls["count"] == 1
+
+
+def test_main_window_refreshes_lianxiao_adjust_page_on_navigation() -> None:
+    app()
+    window = MainWindow()
+    page = window._stack.widget(3)
+    calls = {"count": 0}
+
+    def refresh_spy():
+        calls["count"] += 1
+
+    page.refresh_data = refresh_spy  # type: ignore[method-assign]
+    try:
+        window._on_adjust_page_selected(3)
+    finally:
+        window.close()
+        window.deleteLater()
+
+    assert calls["count"] == 1
