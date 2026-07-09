@@ -442,23 +442,25 @@ class LianxiaoOrderPage(QWidget):
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(
             """
-            QWidget { background: #ffffff; color: #263238; font-size: 12px; }
+            QWidget { background: #F5F7FA; color: #243447; font-size: 12px; }
             QFrame#filterBar, QFrame#statsPanel, QFrame#adjustInputBar, QFrame#bottomBar {
-                border: 1px solid #9fb4b8;
-                background: #fbfefe;
+                border: 1px solid #d7dee7;
+                border-radius: 6px;
+                background: #ffffff;
             }
             QTableWidget {
-                border: 1px solid #9fb4b8;
-                gridline-color: #d5dfe1;
-                alternate-background-color: #f7fafb;
-                selection-background-color: #d8eef2;
-                selection-color: #1e2e32;
+                background: #ffffff;
+                border: 1px solid #cfd8e3;
+                gridline-color: #e1e7ef;
+                alternate-background-color: #f8fafc;
+                selection-background-color: #d7e9ff;
+                selection-color: #1f2d3d;
             }
             QHeaderView::section {
-                background: #dff2f3;
+                background: #eaf1f8;
                 padding: 2px 4px;
-                border: 1px solid #9fb4b8;
-                font-weight: 600;
+                border: 1px solid #cfd8e3;
+                font-weight: 700;
             }
             QLabel#statsTitle {
                 color: #c0392b;
@@ -468,17 +470,22 @@ class LianxiaoOrderPage(QWidget):
             QLabel#statsValue { qproperty-alignment: AlignCenter; }
             QLineEdit {
                 min-height: 23px;
-                border: 1px solid #b8c7ca;
+                border: 1px solid #c4ceda;
+                border-radius: 4px;
                 background: #ffffff;
             }
             QPushButton {
                 padding: 5px 10px;
-                border: 1px solid #b8c7ca;
+                border: 1px solid #c4ceda;
+                border-radius: 5px;
                 background: #ffffff;
+                color: #1f4e79;
+                font-weight: 600;
             }
-            QPushButton:hover { background: #e8f7f8; border-color: #5fbac2; }
+            QPushButton:hover { background: #edf5ff; border-color: #8eb8e8; }
             QPlainTextEdit {
-                border: 1px solid #b8c7ca;
+                border: 1px solid #cfd8e3;
+                border-radius: 5px;
                 background: #ffffff;
                 font-family: Consolas, "Microsoft YaHei", monospace;
             }

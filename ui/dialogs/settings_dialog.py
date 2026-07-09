@@ -511,21 +511,21 @@ class SettingsDialog(QDialog):
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(
             """
-            QDialog { background: #f4f6f7; }
-            QLabel#settingsTitle { font-size: 18px; font-weight: 700; color: #2c3e50; }
-            QLabel#settingsSubtitle { color: #7f8c8d; }
-            QFrame#settingsToolbar { background: #ffffff; border: 1px solid #c8d4d7; }
-            QTabWidget::pane { border: 1px solid #bac8cb; background: #ffffff; }
-            QTabBar::tab { padding: 7px 18px; background: #e8edef; border: 1px solid #c4d0d2; }
+            QDialog { background: #F5F7FA; }
+            QLabel#settingsTitle { font-size: 18px; font-weight: 700; color: #1f2d3d; }
+            QLabel#settingsSubtitle { color: #6b7c8f; }
+            QFrame#settingsToolbar { background: #ffffff; border: 1px solid #d7dee7; border-radius: 6px; }
+            QTabWidget::pane { border: 1px solid #d7dee7; background: #ffffff; }
+            QTabBar::tab { padding: 7px 18px; background: #edf2f7; border: 1px solid #cfd8e3; }
             QTabBar::tab:selected { background: #ffffff; border-bottom-color: #ffffff; }
-            QLineEdit, QComboBox { min-height: 26px; border: 1px solid #b7c5c8; padding: 1px 6px; }
-            QPushButton { min-height: 26px; padding: 1px 10px; border: 1px solid #b7c5c8; background: #ffffff; }
-            QPushButton:hover { background: #e9f5f7; border-color: #69aeb6; }
-            QPushButton#primarySettingsButton { background: #3498db; color: white; border-color: #2980b9; }
-            QTableWidget { border: 1px solid #b8c7ca; gridline-color: #d5dfe1; alternate-background-color: #f7fafb; }
-            QHeaderView::section { background: #dff2f3; border: none; border-right: 1px solid #b5cbce; border-bottom: 1px solid #9cb8bc; padding: 5px; font-weight: 600; }
-            QPlainTextEdit#settingsExplanation { background: #fbfcfc; color: #5d6d70; }
-            QGroupBox { border: 1px solid #c0cccf; margin-top: 8px; padding-top: 7px; font-weight: 600; }
+            QLineEdit, QComboBox { min-height: 26px; border: 1px solid #c4ceda; border-radius: 5px; padding: 1px 6px; background: #ffffff; }
+            QPushButton { min-height: 26px; padding: 1px 10px; border: 1px solid #c4ceda; border-radius: 5px; background: #ffffff; color: #1f4e79; font-weight: 600; }
+            QPushButton:hover { background: #edf5ff; border-color: #8eb8e8; }
+            QPushButton#primarySettingsButton { background: #2f80ed; color: white; border-color: #2f80ed; }
+            QTableWidget { border: 1px solid #cfd8e3; gridline-color: #e1e7ef; alternate-background-color: #f8fafc; selection-background-color: #d7e9ff; selection-color: #1f2d3d; }
+            QHeaderView::section { background: #eaf1f8; border: none; border-right: 1px solid #cfd8e3; border-bottom: 1px solid #c3cfdb; padding: 5px; font-weight: 700; }
+            QPlainTextEdit#settingsExplanation { background: #ffffff; color: #5d6d70; border: 1px solid #cfd8e3; border-radius: 5px; }
+            QGroupBox { border: 1px solid #d7dee7; border-radius: 6px; margin-top: 8px; padding-top: 7px; font-weight: 600; background: #ffffff; }
             QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }
             """
         )

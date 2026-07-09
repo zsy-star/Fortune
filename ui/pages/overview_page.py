@@ -125,9 +125,17 @@ class OverviewPage(QWidget):
         self._bar_canvas = _ChartCanvas(5.2, 3.8, self)
         self._pie_canvas = _ChartCanvas(4.8, 3.8, self)
 
-        row.addWidget(self._bar_canvas, stretch=1)
-        row.addWidget(self._pie_canvas, stretch=1)
+        row.addWidget(self._wrap_card(self._bar_canvas, "overviewChartCard"), stretch=1)
+        row.addWidget(self._wrap_card(self._pie_canvas, "overviewChartCard"), stretch=1)
         return row
+
+    def _wrap_card(self, widget: QWidget, object_name: str) -> QFrame:
+        card = QFrame()
+        card.setObjectName(object_name)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.addWidget(widget)
+        return card
 
     def _build_bottom_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -157,7 +165,8 @@ class OverviewPage(QWidget):
             stats.addWidget(lbl)
         stats.addStretch(1)
 
-        stats_wrap = QWidget()
+        stats_wrap = QFrame()
+        stats_wrap.setObjectName("overviewStatsCard")
         stats_wrap.setLayout(stats)
         stats_wrap.setMinimumWidth(200)
 
@@ -342,6 +351,9 @@ class OverviewPage(QWidget):
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(
             """
+            QWidget {
+                background: #F5F7FA;
+            }
             QRadioButton {
                 font-size: 13px;
                 spacing: 6px;
@@ -350,13 +362,19 @@ class OverviewPage(QWidget):
                 padding: 4px 12px;
                 font-size: 12px;
             }
+            QFrame#overviewChartCard, QFrame#overviewStatsCard {
+                background: #ffffff;
+                border: 1px solid #d7dee7;
+                border-radius: 6px;
+            }
             QLabel#statLabel {
-                color: #5dade2;
+                color: #1f4e79;
                 font-size: 14px;
-                font-weight: 500;
+                font-weight: 600;
             }
             QTextEdit#recentOrders {
-                border: 2px solid #3498db;
+                border: 1px solid #cfd8e3;
+                border-radius: 6px;
                 background-color: #ffffff;
                 font-size: 13px;
                 padding: 8px;

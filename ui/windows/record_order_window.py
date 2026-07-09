@@ -1537,27 +1537,30 @@ class RecordOrderWindow(QMainWindow):
         self.setStyleSheet(
             """
             QMainWindow {
-                background-color: #f0f0f0;
+                background-color: #F5F7FA;
             }
             QTableWidget {
                 background-color: #ffffff;
-                gridline-color: #d0d0d0;
-                border: 1px solid #b0b0b0;
+                gridline-color: #e1e7ef;
+                border: 1px solid #cfd8e3;
+                alternate-background-color: #f8fafc;
+                selection-background-color: #d7e9ff;
+                selection-color: #1f2d3d;
             }
             QHeaderView::section {
-                background-color: #e8e8e8;
+                background-color: #eaf1f8;
                 padding: 6px 4px;
-                border: 1px solid #c0c0c0;
-                font-weight: 600;
+                border: 1px solid #cfd8e3;
+                font-weight: 700;
             }
             QWidget#controlBar {
-                background-color: #fafafa;
-                border: 1px solid #c8c8c8;
-                border-radius: 2px;
+                background-color: #ffffff;
+                border: 1px solid #d7dee7;
+                border-radius: 6px;
             }
             QGroupBox#textProcessGroup {
-                border: 1px solid #a8a8a8;
-                border-radius: 2px;
+                border: 1px solid #d7dee7;
+                border-radius: 6px;
                 margin-top: 4px;
                 background-color: #ffffff;
             }
@@ -1568,25 +1571,40 @@ class RecordOrderWindow(QMainWindow):
             QPushButton#toolButton {
                 padding: 4px 10px;
                 font-size: 12px;
+                border: 1px solid #c4ceda;
+                border-radius: 5px;
+                background: #ffffff;
+                color: #1f4e79;
+                font-weight: 600;
             }
             QPushButton#sideActionButton {
                 padding: 8px 4px;
                 font-size: 12px;
+                border: 1px solid #c4ceda;
+                border-radius: 5px;
+                background: #ffffff;
+                color: #1f4e79;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background: #edf5ff;
+                border-color: #8eb8e8;
             }
             QTextEdit {
-                border: 1px solid #a0a0a0;
+                border: 1px solid #cfd8e3;
+                border-radius: 5px;
                 background-color: #ffffff;
             }
             QLabel#footerHint {
-                color: #555555;
+                color: #6b7c8f;
                 font-size: 11px;
                 padding: 4px 2px;
-                background-color: #e8ecef;
-                border: 1px solid #c5ccd3;
+                background-color: #edf2f7;
+                border: 1px solid #d7dee7;
             }
             QSplitter::handle {
-                background-color: #c0c0c0;
-                border: 1px solid #a0a0a0;
+                background-color: #d7dee7;
+                border: 1px solid #c4ceda;
             }
             QSplitter::handle:vertical {
                 min-height: 8px;
@@ -1597,7 +1615,7 @@ class RecordOrderWindow(QMainWindow):
                 width: 8px;
             }
             QSplitter::handle:hover {
-                background-color: #3498db;
+                background-color: #8eb8e8;
             }
             """
         )

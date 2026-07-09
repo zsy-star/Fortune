@@ -54,7 +54,7 @@ class _ChartCanvas(FigureCanvas):
         self.figure = Figure(figsize=(width, height), dpi=100)
         super().__init__(self.figure)
         self.setParent(parent)
-        self.figure.set_facecolor("#f5f7fa")
+        self.figure.set_facecolor("#ffffff")
 
 
 class OrderAnalysisPage(QWidget):
@@ -320,6 +320,9 @@ class OrderAnalysisPage(QWidget):
     def _apply_stylesheet(self) -> None:
         self.setStyleSheet(
             """
+            QWidget {
+                background: #F5F7FA;
+            }
             QRadioButton#analysisFilter {
                 font-size: 12px;
             }
@@ -329,24 +332,27 @@ class OrderAnalysisPage(QWidget):
             }
             QTableWidget#numberStatsTable {
                 background-color: #ffffff;
-                alternate-background-color: #f7f9fb;
-                gridline-color: #d9dee5;
-                border: 1px solid #aeb6bf;
+                alternate-background-color: #f8fafc;
+                gridline-color: #e1e7ef;
+                border: 1px solid #cfd8e3;
+                selection-background-color: #d7e9ff;
+                selection-color: #1f2d3d;
                 font-size: 12px;
             }
             QHeaderView::section {
-                background-color: #e8f0f2;
+                background-color: #eaf1f8;
                 padding: 3px 4px;
-                border: 1px solid #aeb6bf;
+                border: 1px solid #cfd8e3;
                 font-size: 12px;
-                font-weight: 600;
+                font-weight: 700;
             }
             QFrame#analysisRightPane {
                 border: 0;
                 background: transparent;
             }
             QPlainTextEdit#analysisReport {
-                border: 1px solid #aeb6bf;
+                border: 1px solid #cfd8e3;
+                border-radius: 5px;
                 background-color: #ffffff;
                 font-size: 12px;
                 padding: 5px;

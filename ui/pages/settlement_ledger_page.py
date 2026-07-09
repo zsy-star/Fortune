@@ -629,43 +629,49 @@ class SettlementLedgerPage(QWidget):
         self.setStyleSheet(
             """
             QPushButton {
-                color: #1a5276;
-                border: 1px solid #bdc3c7;
+                color: #1f4e79;
+                border: 1px solid #c4ceda;
+                border-radius: 5px;
                 padding: 5px 10px;
                 font-size: 13px;
                 background: #ffffff;
+                font-weight: 600;
             }
             QPushButton:hover {
-                background: #ebf5fb;
+                background: #edf5ff;
+                border-color: #8eb8e8;
             }
             QFrame#ledgerSeparator {
-                background-color: #27ae60;
+                background-color: #2f80ed;
                 border: none;
                 max-height: 2px;
             }
             QTableWidget {
                 background-color: #ffffff;
-                border: 1px solid #bdc3c7;
-                gridline-color: #d5d8dc;
+                border: 1px solid #cfd8e3;
+                gridline-color: #e1e7ef;
+                alternate-background-color: #f8fafc;
+                selection-background-color: #d7e9ff;
+                selection-color: #1f2d3d;
                 font-size: 12px;
             }
             QHeaderView::section {
-                background-color: #eafaf1;
+                background-color: #eaf1f8;
                 padding: 6px 4px;
-                border: 1px solid #bdc3c7;
-                font-weight: 600;
+                border: 1px solid #cfd8e3;
+                font-weight: 700;
             }
             QLabel {
                 font-size: 13px;
-                color: #2c3e50;
+                color: #243447;
             }
             QLabel#hintLabel {
-                color: #7f8c8d;
+                color: #6b7c8f;
             }
             QLineEdit, QComboBox, QDateEdit {
                 padding: 4px 6px;
-                border: 1px solid #bdc3c7;
-                border-radius: 2px;
+                border: 1px solid #c4ceda;
+                border-radius: 5px;
                 background: #ffffff;
                 font-size: 13px;
             }

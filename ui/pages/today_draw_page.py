@@ -335,36 +335,41 @@ class TodayDrawPage(QWidget):
         self.setStyleSheet(
             """
             QWidget {
-                background-color: #ffffff;
+                background-color: #F5F7FA;
             }
             QLabel#drawMeta {
-                color: #2c3e50;
+                color: #243447;
                 font-size: 13px;
             }
             QLabel#drawStatus, QLabel#syncStatus {
-                color: #7f8c8d;
+                color: #6b7c8f;
                 font-size: 13px;
             }
             QLabel#zodiacCell {
                 background-color: #ffffff;
-                border: 1px solid #2c3e50;
+                border: 1px solid #cfd8e3;
+                border-radius: 4px;
                 font-size: 16px;
-                color: #2c3e50;
+                color: #243447;
             }
             QFrame#controlPanel {
-                border: 1px solid #bdc3c7;
-                background-color: #fafafa;
-                border-radius: 4px;
+                border: 1px solid #d7dee7;
+                background-color: #ffffff;
+                border-radius: 6px;
                 margin-top: 8px;
             }
             QPushButton#refreshButton {
                 padding: 6px 14px;
-                border: 1px solid #bdc3c7;
-                background: #ecf0f1;
+                border: 1px solid #c4ceda;
+                border-radius: 5px;
+                background: #ffffff;
+                color: #1f4e79;
                 font-size: 13px;
+                font-weight: 600;
             }
             QPushButton#refreshButton:hover {
-                background: #dfe6e9;
+                background: #edf5ff;
+                border-color: #8eb8e8;
             }
             QPushButton#refreshButton:disabled {
                 color: #95a5a6;

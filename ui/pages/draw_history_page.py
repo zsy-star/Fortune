@@ -503,34 +503,45 @@ class DrawHistoryPage(QWidget):
         self.setStyleSheet(
             """
             QTableWidget {
-                border: 1px solid #bdc3c7;
+                background: #ffffff;
+                border: 1px solid #cfd8e3;
                 font-size: 12px;
-                gridline-color: #d5d8dc;
+                gridline-color: #e1e7ef;
+                alternate-background-color: #f8fafc;
+                selection-background-color: #d7e9ff;
+                selection-color: #1f2d3d;
             }
             QHeaderView::section {
-                background-color: #d6eaf8;
+                background-color: #eaf1f8;
                 padding: 6px 4px;
-                border: 1px solid #aed6f1;
-                font-weight: 600;
+                border: 1px solid #cfd8e3;
+                font-weight: 700;
             }
             QComboBox, QLineEdit, QDateEdit, QSpinBox {
                 padding: 4px 8px;
-                border: 1px solid #bdc3c7;
+                border: 1px solid #c4ceda;
+                border-radius: 5px;
                 font-size: 12px;
+                background: #ffffff;
             }
             QPushButton#fetchButton, QPushButton {
                 padding: 6px 12px;
-                border: 1px solid #bdc3c7;
+                border: 1px solid #c4ceda;
+                border-radius: 5px;
                 background: #ffffff;
+                color: #1f4e79;
                 font-size: 13px;
+                font-weight: 600;
             }
             QPushButton#dangerAction {
                 color: #9f1d1d;
-                border-color: #d79696;
-                font-weight: 600;
+                border-color: #e0a3a3;
+                background: #fffafa;
+                font-weight: 700;
             }
             QPushButton:hover {
-                background: #ebf5fb;
+                background: #edf5ff;
+                border-color: #8eb8e8;
             }
             QPushButton#dangerAction:hover {
                 background: #fff2f2;
@@ -541,12 +552,13 @@ class DrawHistoryPage(QWidget):
             }
             QFrame#detailPanel {
                 background-color: #ffffff;
-                border: 1px solid #bdc3c7;
+                border: 1px solid #d7dee7;
+                border-radius: 6px;
                 min-height: 40px;
             }
             QLabel {
                 font-size: 13px;
-                color: #2c3e50;
+                color: #243447;
             }
             """
         )

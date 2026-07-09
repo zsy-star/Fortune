@@ -359,58 +359,66 @@ class ToolsPage(QWidget):
         self.setStyleSheet(
             """
             QWidget {
-                background-color: #ffffff;
+                background-color: #F5F7FA;
             }
             QFrame#toolLauncher {
                 background: transparent;
                 border: none;
             }
             QFrame#toolLauncher:hover {
-                background-color: #f8f9fa;
+                background-color: #ffffff;
                 border-radius: 8px;
             }
             QFrame#backupPanel {
-                border: 1px solid #d5d8dc;
+                border: 1px solid #d7dee7;
+                border-radius: 6px;
                 background: #ffffff;
             }
             QLabel#toolTitle {
-                color: #27ae60;
+                color: #1f4e79;
                 font-size: 15px;
-                font-weight: 600;
+                font-weight: 700;
             }
             QLabel#backupTitle {
-                color: #2c3e50;
+                color: #243447;
                 font-size: 15px;
-                font-weight: 600;
+                font-weight: 700;
             }
             QLabel#backupHint, QLabel#backupStatus {
-                color: #7f8c8d;
+                color: #6b7c8f;
                 font-size: 13px;
             }
             QPushButton {
-                color: #1a5276;
-                border: 1px solid #bdc3c7;
+                color: #1f4e79;
+                border: 1px solid #c4ceda;
+                border-radius: 5px;
                 padding: 5px 10px;
                 font-size: 13px;
                 background: #ffffff;
+                font-weight: 600;
             }
             QPushButton:hover {
-                background: #ebf5fb;
+                background: #edf5ff;
+                border-color: #8eb8e8;
             }
             QTableWidget {
                 background: #ffffff;
-                border: 1px solid #bdc3c7;
-                gridline-color: #d5d8dc;
+                border: 1px solid #cfd8e3;
+                gridline-color: #e1e7ef;
+                alternate-background-color: #f8fafc;
+                selection-background-color: #d7e9ff;
+                selection-color: #1f2d3d;
                 font-size: 12px;
             }
             QHeaderView::section {
-                background-color: #ecf0f1;
+                background-color: #eaf1f8;
                 padding: 6px 4px;
-                border: 1px solid #bdc3c7;
-                font-weight: 600;
+                border: 1px solid #cfd8e3;
+                font-weight: 700;
             }
             QPlainTextEdit#comingSoonBox {
-                border: 1px solid #bdc3c7;
+                border: 1px solid #cfd8e3;
+                border-radius: 6px;
                 background: #ffffff;
                 color: #95a5a6;
                 font-size: 13px;

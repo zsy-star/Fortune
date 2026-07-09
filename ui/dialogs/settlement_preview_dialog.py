@@ -541,33 +541,39 @@ class SettlementPreviewDialog(QDialog):
       self.setStyleSheet(
           """
           QFrame#sectionFrame, QFrame#summaryFrame {
-              border: 1px solid #bdc3c7;
+              border: 1px solid #d7dee7;
+              border-radius: 6px;
               background: #ffffff;
           }
           QLabel#sectionTitle {
-              font-weight: 600;
+              font-weight: 700;
               font-size: 12px;
+              color: #243447;
           }
           QLabel#hintLabel {
-              color: #7f8c8d;
+              color: #6b7c8f;
               font-size: 12px;
           }
           QComboBox, QPushButton {
               padding: 5px 10px;
-              border: 1px solid #bdc3c7;
+              border: 1px solid #c4ceda;
+              border-radius: 5px;
               background: #ffffff;
+              color: #1f4e79;
               font-size: 12px;
+              font-weight: 600;
           }
           QPushButton:hover {
-              background: #ebf5fb;
+              background: #edf5ff;
+              border-color: #8eb8e8;
           }
           QPushButton#primaryBtn {
-              background: #3498db;
+              background: #2f80ed;
               color: #ffffff;
-              border: 1px solid #2980b9;
+              border: 1px solid #2f80ed;
           }
           QPushButton#primaryBtn:hover {
-              background: #5dade2;
+              background: #5b9cf2;
           }
           QPushButton#primaryBtn:disabled {
               background: #bdc3c7;
@@ -575,12 +581,13 @@ class SettlementPreviewDialog(QDialog):
               color: #ecf0f1;
           }
           QPushButton#dangerBtn {
-              background: #c0392b;
-              color: #ffffff;
-              border: 1px solid #922b21;
+              background: #fffafa;
+              color: #9f1d1d;
+              border: 1px solid #e0a3a3;
           }
           QPushButton#dangerBtn:hover {
-              background: #e74c3c;
+              background: #fff1f1;
+              border-color: #c0392b;
           }
           QPushButton#dangerBtn:disabled {
               background: #bdc3c7;
@@ -588,15 +595,18 @@ class SettlementPreviewDialog(QDialog):
               color: #ecf0f1;
           }
           QTableWidget {
-              border: 1px solid #bdc3c7;
+              border: 1px solid #cfd8e3;
               font-size: 12px;
-              gridline-color: #d5d8dc;
+              gridline-color: #e1e7ef;
+              alternate-background-color: #f8fafc;
+              selection-background-color: #d7e9ff;
+              selection-color: #1f2d3d;
           }
           QHeaderView::section {
-              background-color: #d6eaf8;
+              background-color: #eaf1f8;
               padding: 6px 4px;
-              border: 1px solid #aed6f1;
-              font-weight: 600;
+              border: 1px solid #cfd8e3;
+              font-weight: 700;
           }
           """
       )

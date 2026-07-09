@@ -402,34 +402,36 @@ class NumberCatalogPage(QWidget):
         self.setStyleSheet(
             """
             QWidget {
-                background-color: #f5f6f8;
+                background-color: #F5F7FA;
             }
             QLineEdit#searchInput {
                 padding: 9px 14px;
-                border: 1px solid #aed6f1;
+                border: 1px solid #c4ceda;
                 border-radius: 18px;
                 background-color: #ffffff;
                 font-size: 14px;
             }
             QPushButton {
                 padding: 7px 16px;
-                border: 1px solid #bdc3c7;
-                border-radius: 4px;
+                border: 1px solid #c4ceda;
+                border-radius: 5px;
                 background: #ffffff;
+                color: #1f4e79;
                 font-size: 13px;
+                font-weight: 600;
                 min-width: 64px;
             }
             QPushButton:hover {
-                background: #ebf5fb;
-                border-color: #3498db;
+                background: #edf5ff;
+                border-color: #8eb8e8;
             }
             QTextEdit {
-                border: 1px solid #e0e4e8;
+                border: 1px solid #cfd8e3;
                 border-radius: 8px;
-                background: #f5f6f8;
+                background: #ffffff;
                 font-size: 15px;
                 padding: 8px;
-                color: #2c3e50;
+                color: #243447;
             }
             """
         )
