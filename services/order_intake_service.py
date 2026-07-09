@@ -33,6 +33,7 @@ from settlement.bet_normalizer import (
     SPECIAL_SIZE,
 )
 from settlement.exceptions import InvalidSelectionError, UnsupportedBetTypeError
+from services.settlement_support_service import SettlementSupportService
 
 _CENT = Decimal("0.01")
 _NORMALIZED_TO_ORDER_BET_TYPE = {
@@ -49,10 +50,14 @@ class OrderIntakeService:
         session_factory: Callable[[], Session] = SessionLocal,
         order_service: OrderService | None = None,
         normalizer: BetTypeNormalizer | None = None,
+        settlement_support_service: SettlementSupportService | None = None,
     ):
         self._session_factory = session_factory
         self._order_service = order_service or OrderService(session_factory)
         self._normalizer = normalizer or BetTypeNormalizer()
+        self._settlement_support_service = settlement_support_service or SettlementSupportService(
+            self._normalizer
+        )
 
     def preview_raw_text(
         self,
@@ -150,6 +155,7 @@ class OrderIntakeService:
             and preview.order_items
             and preview.total_amount > 0
         )
+        self._annotate_settlement_support(preview)
         return preview
 
     def save_preview(self, preview: OrderIntakePreview) -> OrderIntakeSaveResult:
@@ -478,4 +484,39 @@ class OrderIntakeService:
             and preview.order_items
             and preview.total_amount > 0
         )
+        self._annotate_settlement_support(preview)
         return preview
+
+    def _annotate_settlement_support(self, preview: OrderIntakePreview) -> None:
+        seen_warnings: set[str] = set(preview.warnings)
+        order_items = iter(preview.order_items)
+        for item_preview in preview.items:
+            if not item_preview.is_valid:
+                continue
+            order_item = next(order_items, None)
+            bet_type = (
+                getattr(order_item, "bet_type", None)
+                or item_preview.order_bet_type
+                or item_preview.original_bet_type
+            )
+            selection = (
+                getattr(order_item, "selection", None)
+                or item_preview.order_selection
+                or item_preview.normalized_selection
+                or item_preview.original_selection
+            )
+            result = self._settlement_support_service.check_item(
+                bet_type,
+                selection,
+                note=getattr(order_item, "note", None),
+            )
+            item_preview.settlement_support_status = result.status
+            item_preview.settlement_support_message = result.message
+            item_preview.settlement_support_suggestion = result.suggestion
+            if not result.is_supported:
+                warning = (
+                    f"{result.message}。{result.suggestion}"
+                )
+                if warning not in seen_warnings:
+                    preview.warnings.append(warning)
+                    seen_warnings.add(warning)

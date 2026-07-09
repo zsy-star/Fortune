@@ -294,6 +294,7 @@ def test_number_fuxuan_intake_saves_one_summary_item_with_note() -> None:
     assert row.original_bet_type == "几中几复选"
     assert row.order_selection == "01,02,03,04"
     assert row.normalized_bet_type == "number_fuxuan"
+    assert row.settlement_support_status == "supported"
 
 
 def test_lianxiao_fuxuan_intake_saves_one_summary_item_with_note() -> None:
@@ -307,6 +308,10 @@ def test_lianxiao_fuxuan_intake_saves_one_summary_item_with_note() -> None:
     assert item.amount == Decimal("50.00")
     assert item.note == "复选类型=复4"
     assert any("复选类玩法" in warning for warning in preview.warnings)
+    row = _first_valid_item(preview)
+    assert row.settlement_support_status == "unsupported"
+    assert "暂不支持正式结算" in (row.settlement_support_message or "")
+    assert any("暂不支持正式结算" in warning for warning in preview.warnings)
 
 
 def test_reference_fushi_lianxiao_intake_preserves_combo_note() -> None:
@@ -342,6 +347,9 @@ def test_unsupported_settlement_combo_is_saveable_with_warning() -> None:
     assert item.selection == "01,02"
     assert item.note == "结算规则待确认"
     assert any("结算预览暂不支持" in warning for warning in preview.warnings)
+    row = _first_valid_item(preview)
+    assert row.settlement_support_status == "unsupported"
+    assert "暂不支持正式结算" in (row.settlement_support_message or "")
 
 
 def test_fuxuan_intake_save_and_read_preserves_fuxuan_type_note(session_factory) -> None:

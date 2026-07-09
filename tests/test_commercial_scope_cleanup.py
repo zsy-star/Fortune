@@ -478,6 +478,26 @@ def test_unopened_feature_freeze_list_is_explicit_and_not_misleading() -> None:
     assert "\u8fd4\u6c34 / \u4f63\u91d1 | \u6682\u672a\u5f00\u653e" not in documents
 
 
+def test_first_release_settlement_support_scope_is_documented() -> None:
+    documents = "\n".join(
+        Path(path).read_text(encoding="utf-8")
+        for path in ("docs/settlement_rules.md", "docs/feature_status.md")
+    )
+
+    for phrase in (
+        "第一版正式结算支持",
+        "可录单但暂不支持正式结算",
+        "明确不在第一版范围",
+        "连肖复选",
+        "二中特",
+        "特串",
+        "正式结算必须",
+        "不得写正式结算快照",
+        "不得改变订单",
+    ):
+        assert phrase in documents
+
+
 def test_printing_scope_is_text_only_and_not_a_commercial_gap() -> None:
     documents_by_path = {
         path: Path(path).read_text(encoding="utf-8")

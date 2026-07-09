@@ -143,6 +143,49 @@ def test_order_detail_page_loads_filters_and_details(session_factory) -> None:
     assert LogService(session_factory).count_logs(module="订单详情", action="查看订单") == 1
 
 
+def test_order_detail_shows_settlement_support_status(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    order = create_typed_order(
+        service,
+        bet_type="连肖复选",
+        selection="兔,狗,虎,蛇,龙",
+        customer="支持状态",
+    )
+    page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
+
+    select_order_row(page, order.order_no)
+
+    assert "结算支持：含暂不支持" in page._detail_info.text()
+    assert page._item_table.horizontalHeaderItem(5).text() == "结算支持"
+    assert page._item_table.item(0, 5).text() == "暂不支持"
+    assert "暂不支持正式结算" in page._item_table.item(0, 5).toolTip()
+
+
+def test_order_detail_blocks_preview_for_unsupported_settlement_play(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    order = create_typed_order(
+        service,
+        bet_type="连肖复选",
+        selection="兔,狗,虎,蛇,龙",
+        customer="预览阻断",
+    )
+    page = OrderDetailPage(order_service=service, log_service=LogService(session_factory))
+    select_order_row(page, order.order_no)
+
+    with (
+        patch("ui.pages.order_detail_page.SettlementPreviewDialog") as dialog_cls,
+        patch("ui.pages.order_detail_page.QMessageBox.warning") as warning,
+    ):
+        page._on_settlement_preview()
+
+    dialog_cls.assert_not_called()
+    warning.assert_called_once()
+    assert "暂不支持正式结算" in warning.call_args.args[2]
+    assert service.get_order(order.id).status == "active"
+
+
 def test_order_detail_declarer_filter_merges_settings_and_history(session_factory) -> None:
     app()
     order_service = OrderService(session_factory)

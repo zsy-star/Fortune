@@ -51,6 +51,7 @@ from settlement.bet_normalizer import (
 )
 from settlement.settlement_engine import SettlementEngine
 from services.log_service import LogService
+from services.settlement_support_service import SettlementSupportResult, SettlementSupportService
 
 ORDER_STATUS_SETTLED = "settled"
 CENT = Decimal("0.01")
@@ -89,6 +90,7 @@ class SettlementService:
         self._session_factory = session_factory
         self._engine = engine or SettlementEngine()
         self._log_service = LogService(session_factory)
+        self._support_service = SettlementSupportService()
 
     def preview_order(self, order_id: int, draw_id: int):
         with self._session_factory() as session:
@@ -182,6 +184,11 @@ class SettlementService:
             record = SettlementRecordRepository(session).get(record_id)
             return self._to_ledger_result(record) if record else None
 
+    def check_order_support(self, order_id: int) -> list[SettlementSupportResult]:
+        with self._session_factory() as session:
+            order = self._get_order(session, order_id)
+            return self._support_service.check_order_items(order.items)
+
 
     def commit_order_settlement(self, order_id: int, draw_id: int) -> OrderSettlementCommitResult:
         with self._session_factory() as session:
@@ -239,6 +246,12 @@ class SettlementService:
         record_repo = SettlementRecordRepository(session)
         if record_repo.get_by_order_id(order.id) is not None:
             raise SettlementDataError(f"订单已有结算记录，不能重复结算：{order.order_no}")
+
+        unsupported_before_preview = self._support_service.unsupported_results(order.items)
+        if unsupported_before_preview:
+            raise SettlementDataError(
+                "存在暂不支持玩法，暂不能正式结算：" + self._format_unsupported_support(unsupported_before_preview)
+            )
 
         engine, zodiac_warning = self._engine_for_order(order)
         preview: OrderSettlementPreview = self._apply_payouts(
@@ -503,6 +516,12 @@ class SettlementService:
         if offset < 0:
             offset = 0
         return limit, offset
+
+    def _format_unsupported_support(self, results: list[SettlementSupportResult]) -> str:
+        return "; ".join(
+            f"{result.play_type}/{result.selection}: {result.reason}；{result.suggestion}"
+            for result in results
+        )
 
     def _build_result_snapshot(
         self,

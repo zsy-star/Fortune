@@ -35,6 +35,7 @@ from schemas.order_intake_schema import IntakeMetadata, IntakeTableRow
 from services.order_intake_display_formatter import format_parse_result
 from services.order_intake_service import OrderIntakeService
 from services.order_parser import ParseOptions, ParseResult, parse_lines
+from services.settlement_support_service import SettlementSupportService
 from services.settings_service import SettingsService
 from ui.app_events import app_events
 from ui.unavailable import UNAVAILABLE_TOOLTIP
@@ -50,6 +51,7 @@ _TABLE_COLUMNS = [
     "是否自定义",
     "申报人",
     "备注",
+    "结算支持",
 ]
 
 _TOOLBAR_BUTTONS = [
@@ -107,6 +109,7 @@ class RecordOrderWindow(QMainWindow):
     ):
         super().__init__(parent)
         self._order_intake_service = order_intake_service or OrderIntakeService()
+        self._settlement_support_service = SettlementSupportService()
         self._settings_service = settings_service or SettingsService()
         self._declarer_plans: dict[str, str | None] = {}
         self._declarer_config_load_failed = False
@@ -412,8 +415,33 @@ class RecordOrderWindow(QMainWindow):
             if not r.success:
                 text = f"<span style='color:red;'>{text}</span>"
             blocks.append(text)
+        support_lines = self._settlement_support_lines_for_raw(raw)
+        if support_lines:
+            escaped_lines = "\n".join(html.escape(line) for line in support_lines)
+            blocks.append(f"<span style='color:#b03a2e;'>{escaped_lines}</span>")
         output_html = "<pre style='margin:0;'>" + "\n".join(blocks) + "</pre>"
         self._output_text.setHtml(output_html)
+
+    def _settlement_support_lines_for_raw(self, raw: str) -> list[str]:
+        try:
+            preview = self._order_intake_service.preview_raw_text(
+                raw,
+                customer_name=self._selected_declarer_name(),
+                config_plan_name=self._selected_config_plan_name(),
+                channel=self._cmb_channel.currentText(),
+                region=self._current_region(),
+                source="record_window",
+                parse_options=self._advanced_parse_options(),
+                zodiac_year=self._selected_zodiac_year(),
+            )
+        except Exception:
+            return []
+        lines = [
+            f"结算风险：{item.settlement_support_message} {item.settlement_support_suggestion}"
+            for item in preview.items
+            if item.is_valid and item.settlement_support_status == "unsupported"
+        ]
+        return list(dict.fromkeys(lines))
 
     def _on_clear_output(self) -> None:
         """清空输入、输出、表格及解析状态。"""
@@ -474,6 +502,7 @@ class RecordOrderWindow(QMainWindow):
                     QTableWidgetItem("标准"),  # 是否自定义
                     QTableWidgetItem(reporter),  # 申报人
                     QTableWidgetItem(r.original_text),  # 备注
+                    self._support_item_for_table(bet_type_text, selection_text, r.original_text),
                 ]
                 for col, item in enumerate(items):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -506,6 +535,59 @@ class RecordOrderWindow(QMainWindow):
             QMessageBox.StandardButton.No,
         )
         return result == QMessageBox.StandardButton.Yes
+
+    def _support_item_for_table(
+        self,
+        bet_type: str,
+        selection: str,
+        note: str | None = None,
+    ) -> QTableWidgetItem:
+        result = self._settlement_support_service.check_item(bet_type, selection, note=note)
+        text = "支持" if result.is_supported else "暂不支持"
+        item = QTableWidgetItem(text)
+        item.setToolTip(f"{result.message}\n{result.suggestion}")
+        return item
+
+    def _unsupported_settlement_warnings(self, preview) -> list[str]:
+        lines = [
+            f"- {item.order_bet_type or item.original_bet_type} / "
+            f"{item.order_selection or item.original_selection}："
+            f"{item.settlement_support_message} {item.settlement_support_suggestion}"
+            for item in preview.items
+            if item.is_valid and item.settlement_support_status == "unsupported"
+        ]
+        return list(dict.fromkeys(lines))
+
+    def _confirm_unsupported_settlement(self, preview) -> bool:
+        lines = self._unsupported_settlement_warnings(preview)
+        if not lines:
+            return True
+        message = (
+            "以下玩法第一版可保存记账，但暂不支持正式结算，请确认是否仍保存。\n\n"
+            + "\n".join(lines)
+        )
+        return self._confirm_warning(message)
+
+    def _non_support_warnings(self, preview) -> list[str]:
+        unsupported_messages = {
+            item.settlement_support_message
+            for item in preview.items
+            if item.is_valid and item.settlement_support_status == "unsupported"
+        }
+        warnings: list[str] = []
+        for warning in preview.warnings:
+            if any(message and message in warning for message in unsupported_messages):
+                continue
+            if "暂不支持正式结算" in warning:
+                continue
+            if (
+                "结算预览暂不支持" in warning
+                or "正式结算暂不支持" in warning
+                or "正式结算规则待确认" in warning
+            ):
+                continue
+            warnings.append(warning)
+        return warnings
 
     def _on_save_order(self) -> None:
         """通过 OrderIntakeService 保存当前解析成功的原始订单文本。"""
@@ -560,8 +642,12 @@ class RecordOrderWindow(QMainWindow):
                 self._show_warning(reason)
                 return
 
-            if preview.warnings:
-                warning_text = "保存前请确认以下提示：\n" + "\n".join(preview.warnings)
+            if not self._confirm_unsupported_settlement(preview):
+                return
+
+            non_support_warnings = self._non_support_warnings(preview)
+            if non_support_warnings:
+                warning_text = "保存前请确认以下提示：\n" + "\n".join(non_support_warnings)
                 if not self._confirm_warning(warning_text):
                     return
 
@@ -613,8 +699,12 @@ class RecordOrderWindow(QMainWindow):
             self._show_warning(reason)
             return None
 
-        if preview.warnings:
-            warning_text = "保存前请确认以下提示：\n" + "\n".join(preview.warnings)
+        if not self._confirm_unsupported_settlement(preview):
+            return None
+
+        non_support_warnings = self._non_support_warnings(preview)
+        if non_support_warnings:
+            warning_text = "保存前请确认以下提示：\n" + "\n".join(non_support_warnings)
             if not self._confirm_warning(warning_text):
                 return None
 
@@ -1135,6 +1225,7 @@ class RecordOrderWindow(QMainWindow):
         header.resizeSection(6, 70)   # 每号金额
         header.resizeSection(7, 70)   # 是否自定义
         header.resizeSection(8, 80)   # 申报人
+        header.resizeSection(10, 80)  # 结算支持
         layout.addWidget(self._order_table, stretch=1)
 
         summary = QHBoxLayout()

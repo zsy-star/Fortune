@@ -1741,6 +1741,65 @@ class TestSaveOrder:
         assert "全包" in warning.call_args.args[2]
         assert _order_counts(session_factory) == (0, 0)
 
+    def test_supported_play_preview_has_support_column_without_risk_warning(self, window):
+        """支持玩法添加到表格后显示支持，不出现强风险提示。"""
+        window._input_text.setPlainText("01/10")
+        window._do_parse()
+        window._on_add_result()
+
+        assert "结算风险" not in window._output_text.toPlainText()
+        assert window._order_table.horizontalHeaderItem(10).text() == "结算支持"
+        assert window._order_table.item(0, 10).text() == "支持"
+
+    def test_unsupported_play_preview_shows_settlement_risk(self, window):
+        """不支持正式结算的可保存玩法会在预览中显示风险提示。"""
+        window._input_text.setPlainText("二中特 01 02 各10")
+        window._do_parse()
+
+        output = window._output_text.toPlainText()
+        assert "结算风险" in output
+        assert "暂不支持正式结算" in output
+
+    def test_unsupported_play_save_cancel_does_not_persist(self, save_window, session_factory):
+        """保存不支持玩法时用户取消确认，不写订单。"""
+        save_window._input_text.setPlainText("二中特 01 02 各10")
+        save_window._do_parse()
+
+        with patch(
+            "ui.windows.record_order_window.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.No,
+        ) as question:
+            save_window._on_save_order()
+
+        question.assert_called_once()
+        assert "第一版可保存记账" in question.call_args.args[2]
+        assert _order_counts(session_factory) == (0, 0)
+
+    def test_unsupported_play_save_confirm_persists_accounting_order(self, save_window, session_factory):
+        """用户确认后，不支持正式结算玩法仍可保存为记账订单。"""
+        from sqlalchemy import select
+
+        from models import OrderItem
+
+        save_window._input_text.setPlainText("二中特 01 02 各10")
+        save_window._do_parse()
+
+        with (
+            patch(
+                "ui.windows.record_order_window.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ) as question,
+            patch("ui.windows.record_order_window.QMessageBox.information"),
+        ):
+            save_window._on_save_order()
+
+        assert question.call_count >= 1
+        assert "第一版可保存记账" in question.call_args_list[0].args[2]
+        with session_factory() as session:
+            item = session.scalars(select(OrderItem)).one()
+            assert item.bet_type == "二中特"
+            assert item.note == "结算规则待确认"
+
 
 # ══════════════════════════════════════════════════════════════════════
 # 16. 不访问外部资源的约束性测试

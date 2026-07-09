@@ -25,6 +25,7 @@ from schemas.settlement_schema import OrderSettlementPreview
 from services.draw_service import DrawService
 from services.order_service import OrderService
 from services.settlement_service import SettlementService
+from services.settlement_support_service import SettlementSupportService
 from ui.app_events import app_events
 from settlement.exceptions import SettlementDataError
 
@@ -55,6 +56,7 @@ class SettlementPreviewDialog(QDialog):
       self._order_service = order_service or OrderService()
       self._draw_service = draw_service or DrawService()
       self._settlement_service = settlement_service or SettlementService()
+      self._settlement_support_service = SettlementSupportService()
       self._draws: list[LotteryDraw] = []
       self._preview_done = False
       self._invalid = False
@@ -103,6 +105,7 @@ class SettlementPreviewDialog(QDialog):
       self._lbl_channel = QLabel()
       self._lbl_created = QLabel()
       self._lbl_status = QLabel()
+      self._lbl_support = QLabel()
 
       fields = (
           ("订单号", self._lbl_order_no),
@@ -112,6 +115,7 @@ class SettlementPreviewDialog(QDialog):
           ("渠道", self._lbl_channel),
           ("创建时间", self._lbl_created),
           ("订单状态", self._lbl_status),
+          ("结算支持", self._lbl_support),
       )
       for row, (label, widget) in enumerate(fields):
           grid.addWidget(QLabel(label), row, 0)
@@ -263,6 +267,14 @@ class SettlementPreviewDialog(QDialog):
       self._lbl_channel.setText(_dash(detail.channel))
       self._lbl_created.setText(detail.created_at.strftime("%Y-%m-%d %H:%M:%S"))
       self._lbl_status.setText(detail.status)
+      support_results = self._settlement_support_service.check_order_items(detail.items)
+      unsupported = [result for result in support_results if not result.is_supported]
+      if unsupported:
+          self._lbl_support.setText("含暂不支持正式结算玩法")
+          self._lbl_support.setToolTip(self._support_message(unsupported))
+      else:
+          self._lbl_support.setText("全部支持")
+          self._lbl_support.setToolTip("当前订单明细均在第一版正式结算支持范围内")
 
   def _reload_draws(self) -> None:
       if not hasattr(self, "_order_detail"):
@@ -446,7 +458,7 @@ class SettlementPreviewDialog(QDialog):
           self._btn_commit.setEnabled(False)
           return
       if self._current_preview.unsupported_items:
-          QMessageBox.warning(self, "结算确认", "存在暂不支持玩法，暂不能正式结算")
+          QMessageBox.warning(self, "结算确认", self._preview_unsupported_message(self._current_preview))
           self._btn_commit.setEnabled(False)
           return
 
@@ -509,6 +521,21 @@ class SettlementPreviewDialog(QDialog):
               f"操作日志ID：{result.operation_log_id}"
           ),
       )
+
+  def _support_message(self, results) -> str:
+      lines = [
+          f"{result.play_type}/{result.selection}：{result.reason}；{result.suggestion}"
+          for result in results
+      ]
+      return "存在暂不支持玩法，暂不能正式结算：\n" + "\n".join(lines)
+
+  def _preview_unsupported_message(self, preview: OrderSettlementPreview) -> str:
+      lines = [
+          f"{item.bet_type}/{item.selection}：{item.reason or item.unsupported_reason or '暂不支持'}"
+          for item in preview.results
+          if not item.is_supported
+      ]
+      return "存在暂不支持玩法，暂不能正式结算：\n" + "\n".join(lines)
 
   def _apply_stylesheet(self) -> None:
       self.setStyleSheet(

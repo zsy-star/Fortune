@@ -36,6 +36,9 @@ class IntakeItemPreview:
     error: str | None = None
     order_bet_type: str | None = None
     order_selection: str | None = None
+    settlement_support_status: str | None = None
+    settlement_support_message: str | None = None
+    settlement_support_suggestion: str | None = None
 
 
 @dataclass(slots=True)

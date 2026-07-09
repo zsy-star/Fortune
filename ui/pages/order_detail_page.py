@@ -39,6 +39,7 @@ from services.log_service import LogService
 from services.maintenance_service import MaintenanceError, MaintenanceService
 from services.order_service import OrderService
 from services.settlement_service import SettlementService
+from services.settlement_support_service import SettlementSupportResult, SettlementSupportService
 from services.settings_service import SettingsService
 from ui.dialogs.high_risk_confirm_dialog import HighRiskConfirmDialog
 from ui.dialogs.order_import_dialog import OrderImportDialog
@@ -133,6 +134,7 @@ class OrderDetailPage(QWidget):
         self._log_service = log_service or LogService(session_factory)
         self._draw_service = draw_service or DrawService(session_factory)
         self._settlement_service = settlement_service or SettlementService(session_factory)
+        self._settlement_support_service = SettlementSupportService()
         self._excel_export_service = excel_export_service or ExcelExportService(session_factory)
         self._settings_service = settings_service or SettingsService(session_factory)
         self._maintenance_service = maintenance_service or MaintenanceService(session_factory)
@@ -475,8 +477,8 @@ class OrderDetailPage(QWidget):
         self._raw_text.setReadOnly(True)
         self._raw_text.setPlaceholderText("原始订单文本")
         self._raw_text.setMaximumHeight(54)
-        self._item_table = QTableWidget(0, 5)
-        self._item_table.setHorizontalHeaderLabels(["投注类型", "投注内容", "金额", "赔率", "备注"])
+        self._item_table = QTableWidget(0, 6)
+        self._item_table.setHorizontalHeaderLabels(["投注类型", "投注内容", "金额", "赔率", "备注", "结算支持"])
         self._item_table.verticalHeader().setVisible(False)
         self._item_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._item_table.horizontalHeader().setStretchLastSection(True)
@@ -952,6 +954,8 @@ class OrderDetailPage(QWidget):
     def _render_detail(self, detail: OrderDetailResult) -> None:
         previewable = detail.status in VOIDABLE_ORDER_STATUSES
         voidable = detail.status in VOIDABLE_ORDER_STATUSES
+        support_results = self._support_results_for_detail(detail)
+        unsupported_support = [result for result in support_results if not result.is_supported]
         self._btn_preview.setEnabled(previewable)
         self._btn_void.setEnabled(voidable)
         if detail.status == ORDER_STATUS_SETTLED:
@@ -968,7 +972,8 @@ class OrderDetailPage(QWidget):
             self._btn_void.setToolTip(f"当前订单状态不能作废：{detail.status}")
         self._detail_info.setText(
             "订单号：{no}    申报人：{customer}    渠道：{channel}    地区：{region}    "
-            "生肖年份：{zodiac_year}    来源：{source}    状态：{status}    总金额：{total}".format(
+            "生肖年份：{zodiac_year}    来源：{source}    状态：{status}    总金额：{total}    "
+            "结算支持：{support}".format(
                 no=detail.order_no,
                 customer=_dash(detail.customer_name),
                 channel=_dash(detail.channel),
@@ -977,16 +982,33 @@ class OrderDetailPage(QWidget):
                 source=_dash(detail.source),
                 status=_status_text(detail.status),
                 total=_money(detail.total_amount),
+                support="含暂不支持" if unsupported_support else "全部支持",
             )
         )
         self._raw_text.setPlainText(detail.raw_text)
         self._item_table.setRowCount(len(detail.items))
         for row_idx, item in enumerate(detail.items):
-            values = [item.bet_type, item.selection, _money(item.amount), _dash(item.odds), _dash(item.note)]
+            support = support_results[row_idx]
+            support_text = "支持" if support.is_supported else "暂不支持"
+            values = [item.bet_type, item.selection, _money(item.amount), _dash(item.odds), _dash(item.note), support_text]
             for col_idx, value in enumerate(values):
                 cell = QTableWidgetItem(value)
                 cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if col_idx == 5:
+                    cell.setToolTip(f"{support.message}\n{support.suggestion}")
                 self._item_table.setItem(row_idx, col_idx, cell)
+        if unsupported_support and detail.status in VOIDABLE_ORDER_STATUSES:
+            self._status_label.setText(self._unsupported_support_message(unsupported_support))
+
+    def _support_results_for_detail(self, detail: OrderDetailResult) -> list[SettlementSupportResult]:
+        return self._settlement_support_service.check_order_items(detail.items)
+
+    def _unsupported_support_message(self, results: list[SettlementSupportResult]) -> str:
+        lines = [
+            f"{result.play_type}/{result.selection}：{result.reason}；{result.suggestion}"
+            for result in results
+        ]
+        return "该订单含暂不支持正式结算玩法：" + "；".join(lines)
 
     def _clear_detail(self) -> None:
         self._selected_order_id = None
@@ -1464,6 +1486,16 @@ class OrderDetailPage(QWidget):
             self._status_label.setText(message)
             QMessageBox.warning(self, "结算预览", message)
             self._btn_preview.setEnabled(False)
+            return
+        unsupported_support = [
+            result
+            for result in self._support_results_for_detail(detail)
+            if not result.is_supported
+        ]
+        if unsupported_support:
+            message = self._unsupported_support_message(unsupported_support)
+            self._status_label.setText(message)
+            QMessageBox.warning(self, "结算预览", message)
             return
         dialog = SettlementPreviewDialog(
             self._selected_order_id,

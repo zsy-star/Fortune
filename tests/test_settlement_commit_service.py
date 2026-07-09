@@ -103,6 +103,29 @@ def test_commit_order_with_unsupported_bet_blocks_persistence(session_factory) -
     assert settlement_record_count(session_factory) == 0
 
 
+def test_commit_saveable_but_unsupported_play_blocks_persistence(session_factory) -> None:
+    order_service = OrderService(session_factory)
+    order = create_order(
+        order_service,
+        items=[
+            OrderItemCreate(
+                bet_type="连肖复选",
+                selection="兔,狗,虎,蛇,龙",
+                amount="50",
+                note="复选类型=复4",
+            )
+        ],
+    )
+    draw = create_draw(DrawService(session_factory))
+
+    with pytest.raises(SettlementDataError, match="暂不支持玩法"):
+        SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+
+    assert order_service.get_order(order.id).status == "active"
+    assert settlement_log_count(session_factory) == 0
+    assert settlement_record_count(session_factory) == 0
+
+
 def test_commit_winning_special_number_updates_status_and_writes_log(session_factory) -> None:
     order_service = OrderService(session_factory)
     order = create_order(order_service, items=[OrderItemCreate(bet_type="特码", selection="01", amount="10")])
