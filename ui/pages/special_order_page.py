@@ -67,8 +67,10 @@ class SpecialOrderPage(QWidget):
         )
         self._zodiac_year = get_default_zodiac_year()
         self._adjustments: dict[str, Decimal] = {}
+        self._active_thrown_amounts: dict[str, Decimal] = {}
         self._summary: TemaSummary | None = None
         self._original_edits: dict[str, QLineEdit] = {}
+        self._thrown_edits: dict[str, QLineEdit] = {}
         self._adjust_edits: dict[str, QLineEdit] = {}
         self._total_edits: dict[str, QLineEdit] = {}
         self._number_labels: dict[str, QLabel] = {}
@@ -149,43 +151,45 @@ class SpecialOrderPage(QWidget):
         grid.setContentsMargins(4, 4, 4, 4)
         grid.setHorizontalSpacing(3)
         grid.setVerticalSpacing(2)
-        headers = ("号码", "原金额", "调整", "总计")
+        headers = ("号码", "原金额", "已抛", "调整", "调整后")
         for block_index in range(4):
-            base = block_index * 4
+            base = block_index * 5
             group_label = QLabel(NUMBER_BLOCK_TITLES[block_index])
             group_label.setObjectName("numberGroupTitle")
             group_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            grid.addWidget(group_label, 0, base, 1, 4)
+            grid.addWidget(group_label, 0, base, 1, 5)
             for offset, text in enumerate(headers):
                 label = QLabel(text)
                 label.setObjectName("gridHeader")
                 label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 grid.addWidget(label, 1, base + offset)
             grid.setColumnMinimumWidth(base, 38)
-            grid.setColumnMinimumWidth(base + 1, 64)
-            grid.setColumnMinimumWidth(base + 2, 64)
-            grid.setColumnMinimumWidth(base + 3, 64)
+            for offset in range(1, 5):
+                grid.setColumnMinimumWidth(base + offset, 56)
 
         for block_index, numbers in enumerate(NUMBER_BLOCKS):
-            base = block_index * 4
+            base = block_index * 5
             for row_index, number in enumerate(numbers, start=2):
                 number_label = QLabel(number)
                 number_label.setObjectName("numberBadge")
                 number_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 number_label.setFixedWidth(38)
                 original = self._readonly_edit()
+                thrown = self._readonly_edit()
                 adjust = QLineEdit()
                 adjust.setObjectName(f"temaAdjust{number}")
                 adjust.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                adjust.setFixedWidth(64)
+                adjust.setFixedWidth(56)
                 total = self._readonly_edit()
                 adjust.editingFinished.connect(lambda n=number: self._on_adjust_edit_finished(n))
                 grid.addWidget(number_label, row_index, base)
                 grid.addWidget(original, row_index, base + 1)
-                grid.addWidget(adjust, row_index, base + 2)
-                grid.addWidget(total, row_index, base + 3)
+                grid.addWidget(thrown, row_index, base + 2)
+                grid.addWidget(adjust, row_index, base + 3)
+                grid.addWidget(total, row_index, base + 4)
                 self._number_labels[number] = number_label
                 self._original_edits[number] = original
+                self._thrown_edits[number] = thrown
                 self._adjust_edits[number] = adjust
                 self._total_edits[number] = total
         return frame
@@ -194,7 +198,7 @@ class SpecialOrderPage(QWidget):
         edit = QLineEdit("0.00")
         edit.setReadOnly(True)
         edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        edit.setFixedWidth(64)
+        edit.setFixedWidth(56)
         return edit
 
     def _build_stats_panel(self) -> QWidget:
@@ -332,6 +336,9 @@ class SpecialOrderPage(QWidget):
     def reload_data(self) -> None:
         self._summary_service.set_zodiac_year(self._selected_zodiac_year())
         self._risk_adjustment_service.set_zodiac_year(self._selected_zodiac_year())
+        self._active_thrown_amounts = self._risk_adjustment_service.get_active_special_throw_amounts(
+            region=self._selected_region(),
+        )
         self._summary = self._summary_service.summarize_tema(
             region=self._selected_region(),
             adjustments=self._adjustments,
@@ -377,9 +384,26 @@ class SpecialOrderPage(QWidget):
             for number, row in by_number.items():
                 self._number_labels[number].setText(number)
                 self._number_labels[number].setStyleSheet(f"color: {self._number_color(number)}; font-weight: 700;")
-                self._original_edits[number].setText(money(row.original_amount))
-                self._adjust_edits[number].setText("" if row.adjustment_amount == 0 else money(row.adjustment_amount))
-                self._total_edits[number].setText(money(row.total_amount))
+                original = row.original_amount
+                thrown = self._active_thrown_amounts.get(number, Decimal("0"))
+                current_adjustment = self._adjustments.get(number, Decimal("0"))
+                holding = original - thrown - current_adjustment
+                self._original_edits[number].setText(money(original))
+                self._thrown_edits[number].setText(money(thrown))
+                self._adjust_edits[number].setText("" if current_adjustment == 0 else money(current_adjustment))
+                self._total_edits[number].setText(money(holding))
+                tooltip = (
+                    f"原金额：{money(original)}\n"
+                    f"已抛出金额：{money(thrown)}\n"
+                    f"当前调整输入：{money(current_adjustment)}\n"
+                    f"调整后持有金额：{money(holding)}\n"
+                    f"active 抛出记录：{'有' if thrown else '无'}"
+                )
+                self._number_labels[number].setToolTip(tooltip)
+                self._original_edits[number].setToolTip(tooltip)
+                self._thrown_edits[number].setToolTip(tooltip)
+                self._adjust_edits[number].setToolTip(tooltip)
+                self._total_edits[number].setToolTip(tooltip)
         finally:
             self._loading = False
 
@@ -388,13 +412,16 @@ class SpecialOrderPage(QWidget):
         adjusted = self._summary
         if adjusted is None:
             return
+        thrown_total = sum(self._active_thrown_amounts.values(), Decimal("0"))
+        current_adjustment_total = sum(self._adjustments.values(), Decimal("0"))
+        holding_total = original.original_total - thrown_total - current_adjustment_total
         self._lbl_original_total.setText(f"特码总数：{money(original.original_total)}")
         self._lbl_original_max_profit.setText(f"最大盈利：{money(original.max_profit)}")
         self._lbl_original_max_loss.setText(f"最大亏损：{money(original.max_loss)}")
         self._lbl_original_profit_count.setText(f"盈利数量：{original.profit_count}")
         self._lbl_original_loss_count.setText(f"亏损数量：{original.loss_count}")
-        self._lbl_eat_total.setText(f"吃单总数：{money(adjusted.after_total)}")
-        self._lbl_adjustment_total.setText(f"调整总额：{money(adjusted.adjustment_total)}")
+        self._lbl_eat_total.setText(f"持有总数：{money(holding_total)}")
+        self._lbl_adjustment_total.setText(f"已抛/本次：{money(thrown_total)} / {money(current_adjustment_total)}")
         self._lbl_adjusted_max_profit.setText(f"最大盈利：{money(adjusted.max_profit)}")
         self._lbl_adjusted_max_loss.setText(f"最大亏损：{money(adjusted.max_loss)}")
         self._lbl_adjusted_profit_count.setText(f"盈利数量：{adjusted.profit_count}")
@@ -470,13 +497,20 @@ class SpecialOrderPage(QWidget):
             QMessageBox.warning(self, "保存本次调整", f"保存失败：{exc}")
             self._append_output(f"保存失败：{exc}")
             return
+        saved_count = result.record.item_count
+        saved_total = result.record.adjustment_total
+        self._adjustments.clear()
+        self._adjustment_input.clear()
+        self.reload_data()
         app_events.logs_changed.emit()
         self._append_output(
             "已保存本次特码调单抛出记录：\n"
             f"记录 ID：{result.record.id}\n"
             f"操作日志 ID：{result.operation_log_id}\n"
             f"地区：{result.record.region}\n"
-            f"调整金额：{result.record.adjustment_total}\n"
+            f"调整类型：{result.record.adjustment_type}\n"
+            f"调整数：{saved_count}\n"
+            f"总调整金额：{saved_total}\n"
             "历史订单和结算记录未被修改，可在“调整记录”中查看或撤销。"
         )
 

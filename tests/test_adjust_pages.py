@@ -44,6 +44,19 @@ def headers(table) -> list[str]:
     return [table.horizontalHeaderItem(column).text() for column in range(table.columnCount())]
 
 
+def lianxiao_row_values(page: LianxiaoOrderPage, zodiacs: str) -> tuple[str, Decimal, Decimal]:
+    expected = set(zodiacs)
+    for row in range(page._summary_table.rowCount()):
+        group = page._summary_table.item(row, 0).text()
+        if expected.issubset(set(group)):
+            return (
+                group,
+                Decimal(page._summary_table.item(row, 1).text()),
+                Decimal(page._summary_table.item(row, 2).text()),
+            )
+    raise AssertionError(f"missing lianxiao row containing {zodiacs}")
+
+
 def button_texts(page) -> set[str]:
     return {button.text() for button in page.findChildren(QPushButton)}
 
@@ -63,6 +76,7 @@ def test_special_adjust_page_creates_with_required_layout(session_factory) -> No
     assert headers(page._summary_table) == ["号码", "下注数", "盈亏", "ID"]
     assert page._summary_table.rowCount() == 49
     assert len(page._original_edits) == 49
+    assert len(page._thrown_edits) == 49
     assert len(page._adjust_edits) == 49
     assert len(page._total_edits) == 49
     assert page.findChild(QSpinBox, "specialAdjustmentZodiacYearSpin") is not None
@@ -104,19 +118,53 @@ def test_special_adjust_page_refreshes_order_summary_and_input(session_factory) 
 
     assert page._adjust_edits["12"].text() == "100.00"
     assert page._adjust_edits["25"].text() == "50.00"
-    assert page._total_edits["25"].text() == "70.00"
+    assert page._total_edits["25"].text() == "-30.00"
+
+
+def test_special_adjust_page_loads_active_throw_into_holding_amount(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    create_order(service, selection="12", amount="100")
+    RiskAdjustmentService(session_factory).apply_special_adjustments(
+        {"12": Decimal("30")},
+        region="澳门",
+        reason="active history",
+    )
+
+    page = SpecialOrderPage(order_service=service)
+
+    assert page._original_edits["12"].text() == "100.00"
+    assert page._thrown_edits["12"].text() == "30.00"
+    assert page._adjust_edits["12"].text() == ""
+    assert page._total_edits["12"].text() == "70.00"
+    assert "active 抛出记录：有" in page._total_edits["12"].toolTip()
+
+
+def test_special_adjust_page_ignores_reversed_throw_for_holding_amount(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    create_order(service, selection="12", amount="100")
+    risk_service = RiskAdjustmentService(session_factory)
+    result = risk_service.apply_special_adjustments({"12": Decimal("30")}, region="澳门", reason="active history")
+    risk_service.reverse_record(result.record.id, reason="rollback")
+
+    page = SpecialOrderPage(order_service=service)
+
+    assert page._thrown_edits["12"].text() == "0.00"
+    assert page._total_edits["12"].text() == "100.00"
+    assert "active 抛出记录：无" in page._total_edits["12"].toolTip()
 
 
 def test_lianxiao_adjust_page_creates_with_required_layout(session_factory) -> None:
     app()
     page = LianxiaoOrderPage(order_service=OrderService(session_factory))
 
-    assert headers(page._summary_table) == ["生肖组", "下注数", "盈亏"]
+    assert headers(page._summary_table) == ["生肖组", "持有", "盈亏"]
     assert page._summary_table.rowCount() == 1
     assert page._summary_table.item(0, 0).text() == "暂无数据"
     assert len(page._tables) == 5
     for table in page._tables:
-        assert headers(table) == ["生肖组", "下注数", "盈亏"]
+        assert headers(table) == ["生肖组", "持有", "盈亏"]
     assert page.findChild(QSpinBox, "lianxiaoAdjustmentZodiacYearSpin") is not None
     assert {"只看澳门", "只看香港"}.issubset(radio_texts(page))
     assert {
@@ -151,9 +199,46 @@ def test_lianxiao_adjust_page_refreshes_summary_and_prints(session_factory) -> N
     page._on_apply_adjustment_input()
     page._on_print_adjustment()
 
+    _group, holding, profit_loss = lianxiao_row_values(page, "狗羊猴")
+    assert holding == Decimal("100.00")
+    assert profit_loss == Decimal("-100.00")
     output = page._output.toPlainText()
     assert "连肖调整" in output
-    assert "调整后" in output
+    assert "调整后持有" in output
+
+
+def test_lianxiao_adjust_page_loads_active_throw_into_holding_amount(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    create_order(service, bet_type="连肖", selection="狗羊猴", amount="200")
+    RiskAdjustmentService(session_factory).apply_lianxiao_adjustments(
+        {"狗羊猴": Decimal("50")},
+        region="澳门",
+        reason="active history",
+    )
+
+    page = LianxiaoOrderPage(order_service=service)
+
+    _group, holding, profit_loss = lianxiao_row_values(page, "狗羊猴")
+    assert holding == Decimal("150.00")
+    assert profit_loss == Decimal("-150.00")
+    assert "已抛出金额：50.00" in page._summary_table.item(0, 1).toolTip()
+
+
+def test_lianxiao_adjust_page_ignores_reversed_throw_for_holding_amount(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    create_order(service, bet_type="连肖", selection="狗羊猴", amount="200")
+    risk_service = RiskAdjustmentService(session_factory)
+    result = risk_service.apply_lianxiao_adjustments({"狗羊猴": Decimal("50")}, region="澳门", reason="active history")
+    risk_service.reverse_record(result.record.id, reason="rollback")
+
+    page = LianxiaoOrderPage(order_service=service)
+
+    _group, holding, profit_loss = lianxiao_row_values(page, "狗羊猴")
+    assert holding == Decimal("200.00")
+    assert profit_loss == Decimal("-200.00")
+    assert "active 抛出记录：无" in page._summary_table.item(0, 1).toolTip()
 
 
 def test_special_adjust_page_saves_valid_throw_record(session_factory) -> None:
@@ -175,6 +260,12 @@ def test_special_adjust_page_saves_valid_throw_record(session_factory) -> None:
     assert record.record_snapshot["reason"] == "特码调单"
     assert RiskAdjustmentService(session_factory).can_reverse(record.id, record.adjustment_type)
     assert "已保存本次特码调单抛出记录" in page._output.toPlainText()
+    assert "调整类型：special_throw" in page._output.toPlainText()
+    assert "调整数：1" in page._output.toPlainText()
+    assert "总调整金额：40.00" in page._output.toPlainText()
+    assert page._adjust_edits["12"].text() == ""
+    assert page._thrown_edits["12"].text() == "40.00"
+    assert page._total_edits["12"].text() == "60.00"
 
 
 def test_special_adjust_page_empty_adjustment_does_not_crash_or_save(session_factory) -> None:
@@ -219,10 +310,14 @@ def test_special_adjust_clear_and_reset_keep_history_records(session_factory) ->
     assert page._adjustments == {}
     assert page._adjustment_input.text() == ""
     assert record_service.count_records(adjustment_type="special_throw") == 1
+    assert page._thrown_edits["12"].text() == "20.00"
+    assert page._total_edits["12"].text() == "80.00"
 
     page._on_reset_all_data()
     assert page._adjustments == {}
     assert record_service.count_records(adjustment_type="special_throw") == 1
+    assert page._thrown_edits["12"].text() == "20.00"
+    assert page._total_edits["12"].text() == "80.00"
 
 
 def test_lianxiao_adjust_page_saves_valid_throw_record(session_factory) -> None:
@@ -244,6 +339,39 @@ def test_lianxiao_adjust_page_saves_valid_throw_record(session_factory) -> None:
     assert record.record_snapshot["reason"] == "连肖调单"
     assert RiskAdjustmentService(session_factory).can_reverse(record.id, record.adjustment_type)
     assert "已保存本次连肖调单抛出记录" in page._output.toPlainText()
+    assert "调整类型：lianxiao_throw" in page._output.toPlainText()
+    assert "调整数：1" in page._output.toPlainText()
+    assert "总调整金额：100.00" in page._output.toPlainText()
+    _group, holding, profit_loss = lianxiao_row_values(page, "狗羊猴")
+    assert holding == Decimal("100.00")
+    assert profit_loss == Decimal("-100.00")
+
+
+def test_lianxiao_adjust_reset_keeps_active_history_records(session_factory) -> None:
+    app()
+    service = OrderService(session_factory)
+    create_order(service, bet_type="连肖", selection="狗羊猴", amount="200")
+    page = LianxiaoOrderPage(order_service=service)
+
+    page._adjustment_input.setText("狗羊猴=100")
+    page._on_apply_adjustment_input()
+    page._on_save_adjustment()
+    record_service = AdjustmentRecordService(session_factory)
+    assert record_service.count_records(adjustment_type="lianxiao_throw") == 1
+
+    page._adjustment_input.setText("狗羊猴=20")
+    page._on_apply_adjustment_input()
+    _group, holding_before_reset, _profit_loss = lianxiao_row_values(page, "狗羊猴")
+    assert holding_before_reset == Decimal("80.00")
+
+    page._on_reset_adjustment()
+
+    _group, holding_after_reset, profit_loss = lianxiao_row_values(page, "狗羊猴")
+    assert page._adjustments == {}
+    assert page._adjustment_input.text() == ""
+    assert record_service.count_records(adjustment_type="lianxiao_throw") == 1
+    assert holding_after_reset == Decimal("100.00")
+    assert profit_loss == Decimal("-100.00")
 
 
 def test_lianxiao_adjust_page_rejects_missing_group(session_factory) -> None:

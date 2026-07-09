@@ -25,13 +25,13 @@ from PySide6.QtWidgets import (
 
 from domain.zodiac_config import MAX_ZODIAC_YEAR, MIN_ZODIAC_YEAR, get_default_zodiac_year
 from services.adjustment_record_service import AdjustmentRecordService
-from services.adjustment_summary_service import AdjustmentSummaryService, LianxiaoSummary, money
+from services.adjustment_summary_service import AdjustmentSummaryService, LianxiaoSummary, money, normalize_lianxiao_group
 from services.order_service import OrderService
 from services.risk_adjustment_service import RiskAdjustmentService
 from ui.app_events import app_events
 from ui.dialogs.adjustment_record_dialog import AdjustmentRecordDialog
 
-TABLE_HEADERS = ["生肖组", "下注数", "盈亏"]
+TABLE_HEADERS = ["生肖组", "持有", "盈亏"]
 
 
 class LianxiaoOrderPage(QWidget):
@@ -56,6 +56,7 @@ class LianxiaoOrderPage(QWidget):
         )
         self._zodiac_year = get_default_zodiac_year()
         self._adjustments: dict[str, Decimal] = {}
+        self._active_thrown_amounts: dict[str, Decimal] = {}
         self._summary: LianxiaoSummary | None = None
         self._tables: list[QTableWidget] = []
 
@@ -233,6 +234,12 @@ class LianxiaoOrderPage(QWidget):
     def reload_data(self) -> None:
         self._summary_service.set_zodiac_year(self._selected_zodiac_year())
         self._risk_adjustment_service.set_zodiac_year(self._selected_zodiac_year())
+        self._active_thrown_amounts = {
+            _page_group_key(group): amount
+            for group, amount in self._risk_adjustment_service.get_active_lianxiao_throw_amounts(
+                region=self._selected_region(),
+            ).items()
+        }
         self._summary = self._summary_service.summarize_lianxiao(
             region=self._selected_region(),
             adjustments=self._adjustments,
@@ -276,10 +283,22 @@ class LianxiaoOrderPage(QWidget):
             return
         table.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
-            values = [row.group, money(row.total_amount), money(row.profit_loss)]
+            group_key = _page_group_key(row.group)
+            thrown = self._active_thrown_amounts.get(group_key, Decimal("0"))
+            current_adjustment = self._adjustments.get(row.group, Decimal("0"))
+            holding = row.original_amount - thrown - current_adjustment
+            values = [row.group, money(holding), money(-holding)]
+            tooltip = (
+                f"原金额：{money(row.original_amount)}\n"
+                f"已抛出金额：{money(thrown)}\n"
+                f"当前调整输入：{money(current_adjustment)}\n"
+                f"调整后持有金额：{money(holding)}\n"
+                f"active 抛出记录：{'有' if thrown else '无'}"
+            )
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter if column else Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                item.setToolTip(tooltip)
                 table.setItem(row_index, column, item)
 
     def _fill_stats(self) -> None:
@@ -287,11 +306,14 @@ class LianxiaoOrderPage(QWidget):
         adjusted = self._summary
         if adjusted is None:
             return
+        thrown_total = sum(self._active_thrown_amounts.values(), Decimal("0"))
+        current_adjustment_total = sum(self._adjustments.values(), Decimal("0"))
+        holding_total = original.original_total - thrown_total - current_adjustment_total
         self._lbl_lianxiao_total.setText(f"连肖总额：{money(original.original_total)}")
         self._lbl_original_max_profit.setText(f"最大盈利：{money(original.max_profit)}")
         self._lbl_original_max_loss.setText(f"最大亏损：{money(original.max_loss)}")
-        self._lbl_eat_total.setText(f"吃单总额：{money(adjusted.after_total)}")
-        self._lbl_adjustment_total.setText(f"调整总额：{money(adjusted.adjustment_total)}")
+        self._lbl_eat_total.setText(f"持有总额：{money(holding_total)}")
+        self._lbl_adjustment_total.setText(f"已抛/本次：{money(thrown_total)} / {money(current_adjustment_total)}")
         self._lbl_adjusted_max_profit.setText(f"最大盈利：{money(adjusted.max_profit)}")
         self._lbl_adjusted_max_loss.setText(f"最大亏损：{money(adjusted.max_loss)}")
 
@@ -316,17 +338,22 @@ class LianxiaoOrderPage(QWidget):
             f"地区：{self._selected_region()}",
             f"生肖年份：{self._selected_zodiac_year()}",
             "",
-            "生肖组\t下注数\t调整\t调整后\t盈亏",
+            "生肖组\t原金额\t已抛\t当前调整\t调整后持有\t盈亏",
         ]
         for row in self._summary.rows:
+            group_key = _page_group_key(row.group)
+            thrown = self._active_thrown_amounts.get(group_key, Decimal("0"))
+            current_adjustment = self._adjustments.get(row.group, Decimal("0"))
+            holding = row.original_amount - thrown - current_adjustment
             lines.append(
                 "\t".join(
                     [
                         row.group,
                         money(row.original_amount),
-                        money(row.adjustment_amount),
-                        money(row.total_amount),
-                        money(row.profit_loss),
+                        money(thrown),
+                        money(current_adjustment),
+                        money(holding),
+                        money(-holding),
                     ]
                 )
             )
@@ -363,13 +390,20 @@ class LianxiaoOrderPage(QWidget):
             QMessageBox.warning(self, "保存本次调整", f"保存失败：{exc}")
             self._append_output(f"保存失败：{exc}")
             return
+        saved_count = result.record.item_count
+        saved_total = result.record.adjustment_total
+        self._adjustments.clear()
+        self._adjustment_input.clear()
+        self.reload_data()
         app_events.logs_changed.emit()
         self._append_output(
             "已保存本次连肖调单抛出记录：\n"
             f"记录 ID：{result.record.id}\n"
             f"操作日志 ID：{result.operation_log_id}\n"
             f"地区：{result.record.region}\n"
-            f"调整金额：{result.record.adjustment_total}\n"
+            f"调整类型：{result.record.adjustment_type}\n"
+            f"调整数：{saved_count}\n"
+            f"总调整金额：{saved_total}\n"
             "历史订单和结算记录未被修改，可在“调整记录”中查看或撤销。"
         )
 
@@ -438,3 +472,9 @@ class LianxiaoOrderPage(QWidget):
             }
             """
         )
+
+
+def _page_group_key(group: str) -> str:
+    text = str(group)
+    tokens = [token for token in text.split(",") if token] if "," in text else list(text)
+    return normalize_lianxiao_group(tokens)

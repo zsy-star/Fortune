@@ -264,6 +264,28 @@ class RiskAdjustmentService:
             )
         return rows
 
+    def get_active_special_throw_amounts(self, *, region: str | None = None) -> dict[str, Decimal]:
+        """Return active special-number throw totals without mutating records."""
+
+        with self._session_factory() as session:
+            amounts = self._active_special_thrown_amounts(session, region=region)
+        return {
+            number: _money_decimal(amount)
+            for number, amount in sorted(amounts.items())
+            if _money_decimal(amount) != Decimal("0.00")
+        }
+
+    def get_active_lianxiao_throw_amounts(self, *, region: str | None = None) -> dict[str, Decimal]:
+        """Return active lianxiao throw totals without mutating records."""
+
+        with self._session_factory() as session:
+            amounts = self._active_lianxiao_thrown_amounts(session, region=region)
+        return {
+            group: _money_decimal(amount)
+            for group, amount in sorted(amounts.items(), key=lambda item: self._zodiac_group_sort_key(item[0]))
+            if _money_decimal(amount) != Decimal("0.00")
+        }
+
     def generate_special_throw_suggestions(
         self,
         rows: Iterable[SpecialRiskRow],

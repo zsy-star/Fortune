@@ -145,7 +145,7 @@ def test_lianxiao_order_page_first_stage_is_readonly(session_factory) -> None:
     for table in (page._summary_table, *page._tables):
         assert [table.horizontalHeaderItem(index).text() for index in range(table.columnCount())] == [
             "生肖组",
-            "下注数",
+            "持有",
             "盈亏",
         ]
     assert {"只看澳门", "只看香港"}.issubset({radio.text() for radio in page.findChildren(QRadioButton)})
