@@ -59,3 +59,5 @@ python scripts/check_test_release.py --release-dir dist\Fortune
 ```
 
 发布前必须确认 `dist\Fortune` 中没有真实 `fortune.db`、备份库、测试导出表、Git 目录或测试缓存。`.venv_release/`、`build/`、`dist/`、`data/fortune.db`、`data/backups/`、`exports/`、`*.xlsx`、`*.db` 都不得提交。
+
+V1.0 试用版 release 环境应使用 `requirements.txt` / `requirements-dev.txt` 中锁定版本构建，不建议临时升级 PySide6 等核心 GUI 依赖；如需升级，必须重新跑全量 pytest 和发布包启动验证。

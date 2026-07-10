@@ -52,6 +52,7 @@
 - [ ] `requirements.txt` 存在且包含运行依赖：PySide6、SQLAlchemy、matplotlib、alembic、httpx、openpyxl
 - [ ] `requirements-dev.txt` 存在且包含：`-r requirements.txt`、pytest、pyinstaller、requests
 - [ ] 打包所用虚拟环境通过 `pip install -r requirements-dev.txt` 安装
+- [ ] V1.0 试用版 release 环境使用 `requirements.txt` / `requirements-dev.txt` 中锁定版本构建，不临时升级 PySide6 等核心 GUI 依赖；如需升级，必须重新跑全量 pytest 和发布包启动验证
 - [ ] 无遗漏隐式依赖（如 sqlite3 为标准库，无需列出）
 
 推荐打包环境准备命令：

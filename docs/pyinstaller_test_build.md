@@ -28,6 +28,8 @@ pip install -r requirements-dev.txt
 
 `requirements.txt` 只保留运行依赖；`requirements-dev.txt` 额外包含测试和打包依赖，如 pytest、pyinstaller、requests。
 
+V1.0 试用版 release 环境应使用 `requirements.txt` / `requirements-dev.txt` 中锁定版本构建，不建议临时升级 PySide6 等核心 GUI 依赖；如需升级，必须重新跑全量 pytest 和发布包启动验证。
+
 ## 打包前测试
 
 ```powershell

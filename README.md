@@ -123,6 +123,7 @@ data/fortune.db
   7. `python scripts/build_test_release.py --project-root . --dry-run`
   8. `python scripts/build_test_release.py --project-root . --build`
   9. `python scripts/check_test_release.py --release-dir dist\Fortune`
+- V1.0 试用版 release 环境应使用 `requirements.txt` / `requirements-dev.txt` 中锁定版本构建，不建议临时升级 PySide6 等核心 GUI 依赖；如需升级，必须重新跑全量 pytest 和发布包启动验证。
 - 打包前只读自检：`python scripts/pre_release_check.py --project-root .`
 - 发布包构建预演：`python scripts/build_test_release.py --project-root . --dry-run`
 - 发布目录检查：`python scripts/check_test_release.py --release-dir dist/Fortune`
