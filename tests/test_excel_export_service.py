@@ -212,6 +212,9 @@ def test_settlement_ledger_exports_only_settled_and_not_voided(session_factory, 
         "地区",
         "状态",
         "投注总额",
+        "中奖金额",
+        "返水金额",
+        "统计结算金额",
         "结算时间",
         "开奖期号",
         "命中数量",
@@ -224,13 +227,42 @@ def test_settlement_ledger_exports_only_settled_and_not_voided(session_factory, 
     assert result.row_count == 1
     assert rows[1][1] == settled.id
     assert rows[1][5] == "settled"
-    assert rows[1][8] != "-"
-    assert rows[1][9] == 1
-    assert rows[1][10] == 0
-    assert rows[1][11] == 0
-    assert settled.order_no in rows[1][12]
+    assert rows[0][7:10] == ("中奖金额", "返水金额", "统计结算金额")
+    assert rows[1][7] == 0
+    assert rows[1][8] == 0
+    assert rows[1][9] == -10
+    assert rows[1][11] != "-"
+    assert rows[1][12] == 1
+    assert rows[1][13] == 0
+    assert rows[1][14] == 0
+    assert settled.order_no in rows[1][15]
     assert active.id not in {row[1] for row in rows[1:]}
     assert voided.id not in {row[1] for row in rows[1:]}
+
+
+def test_settlement_ledger_export_uses_zero_for_missing_statistic_amount(session_factory, tmp_path) -> None:
+    service = OrderService(session_factory)
+    settled = create_order(service, customer="legacy-settled", amount="10")
+    settle_order(session_factory, settled.id, settled.order_no, datetime.now())
+    with session_factory() as session:
+        record = session.query(SettlementRecord).filter_by(order_id=settled.id).one()
+        record.result_snapshot = {
+            "items": [
+                {
+                    "payout_amount": "5.00",
+                    "rebate_amount": "0.50",
+                }
+            ]
+        }
+        session.commit()
+
+    result = ExcelExportService(session_factory, output_dir=tmp_path / "exports").export_settlement_ledger()
+
+    rows = workbook_rows(result.export_path)
+    assert rows[0][7:10] == ("中奖金额", "返水金额", "统计结算金额")
+    assert rows[1][7] == 5
+    assert rows[1][8] == 0.5
+    assert rows[1][9] == 0
 
 
 def test_operation_logs_export_headers_row_count_and_filters(session_factory, tmp_path) -> None:

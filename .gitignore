@@ -220,6 +220,12 @@ data/*.db-shm
 data/*.db-wal
 data/backups/
 exports/
+*.xlsx
+*.xls
+*.tmp.db
+*.test.db
+*.sqlite
+*.sqlite3
 .test_tmp/
 tmp/
 temp/

@@ -20,6 +20,7 @@ from schemas.order_schema import OrderSummary
 from schemas.settlement_schema import SettlementLedgerResult
 from services.log_service import LogService
 from services.order_service import OrderService
+from services.settlement_service import SettlementService
 
 DEFAULT_EXPORT_DIR = Path("exports")
 ORDER_STATUS_VOIDED = "voided"
@@ -39,6 +40,7 @@ class ExcelExportService:
         self._session_factory = session_factory
         self._order_service = OrderService(session_factory)
         self._log_service = LogService(session_factory)
+        self._settlement_service = SettlementService(session_factory)
         self._output_dir = Path(output_dir) if output_dir is not None else DEFAULT_EXPORT_DIR
 
     def export_orders(
@@ -145,6 +147,9 @@ class ExcelExportService:
             "地区",
             "状态",
             "投注总额",
+            "中奖金额",
+            "返水金额",
+            "统计结算金额",
             "结算时间",
             "开奖期号",
             "命中数量",
@@ -165,6 +170,9 @@ class ExcelExportService:
                     record.region,
                     record.order_status,
                     _decimal_to_float(record.total_amount),
+                    _decimal_to_float(_settlement_export_amount(record, "total_payout_amount")),
+                    _decimal_to_float(_settlement_export_amount(record, "total_rebate_amount")),
+                    _decimal_to_float(_settlement_export_amount(record, "statistic_net_amount")),
                     record.settled_at,
                     record.issue_number,
                     record.hit_count,
@@ -328,7 +336,7 @@ class ExcelExportService:
         offset = 0
         page_size = 200
         while True:
-            page = self._order_service.list_settlement_ledger(
+            page = self._settlement_service.list_settlement_records(
                 region=region,
                 keyword=keyword,
                 start_date=start_date,
@@ -556,6 +564,33 @@ def _dash(value: object | None) -> str:
 
 def _decimal_to_float(value: Decimal) -> float:
     return float(value)
+
+
+def _settlement_export_amount(record: SettlementLedgerResult, field_name: str) -> Decimal:
+    if _snapshot_has_export_amount(record.result_snapshot, field_name):
+        return getattr(record, field_name)
+    return Decimal("0.00")
+
+
+def _snapshot_has_export_amount(snapshot: object, field_name: str) -> bool:
+    if not isinstance(snapshot, dict):
+        return False
+    summary = snapshot.get("summary")
+    if isinstance(summary, dict) and summary.get(field_name) not in (None, ""):
+        return True
+    settlement = snapshot.get("settlement")
+    if isinstance(settlement, dict) and settlement.get(field_name) not in (None, ""):
+        return True
+    item_field = {
+        "total_payout_amount": "payout_amount",
+        "total_rebate_amount": "rebate_amount",
+    }.get(field_name)
+    items = snapshot.get("items")
+    return bool(
+        item_field
+        and isinstance(items, list)
+        and any(isinstance(item, dict) and item.get(item_field) not in (None, "") for item in items)
+    )
 
 
 def _result_from_description(description: str) -> str:

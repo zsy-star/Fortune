@@ -376,7 +376,7 @@ python scripts\check_db_migration_state.py data\fortune.db
 - 备份恢复正常。
 - 操作日志可追溯。
 - 高风险维护入口受保护且未静默执行。
-- 高风险未开放入口未误开放。
+- 仍未开放入口未误开放。
 - 产品范围外功能未误出现。
 
 ## 附录：验收记录表
