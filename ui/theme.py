@@ -12,75 +12,76 @@ def get_main_window_stylesheet() -> str:
         }
 
         QWidget#topNavBar {
-            background-color: #223142;
-            border-bottom: 1px solid #172332;
+            background-color: #FFFFFF;
+            border-bottom: 1px solid #E5E7EB;
         }
 
         QPushButton#navButton {
-            color: #dce6ef;
+            color: #1F2933;
             background-color: transparent;
             border: none;
+            border-radius: 6px;
+            padding: 7px 9px;
+            font-size: 12px;
+            font-weight: 400;
+        }
+
+        QPushButton#navButton:hover {
+            background-color: #F3F4F6;
+            color: #111827;
+        }
+
+        QPushButton#navButton:checked,
+        QPushButton#navButton[active="true"] {
+            background-color: #ECFDF5;
+            color: #16A34A;
+            font-weight: 500;
+        }
+
+        QPushButton#navMenuArrow {
+            color: #4B5563;
+            background-color: transparent;
+            border: none;
+            border-radius: 6px;
+            padding: 7px 1px;
+            font-size: 12px;
+        }
+
+        QPushButton#navMenuArrow:hover {
+            background-color: #F3F4F6;
+            color: #16A34A;
+        }
+
+        QPushButton#navActionButton {
+            color: #16A34A;
+            background-color: #FFFFFF;
+            border: 1px solid #BBF7D0;
             border-radius: 6px;
             padding: 7px 10px;
             font-size: 12px;
             font-weight: 500;
         }
 
-        QPushButton#navButton:hover {
-            background-color: #34495e;
-            color: #ffffff;
-        }
-
-        QPushButton#navButton:checked,
-        QPushButton#navButton[active="true"] {
-            background-color: #2f80ed;
-            color: #ffffff;
-            font-weight: 700;
-        }
-
-        QPushButton#navMenuArrow {
-            color: #dce6ef;
-            background-color: transparent;
-            border: none;
-            border-radius: 6px;
-            padding: 7px 2px;
-            font-size: 12px;
-        }
-
-        QPushButton#navMenuArrow:hover {
-            background-color: #34495e;
-            color: #ffffff;
-        }
-
-        QPushButton#navActionButton {
-            color: #1f2d3d;
-            background-color: #f5b041;
-            border: none;
-            border-radius: 6px;
-            padding: 7px 12px;
-            font-size: 12px;
-            font-weight: 700;
-        }
-
         QPushButton#navActionButton:hover {
-            background-color: #f8c471;
-            color: #17202a;
+            background-color: #ECFDF5;
+            border-color: #86EFAC;
+            color: #15803D;
         }
 
         QPushButton#settingsButton {
-            color: #dce6ef;
+            color: #374151;
             background-color: transparent;
-            border: 1px solid #41566c;
+            border: 1px solid #E5E7EB;
             border-radius: 6px;
-            padding: 7px 12px;
+            padding: 7px 10px;
             font-size: 12px;
-            font-weight: 600;
+            font-weight: 400;
         }
 
         QPushButton#settingsButton:hover {
-            background-color: #34495e;
-            border-color: #6f8aa3;
-            color: #ffffff;
+            background-color: #F3F4F6;
+            border-color: #D1D5DB;
+            color: #111827;
         }
 
         QLabel#pageTitle {

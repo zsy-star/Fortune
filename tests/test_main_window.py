@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QDialog, QPushButton
+from PySide6.QtWidgets import QApplication, QDialog, QPushButton, QWidget
 
 from ui.main_window import MainWindow
 from ui.pages.lianxiao_order_page import LianxiaoOrderPage
@@ -41,11 +41,24 @@ def test_main_window_creates_with_complete_top_navigation() -> None:
             "我要录单",
             "设置",
         }.issubset(nav_texts(window))
-        assert "background-color: #223142" in window.styleSheet()
-        assert "background-color: #f5b041" in window.styleSheet()
-        assert "background: #F5F7FA" in window.styleSheet()
-        assert "QTableWidget" in window.styleSheet()
-        assert "QHeaderView::section" in window.styleSheet()
+        stylesheet = window.styleSheet()
+        assert "QWidget#topNavBar" in stylesheet
+        assert "background-color: #FFFFFF" in stylesheet
+        assert "border-bottom: 1px solid #E5E7EB" in stylesheet
+        assert "QPushButton#navButton[active=\"true\"]" in stylesheet
+        assert "color: #16A34A" in stylesheet
+        assert "background-color: #ECFDF5" in stylesheet
+        assert "QPushButton#navActionButton" in stylesheet
+        assert "border: 1px solid #BBF7D0" in stylesheet
+        assert "background-color: #223142" not in stylesheet
+        assert "background-color: #2f80ed" not in stylesheet
+        assert "background-color: #f5b041" not in stylesheet
+        assert "background: #F5F7FA" in stylesheet
+        assert "QTableWidget" in stylesheet
+        assert "QHeaderView::section" in stylesheet
+        top_nav = window.findChild(QWidget, "topNavBar")
+        assert top_nav is not None
+        assert top_nav.minimumSizeHint().width() <= 1280
     finally:
         window.close()
         window.deleteLater()
