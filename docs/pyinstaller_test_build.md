@@ -4,28 +4,34 @@
 
 ## 打包前准备
 
-1. 使用独立打包机或虚拟环境，**不要**在含真实业务数据的开发目录直接发包。
+1. 使用独立打包机或 clean venv，**不要**在含真实业务数据的开发目录直接发包。
 2. 确认当前分支与提交已通过 CI / 本地测试（411+ pytest）。
 3. 阅读 [打包前自检清单](pre_packaging_checklist.md) 与 [发布目录结构](test_release_structure.md)。
 4. 确认 `data/fortune.db`、`data/backups/`、`exports/`、`.xlsx`、`.pytest_tmp_cursor*` 不会进入 spec 的 `datas`。
+5. 不建议直接使用 Anaconda 环境打包；Anaconda 往往会收集 IPython、jedi、sphinx、black、MKL 等无关依赖，显著增大发布包。
 
 ## 推荐 Python 版本
 
 - Python **3.10+**（与开发环境一致，当前测试环境 3.13 亦可）
 - 64 位 Windows
 
-## 依赖安装
+## 推荐 clean venv 流程
 
-运行依赖（应用本身）：
+在项目根目录执行：
 
 ```powershell
-pip install -r requirements.txt
+python -m venv .venv_release
+.venv_release\Scripts\activate
+python -m pip install --upgrade pip
+pip install -r requirements-dev.txt
 ```
 
-打包工具（**仅打包机需要**，不写入 `requirements.txt`）：
+`requirements.txt` 只保留运行依赖；`requirements-dev.txt` 额外包含测试和打包依赖，如 pytest、pyinstaller、requests。
+
+## 打包前测试
 
 ```powershell
-pip install pyinstaller
+python -m pytest -q
 ```
 
 ## 打包前只读自检
@@ -93,10 +99,14 @@ python scripts/check_test_release.py --release-dir dist/Fortune
 
 | 路径 | 原因 |
 |------|------|
+| `.venv_release/` | 本机打包环境 |
+| `build/` | PyInstaller 构建缓存 |
+| `dist/` | 发布产物，不进入源码提交 |
 | `data/fortune.db` | 真实业务库 |
 | `data/backups/*.db` | 私人备份 |
 | `exports/*.xlsx` | 测试导出 |
 | 根目录 `*.xlsx` | 测试导出 |
+| 根目录 `*.db` | 测试或业务数据库 |
 | `.pytest_tmp*` | 测试临时目录 |
 
 ## 如何处理 data/fortune.db

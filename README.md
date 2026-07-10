@@ -113,9 +113,20 @@ data/fortune.db
 - [小范围单机试用说明](docs/trial_release_notes.md)
 - [PyInstaller 发布包说明](docs/pyinstaller_test_build.md)
 - [发布目录结构说明](docs/test_release_structure.md)
+- 推荐使用 clean venv 打包，不要直接使用 Anaconda 等包含大量开发包的环境：
+  1. `python -m venv .venv_release`
+  2. `.venv_release\Scripts\activate`
+  3. `python -m pip install --upgrade pip`
+  4. `pip install -r requirements-dev.txt`
+  5. `python -m pytest -q`
+  6. `python scripts/pre_release_check.py --project-root .`
+  7. `python scripts/build_test_release.py --project-root . --dry-run`
+  8. `python scripts/build_test_release.py --project-root . --build`
+  9. `python scripts/check_test_release.py --release-dir dist\Fortune`
 - 打包前只读自检：`python scripts/pre_release_check.py --project-root .`
 - 发布包构建预演：`python scripts/build_test_release.py --project-root . --dry-run`
 - 发布目录检查：`python scripts/check_test_release.py --release-dir dist/Fortune`
+- 不要提交 `.venv_release/`、`build/`、`dist/`、`data/fortune.db`、`data/backups/`、`exports/`、`*.xlsx`、`*.db`。
 
 ## 后续规划
 

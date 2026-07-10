@@ -46,11 +46,22 @@
 
 ## 二、依赖与环境
 
-### 6. 确认 `requirements.txt` 依赖完整
+### 6. 确认 clean venv 与依赖文件完整
 
-- [ ] `requirements.txt` 存在且包含：PySide6、SQLAlchemy、matplotlib、alembic、pytest、httpx、openpyxl
-- [ ] 打包所用虚拟环境与 `requirements.txt` 一致
+- [ ] 使用 clean venv 打包，不直接使用 Anaconda 等包含大量开发工具包的环境
+- [ ] `requirements.txt` 存在且包含运行依赖：PySide6、SQLAlchemy、matplotlib、alembic、httpx、openpyxl
+- [ ] `requirements-dev.txt` 存在且包含：`-r requirements.txt`、pytest、pyinstaller、requests
+- [ ] 打包所用虚拟环境通过 `pip install -r requirements-dev.txt` 安装
 - [ ] 无遗漏隐式依赖（如 sqlite3 为标准库，无需列出）
+
+推荐打包环境准备命令：
+
+```powershell
+python -m venv .venv_release
+.venv_release\Scripts\activate
+python -m pip install --upgrade pip
+pip install -r requirements-dev.txt
+```
 
 ### 7. 确认 openpyxl 可用
 
@@ -114,10 +125,12 @@
 
 ## 五、发布前自动化自检
 
-执行只读脚本（不修改任何文件）：
+执行测试和只读脚本（不修改任何业务数据）：
 
 ```powershell
+python -m pytest -q
 python scripts/pre_release_check.py --project-root .
+python scripts/build_test_release.py --project-root . --dry-run
 ```
 
 - [ ] 无 **失败** 项（脚本退出码为 0，或仅有警告）
@@ -127,10 +140,14 @@ python scripts/pre_release_check.py --project-root .
 
 ## 六、打包后抽查
 
+- [ ] 执行正式构建：`python scripts/build_test_release.py --project-root . --build`
+- [ ] 执行发布目录检查：`python scripts/check_test_release.py --release-dir dist\Fortune`
 - [ ] 在干净目录解压/安装，首次启动成功
 - [ ] 安装目录内无 `fortune.db` 真实数据、无 `backups/*.db`、无测试 xlsx
 - [ ] 版本号或构建标识可识别（便于试用反馈）
 - [ ] 附带 `docs/manual_test_script.md` 或精简版试用说明
+
+不得提交 `.venv_release/`、`build/`、`dist/`、`data/fortune.db`、`data/backups/`、`exports/`、`*.xlsx`、`*.db`。
 
 ---
 
