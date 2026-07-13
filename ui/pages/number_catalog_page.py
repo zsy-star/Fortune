@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from html import escape
+
 from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -15,6 +16,29 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from domain.number_catalog_data import (
+    COLORED_ZODIAC_GROUPS,
+    FIVE_ELEMENT_TEXT_COLORS,
+    FIXED_NUMBER_GROUP_SECTIONS,
+    NINE_STAR_GROUPS,
+    REFERENCE_FIVE_ELEMENT_NUMBERS_2026,
+    REFERENCE_TEXT_SECTIONS,
+    WAVE_TEXT_COLORS,
+    ZODIAC_ATTRIBUTES,
+    composite_size_reference_groups,
+    digit_sum_groups,
+    half_wave_groups,
+    head_groups,
+    head_parity_groups,
+    middle_edge_groups,
+    modulo_groups,
+    size_groups,
+    size_parity_groups,
+    sum_parity_groups,
+    sum_tail_groups,
+    tail_size_groups,
+)
+from domain.color_rules import WAVE_NUMBERS
 from domain.zodiac_config import (
     MAX_ZODIAC_YEAR,
     MIN_ZODIAC_YEAR,
@@ -22,116 +46,20 @@ from domain.zodiac_config import (
     get_zodiac_number_map,
 )
 
-_RED = {1, 2, 7, 8, 12, 13, 18, 19, 23, 24, 29, 30, 34, 35, 40, 45, 46}
-_BLUE = {3, 4, 9, 10, 14, 15, 20, 25, 26, 31, 36, 37, 41, 42, 47, 48}
-_GREEN = {n for n in range(1, 50) if n not in _RED and n not in _BLUE}
 
-_WUXING = (
-    ("金", (3, 4, 11, 12, 25, 26, 33, 34, 41, 42)),
-    ("木", (7, 8, 15, 16, 23, 24, 37, 38, 45, 46)),
-    ("水", (13, 14, 21, 22, 29, 30, 43, 44)),
-    ("火", (1, 2, 9, 10, 17, 18, 31, 32, 39, 40, 47, 48)),
-    ("土", (5, 6, 19, 20, 27, 28, 35, 36, 49)),
-)
-
-_ZODIAC_ATTR = (
-    ("家禽", "牛、马、羊、鸡、狗、猪"),
-    ("野兽", "鼠、虎、兔、龙、蛇、猴"),
-    ("吉美", "兔、龙、蛇、马、羊、鸡"),
-    ("凶丑", "鼠、牛、虎、猴、狗、猪"),
-    ("阴性", "鼠、龙、蛇、马、狗、猪"),
-    ("阳性", "牛、虎、兔、羊、猴、鸡"),
-    ("天肖", "兔、马、猴、猪、牛、龙"),
-    ("地肖", "蛇、羊、鸡、狗、鼠、虎"),
-    ("单笔", "鼠、龙、马、蛇、鸡、猪"),
-    ("双笔", "虎、猴、狗、兔、羊、牛"),
-    ("日肖", "兔、龙、蛇、马、羊、猴"),
-    ("夜肖", "鼠、牛、虎、鸡、狗、猪"),
-    ("前肖", "鼠、牛、虎、兔、龙、蛇"),
-    ("后肖", "马、羊、猴、鸡、狗、猪"),
-    ("大肖", "牛、虎、马、羊、狗、猪"),
-    ("小肖", "鼠、兔、龙、蛇、猴、鸡"),
-    ("左边肖", "鼠、牛、龙、蛇、猴、鸡"),
-    ("右边肖", "虎、兔、马、羊、狗、猪"),
-)
+def _ordered_numbers(numbers: tuple[int, ...] | set[int]) -> tuple[int, ...]:
+    return tuple(sorted(numbers)) if isinstance(numbers, set) else tuple(numbers)
 
 
-def _fmt_nums(nums: tuple[int, ...] | set[int]) -> str:
-    return " ".join(f"{n:02d}" for n in sorted(nums))
+def _fmt_nums(numbers: tuple[int, ...] | set[int], separator: str = " ") -> str:
+    return separator.join(f"{number:02d}" for number in _ordered_numbers(numbers))
 
 
-def _half_wave(name: str, nums: set[int]) -> str:
-    return f"{name} (共{len(nums)}个) : {_fmt_nums(nums).replace(' ', '-')}"
-
-
-_WAVE_COLORS = {
-    "红": "#c0392b",
-    "蓝": "#2471a3",
-    "绿": "#1e8449",
-}
-
-
-def _colorize(nums: set[int] | tuple[int, ...], color: str, *, font_size: int = 0) -> str:
-    text = " ".join(f"{n:02d}" for n in sorted(nums))
+def _colorize(
+    numbers: tuple[int, ...] | set[int], color: str, *, font_size: int = 0, separator: str = " "
+) -> str:
     extra = f"font-size:{font_size}px;font-weight:600;" if font_size else ""
-    return f'<span style="color:{color};{extra}">{text}</span>'
-
-
-def _build_catalog_text(year: int | None = None) -> str:
-    selected_year = year or get_default_zodiac_year()
-    lines: list[str] = [
-        "静态号码参考表",
-        "生肖号码按所选开奖年份显示，请以实际开奖年份为准。",
-        f"当前生肖年份：{selected_year}",
-        "",
-    ]
-
-    lines.append("十二生肖")
-    for animal, nums in get_zodiac_number_map(selected_year).items():
-        lines.append(f"({animal}: {' '.join(nums)})")
-    lines.append("")
-
-    lines.append("五行")
-    for element, nums in _WUXING:
-        lines.append(f"{element}: {_fmt_nums(nums)}")
-    lines.append("")
-
-    lines.append("波色")
-    lines.append(f"红波: {_fmt_nums(_RED)}")
-    lines.append(f"蓝波: {_fmt_nums(_BLUE)}")
-    lines.append(f"绿波: {_fmt_nums(_GREEN)}")
-    lines.append("")
-
-    lines.append("半波 (固定)")
-    red_d = {n for n in _RED if n % 2 == 0}
-    red_s = {n for n in _RED if n % 2 == 1}
-    blue_d = {n for n in _BLUE if n % 2 == 0}
-    blue_s = {n for n in _BLUE if n % 2 == 1}
-    green_d = {n for n in _GREEN if n % 2 == 0}
-    green_s = {n for n in _GREEN if n % 2 == 1}
-    for label, group in (
-        ("红双", red_d),
-        ("红单", red_s),
-        ("蓝双", blue_d),
-        ("蓝单", blue_s),
-        ("绿双", green_d),
-        ("绿单", green_s),
-    ):
-        lines.append(_half_wave(label, group))
-    lines.append("")
-
-    he_odd = [n for n in range(1, 50) if ((n // 10) + (n % 10)) % 2 == 1]
-    he_even = [n for n in range(1, 50) if ((n // 10) + (n % 10)) % 2 == 0]
-    lines.append("合数单/双")
-    lines.append(f"合数单: {_fmt_nums(tuple(he_odd))}")
-    lines.append(f"合数双: {_fmt_nums(tuple(he_even))}")
-    lines.append("")
-
-    lines.append("生肖属性")
-    for title, value in _ZODIAC_ATTR:
-        lines.append(f"{title}: {value}")
-
-    return "\n".join(lines)
+    return f'<span style="color:{color};{extra}">{_fmt_nums(numbers, separator)}</span>'
 
 
 def _section(title: str) -> str:
@@ -157,13 +85,31 @@ _ZX_BG = [
     "#f5f0fa",  # light purple
 ]
 
-_WX_COLORS = {
-    "金": "#b8860b",
-    "木": "#228b22",
-    "水": "#1a5276",
-    "火": "#c0392b",
-    "土": "#8b7355",
-}
+def _render_number_groups(
+    title: str,
+    groups: dict[str, tuple[int, ...]] | tuple[tuple[str, tuple[int, ...]], ...],
+    *,
+    colors: dict[str, str] | None = None,
+    show_counts: bool = False,
+    separator: str = " ",
+) -> str:
+    items = groups.items() if isinstance(groups, dict) else groups
+    rows: list[str] = []
+    for label, numbers in items:
+        color = (colors or {}).get(label, "#1F2937")
+        count = f'<span style="font-size:13px;color:#6b7280;">（共{len(numbers)}个）</span>' if show_counts else ""
+        rows.append(
+            '<div style="margin:5px 0;">'
+            f'<b style="font-size:14px;color:{color};">{escape(label)}</b>{count}&nbsp;&nbsp;'
+            f'{_colorize(numbers, color, font_size=15, separator=separator)}'
+            "</div>"
+        )
+    return _card(_section(title) + "".join(rows))
+
+
+def _render_text_section(title: str, lines: tuple[str, ...]) -> str:
+    body = "".join(f'<div style="margin:4px 0;color:#374151;">{escape(line)}</div>' for line in lines)
+    return _card(_section(title) + body)
 
 
 def _build_catalog_html(year: int | None = None) -> str:
@@ -171,9 +117,9 @@ def _build_catalog_html(year: int | None = None) -> str:
     parts: list[str] = [
         _card(
             '<h2 style="font-size:18px;font-weight:bold;color:#1a5276;'
-            'margin:0 0 6px 0;">静态号码参考表</h2>'
+            'margin:0 0 6px 0;">号码大全 / 静态号码参考表</h2>'
             '<div style="font-size:14px;color:#5d6d7e;line-height:1.6;">'
-            "生肖号码按所选开奖年份显示，请以实际开奖年份为准。<br>"
+            "资料基准：2026最新；生肖号码按所选开奖年份显示，请以实际开奖年份为准。<br>"
             f"当前生肖年份：{selected_year}"
             "</div>"
         )
@@ -201,14 +147,14 @@ def _build_catalog_html(year: int | None = None) -> str:
     )
     parts.append(_card(_section("十二生肖") + zx_table))
 
-    # ---- 五行 ----
+    # The supplied five-element table is an explicitly static 2026 reference.
     wx_rows: list[str] = []
-    for element, nums in _WUXING:
-        ec = _WX_COLORS.get(element, "#333")
+    for element, nums in REFERENCE_FIVE_ELEMENT_NUMBERS_2026.items():
+        ec = FIVE_ELEMENT_TEXT_COLORS[element]
         wx_rows.append(
             f'<tr>'
             f'<td style="font-weight:bold;color:{ec};width:40px;padding:4px 8px;font-size:15px;">{element}</td>'
-            f'<td style="font-size:14px;color:#555;padding:4px 8px;">{_fmt_nums(nums)}</td>'
+            f'<td style="font-size:14px;color:{ec};padding:4px 8px;">{_fmt_nums(nums)}</td>'
             f'</tr>'
         )
     wx_table = (
@@ -216,67 +162,22 @@ def _build_catalog_html(year: int | None = None) -> str:
         + "".join(wx_rows)
         + "</table>"
     )
-    parts.append(_card(_section("五行") + wx_table))
+    parts.append(_card(_section("五行（2026静态参考）") + wx_table))
 
-    # ---- 波色 ----
-    wave_rows = (
-        f'<div style="margin:6px 0;">'
-        f'<b style="font-size:15px;">红波</b>&nbsp;&nbsp;'
-        f'{_colorize(_RED, _WAVE_COLORS["红"], font_size=17)}'
-        f'</div>'
-        f'<div style="margin:6px 0;">'
-        f'<b style="font-size:15px;">蓝波</b>&nbsp;&nbsp;'
-        f'{_colorize(_BLUE, _WAVE_COLORS["蓝"], font_size=17)}'
-        f'</div>'
-        f'<div style="margin:6px 0;">'
-        f'<b style="font-size:15px;">绿波</b>&nbsp;&nbsp;'
-        f'{_colorize(_GREEN, _WAVE_COLORS["绿"], font_size=17)}'
-        f'</div>'
-    )
-    parts.append(_card(_section("波色") + wave_rows))
+    parts.append(_render_number_groups("波色", dict(WAVE_NUMBERS), colors=WAVE_TEXT_COLORS))
 
-    # ---- 半波 ----
-    red_d = {n for n in _RED if n % 2 == 0}
-    red_s = {n for n in _RED if n % 2 == 1}
-    blue_d = {n for n in _BLUE if n % 2 == 0}
-    blue_s = {n for n in _BLUE if n % 2 == 1}
-    green_d = {n for n in _GREEN if n % 2 == 0}
-    green_s = {n for n in _GREEN if n % 2 == 1}
-
-    half_rows: list[str] = []
-    for label, group, ck in (
-        ("红双", red_d, "红"), ("红单", red_s, "红"),
-        ("蓝双", blue_d, "蓝"), ("蓝单", blue_s, "蓝"),
-        ("绿双", green_d, "绿"), ("绿单", green_s, "绿"),
-    ):
-        color = _WAVE_COLORS[ck]
-        half_rows.append(
-            f'<div style="margin:4px 0;">'
-            f'<b style="font-size:14px;">{label}</b> '
-            f'<span style="font-size:13px;color:#888;">({len(group)}个)</span>&nbsp;'
-            f'{_colorize(group, color, font_size=16)}'
-            f'</div>'
+    half_colors = {
+        label: WAVE_TEXT_COLORS[f"{label[0]}波"] for label in half_wave_groups()
+    }
+    parts.append(
+        _render_number_groups(
+            "半波（固定不变）", half_wave_groups(), colors=half_colors, show_counts=True, separator="-"
         )
-    parts.append(_card(_section("半波（固定）") + "".join(half_rows)))
-
-    # ---- 合数单/双 ----
-    he_odd = [n for n in range(1, 50) if ((n // 10) + (n % 10)) % 2 == 1]
-    he_even = [n for n in range(1, 50) if ((n // 10) + (n % 10)) % 2 == 0]
-    he_html = (
-        f'<div style="margin:4px 0;">'
-        f'<b style="font-size:14px;">合数单</b>&nbsp;&nbsp;'
-        f'<span style="font-size:15px;color:#555;">{_fmt_nums(tuple(he_odd))}</span>'
-        f'</div>'
-        f'<div style="margin:4px 0;">'
-        f'<b style="font-size:14px;">合数双</b>&nbsp;&nbsp;'
-        f'<span style="font-size:15px;color:#555;">{_fmt_nums(tuple(he_even))}</span>'
-        f'</div>'
     )
-    parts.append(_card(_section("合数单/双") + he_html))
+    parts.append(_render_number_groups("合数单 / 合数双", sum_parity_groups()))
 
-    # ---- 生肖属性 ----
     attr_rows: list[str] = []
-    for idx, (title, value) in enumerate(_ZODIAC_ATTR):
+    for idx, (title, value) in enumerate(ZODIAC_ATTRIBUTES):
         bg = "#f9fbfc" if idx % 2 == 0 else "#ffffff"
         attr_rows.append(
             f'<tr style="background:{bg};">'
@@ -289,13 +190,73 @@ def _build_catalog_html(year: int | None = None) -> str:
         + "".join(attr_rows)
         + "</table>"
     )
-    parts.append(_card(_section("生肖属性") + attr_table))
+    color_rows = "".join(
+        '<div style="margin:6px 10px;">'
+        f'<b style="color:{color};">{label}</b>&nbsp;&nbsp;'
+        f'<span style="font-weight:600;color:{color};">{value}</span>'
+        "</div>"
+        for label, value, color in COLORED_ZODIAC_GROUPS
+    )
+    parts.append(_card(_section("生肖属性") + attr_table + color_rows))
+
+    size_middle_groups = {
+        "大数": size_groups()["大"],
+        "小数": size_groups()["小"],
+        **middle_edge_groups(),
+    }
+    parts.append(_render_number_groups("大小中边数", size_middle_groups, show_counts=True, separator="-"))
+
+    text_sections = dict(REFERENCE_TEXT_SECTIONS)
+    for section_title in ("生肖的五行属性", "生肖身份分类", "月份（民间参考）"):
+        parts.append(_render_text_section(section_title, text_sections[section_title]))
+
+    parts.append(_render_number_groups("大小（固定不变）", size_groups(), show_counts=True, separator="-"))
+    parts.append(_render_number_groups("合数（固定不变）", digit_sum_groups(), separator="-"))
+    parts.append(_render_number_groups("头数（固定不变）", head_groups()))
+
+    for title, groups in FIXED_NUMBER_GROUP_SECTIONS[:2]:
+        parts.append(_render_number_groups(title, groups, separator="-"))
+
+    parts.append(
+        _render_number_groups(
+            "合大 & 合小（附件静态参考）", composite_size_reference_groups(), separator="-"
+        )
+    )
+    parts.append(_render_number_groups("尾大 & 尾小（固定不变）", tail_size_groups(), separator="-"))
+    parts.append(_render_number_groups("半单双（固定不变）", size_parity_groups(), separator="-"))
+    parts.append(_render_number_groups("合尾（固定不变）", sum_tail_groups(), separator="-"))
+    parts.append(_render_number_groups("头数单与双（固定不变）", head_parity_groups(), separator="-"))
+
+    modulus_names = {3: "三", 4: "四", 5: "五", 6: "六", 7: "七"}
+    for modulus, name in modulus_names.items():
+        parts.append(_render_number_groups(f"模{name}数（固定不变）", modulo_groups(modulus), separator="-"))
+
+    for section_title, lines in REFERENCE_TEXT_SECTIONS[3:]:
+        parts.append(_render_text_section(section_title, lines))
+
+    for title, groups in FIXED_NUMBER_GROUP_SECTIONS[2:]:
+        parts.append(_render_number_groups(title, groups))
+
+    parts.append(_render_number_groups("九星号码（静态参考）", NINE_STAR_GROUPS))
+    parts.append(
+        _card(
+            '<div style="font-size:14px;color:#5d6d7e;text-align:center;padding:6px 0;">'
+            "本页为静态号码参考资料；实际录单、结算支持范围以系统提示为准。"
+            "</div>"
+        )
+    )
 
     return (
         '<div style="font-size:15px;line-height:1.7;color:#2c3e50;">'
         + "".join(parts)
         + "</div>"
     )
+
+
+def _build_catalog_text(year: int | None = None) -> str:
+    document = QTextDocument()
+    document.setHtml(_build_catalog_html(year))
+    return document.toPlainText()
 
 
 class NumberCatalogPage(QWidget):
@@ -308,7 +269,11 @@ class NumberCatalogPage(QWidget):
         root.setSpacing(10)
 
         root.addLayout(self._build_search_bar())
+        self._search_status = QLabel("")
+        self._search_status.setObjectName("searchStatusLabel")
+        root.addWidget(self._search_status)
         self._content = QTextEdit()
+        self._content.setObjectName("catalogContent")
         self._content.setReadOnly(True)
         self._content.setHtml(_build_catalog_html(self._zodiac_year))
         root.addWidget(self._content, stretch=1)
@@ -354,10 +319,12 @@ class NumberCatalogPage(QWidget):
         self._year_label.setText(f"当前生肖年份：{year}")
         self._content.setHtml(_build_catalog_html(year))
         self._content.setExtraSelections([])
+        self._search_status.clear()
 
     def _search_next(self, backward: bool = False) -> None:
         keyword = self._search_edit.text().strip()
         if not keyword:
+            self._search_status.setText("请输入要查找的内容。")
             return
 
         flags = QTextDocument.FindFlag(0)
@@ -371,8 +338,14 @@ class NumberCatalogPage(QWidget):
                 QTextCursor.MoveOperation.End if backward else QTextCursor.MoveOperation.Start
             )
             self._content.setTextCursor(cursor)
-            self._content.find(keyword, flags)
+            found = self._content.find(keyword, flags)
 
+        if not found:
+            self._content.setExtraSelections([])
+            self._search_status.setText(f"未找到“{keyword}”。")
+            return
+
+        self._search_status.clear()
         self._apply_extra_selection()
 
     def _apply_extra_selection(self) -> None:
@@ -410,6 +383,11 @@ class NumberCatalogPage(QWidget):
                 border-radius: 18px;
                 background-color: #ffffff;
                 font-size: 14px;
+            }
+            QLabel#searchStatusLabel {
+                color: #B42318;
+                font-size: 13px;
+                min-height: 16px;
             }
             QPushButton {
                 padding: 7px 16px;
