@@ -82,10 +82,10 @@ def test_multi_zodiac_hits_when_special_zodiac_is_selected(session_factory) -> N
     assert item.is_winner is True
     assert item.draw_special_number == "01"
     assert item.draw_special_zodiac == "马"
-    assert item.selected_zodiacs == ("马", "蛇")
+    assert item.selected_zodiacs == ("蛇", "马")
     assert item.matched_zodiac == "马"
     assert "开奖" not in item.reason or "特码 01" in item.reason
-    assert "投注生肖列表：马、蛇" in item.reason
+    assert "投注生肖列表：蛇、马" in item.reason
     assert "命中生肖：马" in item.reason
 
 
@@ -133,8 +133,8 @@ def test_lianxiao_hits_when_special_zodiac_is_selected(session_factory) -> None:
     assert preview.winning_items == 1
     assert preview.unsupported_items == 0
     assert item.is_winner is True
-    assert item.selection == "马,蛇"
-    assert item.selected_zodiacs == ("马", "蛇")
+    assert item.selection == "蛇,马"
+    assert item.selected_zodiacs == ("蛇", "马")
     assert item.matched_zodiac == "马"
 
 
@@ -220,12 +220,12 @@ def test_complex_zodiac_commit_writes_snapshot_with_zero_payout_when_odds_missin
     assert snapshot["draw"]["special_zodiac"] == "马"
     item_snapshot = snapshot["items"][0]
     assert item_snapshot["bet_type"] == "多生肖"
-    assert item_snapshot["selection"] == "马,蛇"
+    assert item_snapshot["selection"] == "蛇,马"
     assert item_snapshot["amount"] == "15.00"
     assert item_snapshot["is_winner"] is True
     assert item_snapshot["draw_special_number"] == "01"
     assert item_snapshot["draw_special_zodiac"] == "马"
-    assert item_snapshot["selected_zodiacs"] == ["马", "蛇"]
+    assert item_snapshot["selected_zodiacs"] == ["蛇", "马"]
     assert item_snapshot["matched_zodiac"] == "马"
     assert snapshot["settlement"]["total_payout_amount"] == "0.00"
     assert item_snapshot["payout_amount"] == "0.00"

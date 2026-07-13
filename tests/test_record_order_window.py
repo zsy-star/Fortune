@@ -200,6 +200,40 @@ class TestInputParsing:
         r = window._parsed_results[0]
         assert r.region == "香港"
 
+    def test_ranked_lianxiao_enters_table_as_one_group(self, window):
+        window._input_text.setPlainText("四连肖猪牛马虎 70")
+        window._do_parse()
+        window._on_add_result()
+
+        assert len(window._parsed_results) == 1
+        assert window._parsed_results[0].total == 70
+        assert window._order_table.rowCount() == 1
+        assert window._order_table.item(0, 1).text() == "连肖"
+        assert window._order_table.item(0, 2).text() == "牛,虎,马,猪"
+        assert window._order_table.item(0, 5).text() == "70"
+
+    def test_each_package_multi_zodiac_enters_four_supported_rows(self, window):
+        window._input_text.setPlainText("牛兔马猪各包10")
+        window._do_parse()
+        window._on_add_result()
+
+        assert window._order_table.rowCount() == 4
+        assert [window._order_table.item(row, 1).text() for row in range(4)] == ["平特一肖"] * 4
+        assert [window._order_table.item(row, 2).text() for row in range(4)] == ["牛", "兔", "马", "猪"]
+        assert [window._order_table.item(row, 5).text() for row in range(4)] == ["10"] * 4
+        assert [window._order_table.item(row, 10).text() for row in range(4)] == ["支持"] * 4
+
+    def test_ten_non_hit_enters_table_as_one_supported_group(self, window):
+        window._input_text.setPlainText("6/18/31/43/22/10/03/15/01/13十不中各4000")
+        window._do_parse()
+        window._on_add_result()
+
+        assert window._order_table.rowCount() == 1
+        assert window._order_table.item(0, 1).text() == "N不中"
+        assert window._order_table.item(0, 2).text() == "01,03,06,10,13,15,18,22,31,43"
+        assert window._order_table.item(0, 5).text() == "4000"
+        assert window._order_table.item(0, 10).text() == "支持"
+
 
 class TestAdvancedOptionsFirstStage:
     def _checkboxes(self, window):

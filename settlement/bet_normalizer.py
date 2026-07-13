@@ -8,8 +8,19 @@ from itertools import combinations
 
 from domain.color_rules import FIVE_ELEMENT_NUMBERS, WAVE_NUMBERS
 from domain.exceptions import InvalidNumberError
+from domain.non_hit_rules import (
+    NON_HIT_MAX_COUNT,
+    NON_HIT_MIN_COUNT,
+    format_non_hit_count_chinese,
+    parse_non_hit_count_label,
+)
 from domain.number_rules import normalize_number
-from domain.zodiac_config import get_default_zodiac_year, get_zodiac_number_map, validate_zodiac_year
+from domain.zodiac_config import (
+    ZODIAC_SEQUENCE,
+    get_default_zodiac_year,
+    get_zodiac_number_map,
+    validate_zodiac_year,
+)
 from settlement.exceptions import InvalidSelectionError, UnsupportedBetTypeError
 
 SPECIAL_NUMBER = "special_number"
@@ -155,10 +166,19 @@ class BetTypeNormalizer:
             raise UnsupportedBetTypeError(f"暂不支持玩法：{original_bet_type}")
 
         normalized_type = self._normalize_type(original_bet_type, raw_selection)
-        normalized_selection = self._normalize_selection(normalized_type, raw_selection, note=note)
+        normalized_selection = self._normalize_selection(
+            normalized_type,
+            raw_selection,
+            original_bet_type=original_bet_type,
+            note=note,
+        )
         return NormalizedBet(original_bet_type, normalized_type, normalized_selection)
 
     def _normalize_type(self, bet_type: str, selection: str) -> str:
+        if re.fullmatch(r"(?:[Nn]|\d+|[零〇一二两三四五六七八九十]+)?不中", bet_type):
+            return NON_HIT_NUMBER
+        if bet_type == "平特一肖" and self._is_zodiac(selection):
+            return SPECIAL_ZODIAC
         for normalized_type, aliases in BET_TYPE_ALIASES.items():
             if bet_type in aliases:
                 return self._infer_special_type(selection) if normalized_type == SPECIAL_NUMBER else normalized_type
@@ -188,7 +208,14 @@ class BetTypeNormalizer:
 
         raise UnsupportedBetTypeError(f"未知或未实现玩法：{bet_type}")
 
-    def _normalize_selection(self, normalized_type: str, selection: str, *, note: str | None = None) -> str:
+    def _normalize_selection(
+        self,
+        normalized_type: str,
+        selection: str,
+        *,
+        original_bet_type: str,
+        note: str | None = None,
+    ) -> str:
         if normalized_type == SPECIAL_NUMBER:
             return self._normalize_number_selection(selection)
         if normalized_type == SPECIAL_ZODIAC:
@@ -236,7 +263,7 @@ class BetTypeNormalizer:
         if normalized_type == LINKED_TAIL:
             return self._normalize_tail_group_selection(selection)
         if normalized_type == NON_HIT_NUMBER:
-            return self._normalize_number_group_selection(selection)
+            return self._normalize_non_hit_selection(selection, original_bet_type)
         if normalized_type == SIX_SPECIAL_ZODIAC:
             return self._normalize_six_special_zodiac_selection(selection)
         if normalized_type == REGULAR_NUMBER:
@@ -291,6 +318,45 @@ class BetTypeNormalizer:
         except InvalidNumberError as exc:
             raise InvalidSelectionError(f"无效号码：{selection}") from exc
 
+    def _normalize_non_hit_selection(self, selection: str, bet_type: str) -> str:
+        tokens = [
+            token
+            for token in re.split(r"[\s,，、\./|+-]+", selection.strip())
+            if token
+        ]
+        if not tokens:
+            raise InvalidSelectionError("N不中号码列表不能为空")
+        try:
+            normalized_numbers = [normalize_number(number) for number in tokens]
+        except InvalidNumberError as exc:
+            raise InvalidSelectionError(f"N不中号码必须为01-49：{selection}") from exc
+
+        duplicates = sorted(
+            {number for number in normalized_numbers if normalized_numbers.count(number) > 1},
+            key=int,
+        )
+        if duplicates:
+            raise InvalidSelectionError(f"N不中号码重复：{','.join(duplicates)}")
+
+        try:
+            expected_count = parse_non_hit_count_label(bet_type)
+        except ValueError as exc:
+            raise InvalidSelectionError(str(exc)) from exc
+        actual_count = len(normalized_numbers)
+        effective_count = expected_count if expected_count is not None else actual_count
+        if effective_count < NON_HIT_MIN_COUNT or effective_count > NON_HIT_MAX_COUNT:
+            raise InvalidSelectionError(
+                f"N不中选择号码数量必须为{NON_HIT_MIN_COUNT}-{NON_HIT_MAX_COUNT}个，"
+                f"实际{actual_count}个"
+            )
+        if actual_count != effective_count:
+            label = format_non_hit_count_chinese(effective_count)
+            raise InvalidSelectionError(
+                f"N不中阶数与号码数量不匹配：{label}不中需要{effective_count}个不同号码，"
+                f"实际{actual_count}个"
+            )
+        return ",".join(sorted(normalized_numbers, key=int))
+
     def _split_numbers(self, selection: str) -> list[str]:
         tokens = [token for token in re.split(r"[\s,，、/|+-]+", selection.strip()) if token]
         if not tokens:
@@ -309,9 +375,15 @@ class BetTypeNormalizer:
         if invalid:
             raise InvalidSelectionError(f"无法解析生肖列表：{selection}")
         unique_tokens = list(dict.fromkeys(tokens))
+        if len(unique_tokens) != len(tokens):
+            duplicates = sorted(
+                {token for token in tokens if tokens.count(token) > 1},
+                key=ZODIAC_SEQUENCE.index,
+            )
+            raise InvalidSelectionError(f"连肖生肖重复：{','.join(duplicates)}")
         if len(unique_tokens) < 2:
             raise InvalidSelectionError(f"生肖列表至少需要 2 个不同生肖：{selection}")
-        return ",".join(unique_tokens)
+        return ",".join(sorted(unique_tokens, key=ZODIAC_SEQUENCE.index))
 
     def _normalize_six_special_zodiac_selection(self, selection: str) -> str:
         zodiacs = set(get_zodiac_number_map(self._zodiac_year))

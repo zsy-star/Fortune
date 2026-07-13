@@ -368,6 +368,56 @@ def convert_parse_result(
             errors.append(preview.error or "平特一肖映射失败")
         return previews, order_items, warnings, errors
 
+    if category == "多生肖" and result.zodiac_groups and not result.zodiac_number_mode:
+        computed_total = per_amount * len(result.zodiac_groups)
+        if computed_total != expected_total:
+            message = (
+                f"金额不一致：解析器 total={expected_total}，"
+                f"按每生肖 {per_amount} × {len(result.zodiac_groups)} 计算为 {computed_total}"
+            )
+            previews.append(
+                IntakeItemPreview(
+                    source_line=source_line,
+                    original_bet_type=category,
+                    normalized_bet_type=None,
+                    original_selection=",".join(name for name, _ in result.zodiac_groups),
+                    normalized_selection=None,
+                    amount=expected_total,
+                    is_valid=False,
+                    error=message,
+                )
+            )
+            errors.append(message)
+            return previews, order_items, warnings, errors
+
+        try:
+            normalize_bet_type("平特一肖")
+        except InvalidBetTypeError as exc:
+            message = str(exc)
+            errors.append(message)
+            return previews, order_items, warnings, errors
+
+        for zodiac, _ in result.zodiac_groups:
+            preview = _build_item_preview(
+                source_line=source_line,
+                original_bet_type=category,
+                original_selection=zodiac,
+                amount=per_amount,
+                order_bet_type="平特一肖",
+                order_selection=zodiac,
+                preview_bet_type="平特一肖",
+                preview_selection=zodiac,
+                normalizer=normalizer,
+            )
+            previews.append(preview)
+            if preview.is_valid:
+                order_items.append(
+                    OrderItemCreate(bet_type="平特一肖", selection=zodiac, amount=per_amount)
+                )
+            else:
+                errors.append(preview.error or f"生肖 {zodiac} 映射失败")
+        return previews, order_items, warnings, errors
+
     if category == "N不中":
         selection = ",".join(f"{number:02d}" for number in result.numbers)
         try:

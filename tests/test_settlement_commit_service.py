@@ -9,6 +9,7 @@ from schemas.order_schema import OrderCreate, OrderItemCreate
 from services.draw_service import DrawService
 from services.log_service import LogService
 from services.order_service import OrderService
+from services.settings_service import SettingsService
 from services.settlement_service import SettlementService
 from settlement.exceptions import SettlementDataError
 
@@ -169,6 +170,35 @@ def test_commit_winning_special_number_updates_status_and_writes_log(session_fac
     assert len(logs) == 1
     assert order.order_no in logs[0].description
     assert "中奖 1" in logs[0].description
+
+
+def test_commit_ten_non_hit_writes_snapshot_with_specific_configured_odds(session_factory) -> None:
+    settings = SettingsService(session_factory)
+    plan = settings.ensure_default_plan()
+    settings.add_item(plan.id, "十不中", "5.0", "0")
+    order = create_order(
+        OrderService(session_factory),
+        items=[
+            OrderItemCreate(
+                bet_type="N不中",
+                selection="08,09,10,11,12,13,14,15,16,17",
+                amount="4000",
+            )
+        ],
+    )
+    draw = create_draw(DrawService(session_factory), special_number="01")
+
+    result = SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+
+    assert result.win_count == 1
+    assert result.total_payout_amount == 20000
+    record = SettlementService(session_factory).get_settlement_record_by_order_id(order.id)
+    assert record is not None
+    item = record.result_snapshot["items"][0]
+    assert item["result"] == "hit"
+    assert item["odds"] == "5"
+    assert item["payout_amount"] == "20000.00"
+    assert item["draw_numbers"] == ["02", "03", "04", "05", "06", "07", "01"]
 
 
 def test_commit_losing_special_number_by_issue_updates_status(session_factory) -> None:

@@ -11,7 +11,18 @@ import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from domain.zodiac_config import get_default_zodiac_year, get_zodiac_number_map, validate_zodiac_year
+from domain.non_hit_rules import (
+    NON_HIT_MAX_COUNT,
+    NON_HIT_MIN_COUNT,
+    format_non_hit_count_chinese,
+    parse_non_hit_count_label,
+)
+from domain.zodiac_config import (
+    ZODIAC_SEQUENCE,
+    get_default_zodiac_year,
+    get_zodiac_number_map,
+    validate_zodiac_year,
+)
 
 # ======================================================================
 # 工具函数
@@ -373,6 +384,13 @@ def _normalize_smart_text(text: str) -> str:
     t = text.strip().translate(_FULLWIDTH_DIGITS)
     t = _normalize_chinese_amounts(t)
 
+    # 只归一金额尾部的“各包/每个包”，避免影响包半波、全包等玩法名。
+    t = re.sub(
+        r"(?:各|每个)\s*(?:包\s*)?(\d+(?:\.\d+)?)\s*(?=(?:元|块|蚊)?$)",
+        r"各\1",
+        t,
+    )
+
     # 01号一10元 / 26号1 0块 这类口语里，“一/1”是“各”的近音。
     t = re.sub(r"一\s*(\d+(?:\.\d+)?)\s*(元|块|蚊)", r"各\1", t)
     t = re.sub(r"(?<=号)\s*1\s+(\d)\s*(元|块|蚊)", r"各1\1", t)
@@ -539,6 +557,8 @@ def _build_lianxiao_result(
     amount: float | Decimal,
 ) -> ParseResult:
     amount_decimal = _decimal_amount(amount)
+    zodiac_order = {zodiac: index for index, zodiac in enumerate(ZODIAC_SEQUENCE)}
+    groups = sorted(groups, key=lambda group: zodiac_order[group[0]])
     all_nums = tuple(sorted({n for _, ns in groups for n in ns}))
     return ParseResult(
         region=region,
@@ -656,8 +676,16 @@ _BET_TYPE_INFIX: list[str] = sorted(
     key=len, reverse=True,  # 长优先
 )
 
+_NON_HIT_COUNT_CHARS = "零〇一二两三四五六七八九十"
 _NON_HIT_PREFIX_PATTERN = re.compile(
-    rf"^(?:(?:[Nn])|(?:\d+)|(?:[{_CN_DIGIT_CHARS}]+))?不中\s*"
+    rf"^(?P<label>(?:[Nn])|(?:\d+)|(?:[{_NON_HIT_COUNT_CHARS}]+))?不中\s*"
+)
+_NON_HIT_SUFFIX_PATTERN = re.compile(
+    rf"(?P<label>(?:[Nn])|(?:\d+)|(?:[{_NON_HIT_COUNT_CHARS}]+))?不中$"
+)
+_RANKED_LIANXIAO_PATTERN = re.compile(
+    r"^(?:(?P<prefix>[二三四五])连肖\s*(?P<prefix_selection>.+?)|"
+    r"(?P<suffix_selection>.+?)\s*(?P<suffix>[二三四五])连肖)$"
 )
 _FUXUAN_TOKEN_PATTERN = re.compile(r"复\s*(\d+)")
 _LIANMA_TYPES: dict[str, int] = {"二中二": 2, "三中三": 3, "三中二": 3}
@@ -665,12 +693,117 @@ _LIANMA_TYPES: dict[str, int] = {"二中二": 2, "三中三": 3, "三中二": 3}
 
 def _strip_bet_type_infix(category_text: str) -> tuple[str, str]:
     """从类别文本末尾剥离投注类型关键词。返回 (剩余类别名, bet_type)。"""
+    non_hit_match = _NON_HIT_SUFFIX_PATTERN.search(category_text)
+    if non_hit_match:
+        remaining = category_text[:non_hit_match.start()].strip()
+        if remaining:
+            return remaining, non_hit_match.group(0)
     for bt in _BET_TYPE_INFIX:
         if category_text.endswith(bt):
             remaining = category_text[:-len(bt)].strip()
             if remaining:  # 剥离后还有内容（如 "蛇"、"红波"）
                 return remaining, bt
     return category_text, ""
+
+
+def _parse_ranked_lianxiao_category(
+    *,
+    region: str,
+    category_text: str,
+    amount: float | Decimal,
+) -> ParseResult | None:
+    match = _RANKED_LIANXIAO_PATTERN.fullmatch(category_text.strip())
+    if match is None:
+        return None
+    rank_text = match.group("prefix") or match.group("suffix")
+    selection_text = match.group("prefix_selection") or match.group("suffix_selection") or ""
+    rank = int(parse_non_hit_count_label(rank_text) or 0)
+    compact_selection = re.sub(r"[,，、/\-\s]+", "", selection_text)
+    groups = _parse_zodiac_groups(compact_selection)
+    consumed = _zodiac_consume_len(compact_selection)
+    if consumed != len(compact_selection):
+        return ParseResult(
+            region=region,
+            success=False,
+            error=f"无法解析连肖生肖列表：{selection_text}",
+        )
+    names = [name for name, _ in groups]
+    duplicates = sorted(
+        {name for name in names if names.count(name) > 1},
+        key=ZODIAC_SEQUENCE.index,
+    )
+    if duplicates:
+        unique_count = len(set(names))
+        return ParseResult(
+            region=region,
+            success=False,
+            error=(
+                f"连肖生肖重复：{','.join(duplicates)}；连肖阶数与生肖数量不匹配："
+                f"{rank_text}连肖需要{rank}个不同生肖，实际{unique_count}个不同生肖"
+            ),
+        )
+    if len(groups) != rank:
+        return ParseResult(
+            region=region,
+            success=False,
+            error=(
+                f"连肖阶数与生肖数量不匹配：{rank_text}连肖需要{rank}个生肖，"
+                f"实际{len(groups)}个"
+            ),
+        )
+    return _build_lianxiao_result(
+        region=region,
+        category="连肖",
+        groups=groups,
+        amount=amount,
+    )
+
+
+def _parse_non_hit_numbers(
+    selection_text: str,
+    expected_count: int | None,
+) -> tuple[tuple[int, ...] | None, str | None]:
+    text = selection_text.strip()
+    range_match = re.fullmatch(r"(\d{1,2})\s*[-至]\s*(\d{1,2})", text)
+    raw_numbers: list[int] = []
+    if range_match:
+        lower, upper = int(range_match.group(1)), int(range_match.group(2))
+        if not (1 <= lower <= upper <= 49):
+            return None, f"N不中号码范围无效：{selection_text}（号码必须为01-49）"
+        raw_numbers = list(range(lower, upper + 1))
+    else:
+        if re.search(r"(?:^|[,，、/\.\s])-\d", text):
+            return None, f"N不中号码格式无效：{selection_text}"
+        tokens = [token for token in re.split(r"[,，、/\.\-—\s]+", text) if token]
+        if not tokens:
+            return None, "N不中号码列表不能为空"
+        for token in tokens:
+            if not token.isdigit():
+                return None, f"N不中号码格式无效：{selection_text}"
+            number = int(token)
+            if number < 1 or number > 49:
+                return None, f"N不中号码 {token} 超出范围 (01-49)"
+            raw_numbers.append(number)
+
+    duplicate_numbers = sorted({number for number in raw_numbers if raw_numbers.count(number) > 1})
+    if duplicate_numbers:
+        duplicate_text = ",".join(f"{number:02d}" for number in duplicate_numbers)
+        return None, f"N不中号码重复：{duplicate_text}"
+
+    actual_count = len(raw_numbers)
+    effective_count = expected_count if expected_count is not None else actual_count
+    if effective_count < NON_HIT_MIN_COUNT or effective_count > NON_HIT_MAX_COUNT:
+        return None, (
+            f"N不中选择号码数量必须为{NON_HIT_MIN_COUNT}-{NON_HIT_MAX_COUNT}个，"
+            f"实际{actual_count}个"
+        )
+    if actual_count != effective_count:
+        label = format_non_hit_count_chinese(effective_count)
+        return None, (
+            f"N不中阶数与号码数量不匹配：{label}不中需要{effective_count}个不同号码，"
+            f"实际{actual_count}个"
+        )
+    return tuple(sorted(raw_numbers)), None
 
 
 def _decimal_amount(value: float | int | str | Decimal) -> Decimal:
@@ -1084,9 +1217,22 @@ def parse_order(
 
     # ── 投注类型前缀（覆盖默认类别）──
     bet_type_override = ""
+    non_hit_expected_count: int | None = None
     non_hit_prefix = _NON_HIT_PREFIX_PATTERN.match(text)
     if non_hit_prefix:
         bet_type_override = "N不中"
+        try:
+            non_hit_expected_count = parse_non_hit_count_label(non_hit_prefix.group("label") or "")
+        except ValueError as exc:
+            return ParseResult(region=region, success=False, error=str(exc))
+        if non_hit_expected_count is not None and not (
+            NON_HIT_MIN_COUNT <= non_hit_expected_count <= NON_HIT_MAX_COUNT
+        ):
+            return ParseResult(
+                region=region,
+                success=False,
+                error=f"N不中阶数必须为{NON_HIT_MIN_COUNT}-{NON_HIT_MAX_COUNT}",
+            )
         text = text[non_hit_prefix.end():].strip()
 
     _BET_PREFIXES = [
@@ -1185,7 +1331,14 @@ def parse_order(
         amount, category_text = _extract_amount(text)
         category_text, infix_bt = _strip_bet_type_infix(category_text)
         if infix_bt and not bet_type_override:
-            bet_type_override = infix_bt
+            if infix_bt.endswith("不中"):
+                bet_type_override = "N不中"
+                try:
+                    non_hit_expected_count = parse_non_hit_count_label(infix_bt)
+                except ValueError as exc:
+                    return ParseResult(region=region, success=False, error=str(exc))
+            else:
+                bet_type_override = infix_bt
         # 清理末尾残留的分隔关键字（"蛇打" → "蛇"）
         category_text = re.sub(r'(打|各|各数|每|每注)$', '', category_text).strip()
         if amount == 0:
@@ -1199,7 +1352,14 @@ def parse_order(
         # ── 检查 bet 类型中缀（如 "蛇平特一肖打1000"）──
         category_text, infix_bt = _strip_bet_type_infix(category_text)
         if infix_bt and not bet_type_override:
-            bet_type_override = infix_bt
+            if infix_bt.endswith("不中"):
+                bet_type_override = "N不中"
+                try:
+                    non_hit_expected_count = parse_non_hit_count_label(infix_bt)
+                except ValueError as exc:
+                    return ParseResult(region=region, success=False, error=str(exc))
+            else:
+                bet_type_override = infix_bt
 
         amount_str = text[sep_m.end() :].strip()
         # 去除可选的 "元" 后缀
@@ -1223,6 +1383,23 @@ def parse_order(
 
     if not category_text:
         return ParseResult(region=region, success=False, error="未找到类别描述（分隔符之前为空）")
+
+    if non_hit_expected_count is not None and not (
+        NON_HIT_MIN_COUNT <= non_hit_expected_count <= NON_HIT_MAX_COUNT
+    ):
+        return ParseResult(
+            region=region,
+            success=False,
+            error=f"N不中阶数必须为{NON_HIT_MIN_COUNT}-{NON_HIT_MAX_COUNT}",
+        )
+
+    ranked_lianxiao_result = _parse_ranked_lianxiao_category(
+        region=region,
+        category_text=category_text,
+        amount=amount,
+    )
+    if ranked_lianxiao_result is not None:
+        return ranked_lianxiao_result
 
     pingwei_result = _parse_pingwei_category(
         region=region,
@@ -1289,31 +1466,18 @@ def parse_order(
             )
 
         if bet_type_override == "N不中":
-            # 不中范围: 5-24 或 5至24
-            range_m = re.match(r"^(\d{1,2})\s*[-至]\s*(\d{1,2})$", cat)
-            if range_m:
-                lo, hi = int(range_m.group(1)), int(range_m.group(2))
-                if 1 <= lo <= hi <= 49:
-                    nums = tuple(range(lo, hi + 1))
-                    return ParseResult(region=region,
-                        success=True,
-                        category="N不中",
-                        numbers=nums,
-                        amount=amt,
-                        total=amt,
-                    )
-            num_list = _parse_number_list(cat)
-            if num_list is not None:
-                return ParseResult(region=region,
-                    success=True,
-                    category="N不中",
-                    numbers=num_list,
-                    amount=amt,
-                    total=amt,
-                )
-            return ParseResult(region=region,
-                success=False,
-                error=f"无法解析N不中号码列表：{cat}",
+            num_list, non_hit_error = _parse_non_hit_numbers(cat, non_hit_expected_count)
+            if non_hit_error:
+                return ParseResult(region=region, success=False, error=non_hit_error)
+            assert num_list is not None
+            return ParseResult(
+                region=region,
+                success=True,
+                category="N不中",
+                numbers=num_list,
+                amount=amt,
+                total=amt,
+                note=f"N不中阶数={len(num_list)}",
             )
 
         if bet_type_override in ("连尾", "平特一尾"):
@@ -1395,7 +1559,7 @@ def parse_order(
                 category="多生肖",
                 numbers=all_nums,
                 amount=amt,
-                total=amt * len(all_nums),
+                total=amt * (len(all_nums) if zodiac_number_mode else len(groups_inner)),
                 zodiac_groups=groups_inner,
                 zodiac_number_mode=zodiac_number_mode,
             )

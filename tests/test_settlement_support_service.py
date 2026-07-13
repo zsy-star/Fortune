@@ -25,6 +25,17 @@ def test_supported_number_fuxuan_reads_note() -> None:
     assert result.normalized_bet_type == "number_fuxuan"
 
 
+def test_ten_non_hit_is_supported_as_one_valid_group() -> None:
+    result = SettlementSupportService().check_item(
+        "N不中",
+        "01,03,06,10,13,15,18,22,31,43",
+    )
+
+    assert result.is_supported
+    assert result.status == "supported"
+    assert result.normalized_bet_type == "non_hit_number"
+
+
 def test_unsupported_saveable_play_returns_user_readable_message() -> None:
     result = SettlementSupportService().check_item(
         "连肖复选",

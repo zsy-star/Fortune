@@ -454,8 +454,59 @@ class TestLianXiao:
         r = parse_order("连肖 狗鼠龙羊猴 各10")
         assert r.success
         assert r.category == "连肖"
-        assert [name for name, _ in r.zodiac_groups] == ["狗", "鼠", "龙", "羊", "猴"]
+        assert [name for name, _ in r.zodiac_groups] == ["鼠", "龙", "羊", "猴", "狗"]
         assert r.total == Decimal("10")
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("四连肖猪牛马虎 70", ["牛", "虎", "马", "猪"]),
+            ("四连肖牛马虎狗 70", ["牛", "虎", "马", "狗"]),
+            ("四连肖鼠兔虎鸡 70", ["鼠", "虎", "兔", "鸡"]),
+            ("四连肖 猪牛马虎 70", ["牛", "虎", "马", "猪"]),
+            ("猪牛马虎 四连肖 70", ["牛", "虎", "马", "猪"]),
+            ("猪牛马虎四连肖70", ["牛", "虎", "马", "猪"]),
+            ("四连肖猪牛马虎各70", ["牛", "虎", "马", "猪"]),
+        ],
+    )
+    def test_ranked_lianxiao_is_one_normalized_group(self, text: str, expected: list[str]) -> None:
+        r = parse_order(text)
+        assert r.success
+        assert r.category == "连肖"
+        assert [name for name, _ in r.zodiac_groups] == expected
+        assert len(r.zodiac_groups) == 4
+        assert r.amount == Decimal("70")
+        assert r.total == Decimal("70")
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "二连肖鼠牛 10",
+            "三连肖鼠牛虎 10",
+            "五连肖鼠牛虎兔龙 10",
+        ],
+    )
+    def test_ranked_lianxiao_supports_two_through_five(self, text: str) -> None:
+        assert parse_order(text).success
+
+    @pytest.mark.parametrize(
+        ("text", "message"),
+        [
+            ("四连肖猪牛马 70", "连肖阶数与生肖数量不匹配"),
+            ("四连肖猪牛马虎兔 70", "连肖阶数与生肖数量不匹配"),
+            ("四连肖猪牛马猪 70", "连肖生肖重复"),
+        ],
+    )
+    def test_ranked_lianxiao_rejects_count_and_duplicates(self, text: str, message: str) -> None:
+        r = parse_order(text)
+        assert not r.success
+        assert message in r.error
+        assert "连肖阶数与生肖数量不匹配" in r.error
+
+    def test_ranked_lianxiao_permutations_share_combo_key(self) -> None:
+        first = parse_order("四连肖猪牛马虎 70")
+        second = parse_order("四连肖虎马猪牛 70")
+        assert first.zodiac_groups == second.zodiac_groups
 
     def test_explicit_tuo(self) -> None:
         r = parse_order("拖马虎各5")
@@ -490,7 +541,26 @@ class TestMultiZodiac:
         assert r.success
         assert r.category == "多生肖"
         assert len(r.zodiac_groups) == 3
-        assert r.total == 120
+        assert r.total == 30
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "牛兔马猪各包10",
+            "牛兔马猪各包 10",
+            "牛兔马猪各10",
+            "牛兔马猪各 10",
+            "牛兔马猪每个10",
+            "牛兔马猪每个包10",
+        ],
+    )
+    def test_multi_zodiac_each_package_amount(self, text: str) -> None:
+        r = parse_order(text)
+        assert r.success
+        assert r.category == "多生肖"
+        assert [name for name, _ in r.zodiac_groups] == ["牛", "兔", "马", "猪"]
+        assert r.amount == 10
+        assert r.total == 40
 
     def test_two_zodiacs(self) -> None:
         r = parse_order("马虎各5")
@@ -917,8 +987,8 @@ class TestBetTypePrefix:
     @pytest.mark.parametrize(
         "text",
         [
-            "N不中 08,09,10 各100",
-            "不中 08,09,10 各100",
+            "N不中 08,09,10,11,12 各100",
+            "不中 08,09,10,11,12 各100",
             "5不中 08,09,10,11,12 各100",
             "六不中 08,09,10,11,12,13 各100",
         ],
@@ -930,16 +1000,54 @@ class TestBetTypePrefix:
         assert r.amount == 100
         assert r.total == 100
 
+    @pytest.mark.parametrize("count", range(5, 28))
+    def test_non_hit_supports_exact_counts_five_through_twenty_seven(self, count: int) -> None:
+        selection = ",".join(f"{number:02d}" for number in range(1, count + 1))
+        r = parse_order(f"{count}不中 {selection} 各100")
+
+        assert r.success
+        assert len(r.numbers) == count
+        assert r.total == 100
+
     def test_non_hit_rejects_invalid_number(self) -> None:
         r = parse_order("N不中 08,50 各100")
         assert not r.success
-        assert "无法解析N不中号码列表" in r.error
+        assert "超出范围" in r.error
 
-    def test_non_hit_deduplicates_numbers_with_group_amount(self) -> None:
-        r = parse_order("N不中 08,09,08 各100")
+    def test_non_hit_rejects_duplicate_numbers(self) -> None:
+        r = parse_order("五不中 08,09,10,11,08 各100")
+        assert not r.success
+        assert "号码重复：08" in r.error
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "6 18 31 43 22 10 03 15 01 13 十不中 4000",
+            "6.18.31.43.22.10.03.15.01.13十不中4000",
+            "6/18/31/43/22/10/03/15/01/13十不中各4000",
+        ],
+    )
+    def test_ten_non_hit_suffix_formats(self, text: str) -> None:
+        r = parse_order(text)
         assert r.success
-        assert r.numbers == (8, 9)
-        assert r.total == 100
+        assert r.category == "N不中"
+        assert r.numbers == (1, 3, 6, 10, 13, 15, 18, 22, 31, 43)
+        assert r.amount == 4000
+        assert r.total == 4000
+
+    @pytest.mark.parametrize(
+        ("text", "message"),
+        [
+            ("1 2 3 4 5 6 7 8 9 十不中 4000", "实际9个"),
+            ("1 2 3 4 5 6 7 8 9 10 11 十不中 4000", "实际11个"),
+            ("1 2 3 4 5 6 7 8 9 9 十不中 4000", "号码重复"),
+            ("1 2 3 4 5 6 7 8 9 50 十不中 4000", "超出范围"),
+        ],
+    )
+    def test_ten_non_hit_rejects_invalid_selection(self, text: str, message: str) -> None:
+        r = parse_order(text)
+        assert not r.success
+        assert message in r.error
 
 
 class TestFuxuanParser:
@@ -1206,7 +1314,7 @@ class TestRecordWindowAdvancedParseOptions:
             ("01各10", "纯数字", 10, 1),
             ("01,02,03各10", "纯数字", 30, 3),
             ("马各10", "马", 50, 5),
-            ("羊马各10", "多生肖", 90, 9),
+            ("羊马各10", "多生肖", 20, 9),
             ("红波各10", "红波", 170, 17),
             ("红单各10", "红单", 80, 8),
             ("大各10", "大", 250, 25),
@@ -1382,7 +1490,7 @@ class TestRecordWindowAdvancedParseOptions:
         assert r.success
         assert r.category == "多生肖"
         assert len(r.numbers) == 9
-        assert r.total == 90
+        assert r.total == 20
 
     def test_zodiac_bet_parsing_uses_zodiac_year(self) -> None:
         r_2026 = parse_order("兔各10", zodiac_year=2026)
@@ -1650,7 +1758,7 @@ class TestReferenceStyleSmartIntakeParser:
         lianxiao_results = parse_lines("连肖 猪马100 牛虎猴300")
         assert [r.category for r in lianxiao_results] == ["连肖", "连肖"]
         assert [[name for name, _ in r.zodiac_groups] for r in lianxiao_results] == [
-            ["猪", "马"],
+            ["马", "猪"],
             ["牛", "虎", "猴"],
         ]
 

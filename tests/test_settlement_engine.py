@@ -74,7 +74,15 @@ def test_bet_type_normalizer_aliases_and_unknown() -> None:
         normalizer.normalize("未知玩法", "01")
 
     assert normalizer.normalize("连肖", "马蛇").normalized_bet_type == "special_zodiac_group"
-    assert normalizer.normalize("连肖", "马蛇").selection == "马,蛇"
+    assert normalizer.normalize("连肖", "马蛇").selection == "蛇,马"
+
+    assert normalizer.normalize("十不中", "6/18/31/43/22/10/03/15/01/13").selection == (
+        "01,03,06,10,13,15,18,22,31,43"
+    )
+    with pytest.raises(InvalidSelectionError, match="实际9个"):
+        normalizer.normalize("十不中", "01,02,03,04,05,06,07,08,09")
+    with pytest.raises(InvalidSelectionError, match="号码重复"):
+        normalizer.normalize("十不中", "01,02,03,04,05,06,07,08,09,09")
 
 
 def test_special_number_matchers() -> None:

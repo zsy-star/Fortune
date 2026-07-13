@@ -471,7 +471,7 @@ class RecordOrderWindow(QMainWindow):
         self._show_status_message("已清空当前输入和预览")
 
     def _on_add_result(self) -> None:
-        """将成功解析的订单添加到上方表格——每个解析结果一行。"""
+        """将成功解析的订单添加到上方表格；多生肖各金额按生肖拆行。"""
         if not self._parsed_results:
             return
 
@@ -482,31 +482,52 @@ class RecordOrderWindow(QMainWindow):
         self._table_loading = True
         try:
             for r in self._parsed_results:
-                row = self._order_table.rowCount()
-                self._order_table.insertRow(row)
-                if r.category == "平特一肖" and r.zodiac_groups:
-                    bet_type_text = "平特一肖"
-                    selection_text = ",".join(name for name, _ in r.zodiac_groups)
+                if r.category == "多生肖" and r.zodiac_groups and not r.zodiac_number_mode:
+                    table_entries = [
+                        ("平特一肖", name, r.amount, r.amount)
+                        for name, _ in r.zodiac_groups
+                    ]
+                elif r.category == "平特一肖" and r.zodiac_groups:
+                    table_entries = [
+                        (
+                            "平特一肖",
+                            ",".join(name for name, _ in r.zodiac_groups),
+                            r.total,
+                            r.amount,
+                        )
+                    ]
+                elif r.category == "N不中":
+                    table_entries = [
+                        ("N不中", ",".join(f"{n:02d}" for n in r.numbers), r.total, r.amount)
+                    ]
+                elif r.category in {"连肖", "拖肖", "托肖", "有肖", "友肖", "胆肖"} and r.zodiac_groups:
+                    table_entries = [
+                        ("连肖", ",".join(name for name, _ in r.zodiac_groups), r.total, r.amount)
+                    ]
                 else:
-                    bet_type_text = "特码"
-                    # 号码用逗号拼接，如 01,02,03
-                    selection_text = ",".join(f"{n:02d}" for n in r.numbers)
-                items = [
-                    QTableWidgetItem(region),  # 区域
-                    QTableWidgetItem(bet_type_text),  # 投注类型
-                    QTableWidgetItem(selection_text),  # 订单信息
-                    QTableWidgetItem(""),  # 复选类型
-                    QTableWidgetItem(calc_method),  # 计算方式
-                    QTableWidgetItem(f"{r.total:g}"),  # 金额（总金额）
-                    QTableWidgetItem(f"{r.amount:g}"),  # 每号金额
-                    QTableWidgetItem("标准"),  # 是否自定义
-                    QTableWidgetItem(reporter),  # 申报人
-                    QTableWidgetItem(r.original_text),  # 备注
-                    self._support_item_for_table(bet_type_text, selection_text, r.original_text),
-                ]
-                for col, item in enumerate(items):
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    self._order_table.setItem(row, col, item)
+                    table_entries = [
+                        ("特码", ",".join(f"{n:02d}" for n in r.numbers), r.total, r.amount)
+                    ]
+
+                for bet_type_text, selection_text, total_amount, per_item_amount in table_entries:
+                    row = self._order_table.rowCount()
+                    self._order_table.insertRow(row)
+                    items = [
+                        QTableWidgetItem(region),  # 区域
+                        QTableWidgetItem(bet_type_text),  # 投注类型
+                        QTableWidgetItem(selection_text),  # 订单信息
+                        QTableWidgetItem(""),  # 复选类型
+                        QTableWidgetItem(calc_method),  # 计算方式
+                        QTableWidgetItem(f"{float(total_amount):g}"),  # 金额（总金额）
+                        QTableWidgetItem(f"{float(per_item_amount):g}"),  # 每号/项金额
+                        QTableWidgetItem("标准"),  # 是否自定义
+                        QTableWidgetItem(reporter),  # 申报人
+                        QTableWidgetItem(r.original_text),  # 备注
+                        self._support_item_for_table(bet_type_text, selection_text, r.original_text),
+                    ]
+                    for col, item in enumerate(items):
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        self._order_table.setItem(row, col, item)
         finally:
             self._table_loading = False
 

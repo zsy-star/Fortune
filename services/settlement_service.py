@@ -13,6 +13,10 @@ from sqlalchemy.orm import Session, selectinload
 
 from core.database import SessionLocal
 from domain.bet_types import normalize_region
+from domain.non_hit_rules import (
+    format_non_hit_count_chinese,
+    non_hit_odds_bet_type_candidates,
+)
 from domain.zodiac_rules import get_zodiac
 from domain.zodiac_config import get_default_zodiac_year, validate_zodiac_year
 from models import LotteryDraw, Order, SettlementRecord
@@ -474,6 +478,11 @@ class SettlementService:
     def _find_odds_item(self, item: ItemSettlementResult, plan_items: list[Any]):
         candidates = self._odds_candidates_for_item(item)
         item_by_name = {str(config.bet_type).strip(): config for config in plan_items}
+        if item.normalized_bet_type in {NON_HIT_NUMBER, SPECIAL_ZODIAC_GROUP}:
+            for candidate in candidates:
+                config = item_by_name.get(candidate)
+                if config is not None:
+                    return config
         exact = item_by_name.get(str(item.bet_type).strip())
         if exact is not None:
             return exact
@@ -497,15 +506,28 @@ class SettlementService:
     def _odds_candidates_for_item(self, item: ItemSettlementResult) -> tuple[str, ...]:
         normalized_type = item.normalized_bet_type
         if normalized_type == SPECIAL_ZODIAC_GROUP:
+            count = len(item.selected_zodiacs or ())
+            specific = (
+                (
+                    f"{format_non_hit_count_chinese(count)}连肖",
+                    f"{count}连肖",
+                )
+                if 2 <= count <= 5
+                else ()
+            )
             if item.bet_type == "多生肖":
-                return ("多生肖", "连肖", "生肖")
-            return ("连肖", "多生肖", "生肖")
+                return (*specific, "多生肖", "连肖", "生肖")
+            return (*specific, "连肖", "多生肖", "生肖")
         if normalized_type == NUMBER_FUXUAN:
             if item.fuxuan_type == "复2":
                 return ("几中几复选", "二中二")
             if item.fuxuan_type == "复3":
                 return ("几中几复选", "三中三")
             return ("几中几复选",)
+        if normalized_type == NON_HIT_NUMBER:
+            count = len(item.selected_numbers or ())
+            if count:
+                return non_hit_odds_bet_type_candidates(count)
         return ODDS_CANDIDATES.get(normalized_type or "", ())
 
     def _validate_limit_offset(self, limit: int, offset: int) -> tuple[int, int]:
