@@ -64,6 +64,15 @@ def test_unknown_play_is_unsupported_and_needs_manual_review() -> None:
     assert "人工核对" in result.suggestion
 
 
+def test_four_zodiac_accounting_play_is_explicitly_unsupported() -> None:
+    result = SettlementSupportService().check_item("四肖", "鼠,虎,龙,猴")
+
+    assert not result.is_supported
+    assert result.status == "unsupported"
+    assert "暂不支持玩法：四肖" in result.reason
+    assert "可保存为记账订单" in result.suggestion
+
+
 def test_order_item_summary_lists_unsupported_items() -> None:
     items = [
         SimpleNamespace(bet_type="特码", selection="01", note=None),

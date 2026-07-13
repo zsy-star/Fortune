@@ -80,6 +80,7 @@ UNSUPPORTED_BET_TYPES = {
     "三中一",
     "二中特",
     "特串",
+    "四肖",
 }
 
 FUXUAN_UNSUPPORTED_BET_TYPES = {"连肖复选"}

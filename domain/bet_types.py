@@ -32,6 +32,7 @@ SUPPORTED_BET_TYPES: frozenset[str] = frozenset(
         "包半波",
         "几中几复选",
         "连肖复选",
+        "四肖",
     }
 )
 

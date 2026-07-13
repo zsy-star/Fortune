@@ -1406,19 +1406,40 @@ class TestSaveOrder:
         assert "无法提取末尾金额" in warning.call_args.args[2]
         assert _order_counts(session_factory) == (0, 0)
 
-    def test_mixed_success_and_failed_lines_block_whole_save(self, save_window, session_factory):
-        """存在失败行时，不保存任何已成功解析的行。"""
+    def test_mixed_success_and_failed_lines_require_confirmation(self, save_window, session_factory):
+        """存在失败行时明确确认；取消则不保存成功项。"""
         save_window._input_text.setPlainText("01/10\n50/10")
         save_window._do_parse()
         assert any(r.success for r in save_window._last_parse_results)
         assert any(not r.success for r in save_window._last_parse_results)
 
-        with patch("ui.windows.record_order_window.QMessageBox.warning") as warning:
+        with patch(
+            "ui.windows.record_order_window.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.No,
+        ) as question:
             save_window._on_save_order()
 
-        warning.assert_called_once()
-        assert "超出范围" in warning.call_args.args[2]
+        question.assert_called_once()
+        assert "只保存识别成功项" in question.call_args.args[2]
+        assert "超出范围" in question.call_args.args[2]
         assert _order_counts(session_factory) == (0, 0)
+
+    def test_mixed_success_and_failed_lines_confirm_saves_success_only(self, save_window, session_factory):
+        save_window._input_text.setPlainText("01/10\n50/10")
+        save_window._do_parse()
+
+        with (
+            patch(
+                "ui.windows.record_order_window.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ) as question,
+            patch("ui.windows.record_order_window.QMessageBox.information"),
+        ):
+            save_window._on_save_order()
+
+        assert question.call_count >= 1
+        assert "只保存识别成功项" in question.call_args_list[0].args[2]
+        assert _order_counts(session_factory) == (1, 1)
 
     def test_save_01_10_success_writes_order_and_clears_parse_state(self, save_window, session_factory):
         """01/10 解析成功后可保存到临时数据库。"""
@@ -1793,6 +1814,23 @@ class TestSaveOrder:
         output = window._output_text.toPlainText()
         assert "结算风险" in output
         assert "暂不支持正式结算" in output
+
+    def test_real_mixed_clause_preview_shows_error_and_keeps_success_rows(self, window):
+        window._input_text.setPlainText("27.49.47.27.44.32各5，龙猪鸡猴各20")
+        window._do_parse()
+
+        output = window._output_text.toPlainText()
+        assert "无法识别: 27.49.47.27.44.32各5" in output
+        assert "号码27重复" in output
+        assert "建议格式" in output
+        assert len(window._parsed_results) == 1
+        assert len(window._last_parse_results) == 2
+
+        window._on_add_result()
+        assert window._order_table.rowCount() == 4
+        assert [window._order_table.item(row, 1).text() for row in range(4)] == ["平特一肖"] * 4
+        assert [window._order_table.item(row, 2).text() for row in range(4)] == ["龙", "猪", "鸡", "猴"]
+        assert [window._order_table.item(row, 5).text() for row in range(4)] == ["20"] * 4
 
     def test_unsupported_play_save_cancel_does_not_persist(self, save_window, session_factory):
         """保存不支持玩法时用户取消确认，不写订单。"""

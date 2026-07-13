@@ -397,7 +397,8 @@ class RecordOrderWindow(QMainWindow):
         # 回填每行的原始输入文本
         raw_lines = [l.strip() for l in raw.splitlines() if l.strip()]
         for r, line in zip(results, raw_lines):
-            r.original_text = line
+            if not r.original_text:
+                r.original_text = line
 
         self._parsed_results = [r for r in results if r.success]
         self._last_parse_results = results
@@ -499,6 +500,20 @@ class RecordOrderWindow(QMainWindow):
                 elif r.category == "N不中":
                     table_entries = [
                         ("N不中", ",".join(f"{n:02d}" for n in r.numbers), r.total, r.amount)
+                    ]
+                elif r.category == "平尾":
+                    table_entries = [
+                        ("平尾", ",".join(str(tail) for tail in r.pingwei_tails), r.total, r.amount)
+                    ]
+                elif r.category in {"二中二", "三中三", "三中二"} and r.lianma_groups:
+                    selection = "-".join(
+                        "(" + "-".join(f"{number:02d}" for number in group) + ")"
+                        for group in r.lianma_groups
+                    )
+                    table_entries = [(r.category, selection, r.total, r.amount)]
+                elif r.category == "四肖" and r.zodiac_groups:
+                    table_entries = [
+                        ("四肖", ",".join(name for name, _ in r.zodiac_groups), r.total, r.amount)
                     ]
                 elif r.category in {"连肖", "拖肖", "托肖", "有肖", "友肖", "胆肖"} and r.zodiac_groups:
                     table_entries = [
@@ -638,14 +653,23 @@ class RecordOrderWindow(QMainWindow):
             return
 
         failed_results = [r for r in self._last_parse_results if not r.success]
-        if failed_results:
+        if not self._parsed_results:
             errors = [r.error or "解析失败" for r in failed_results]
-            self._show_warning("\n".join(errors))
+            self._show_warning("\n".join(errors) if errors else "请先解析订单内容")
             return
 
-        if not self._parsed_results:
-            self._show_warning("请先解析订单内容")
-            return
+        if failed_results:
+            lines = [
+                f"- {r.original_text or '未知子句'}：{r.error or '解析失败'}"
+                for r in failed_results
+            ]
+            message = (
+                "本次输入存在识别失败项。继续后只保存识别成功项，失败项不会写入订单。\n\n"
+                + "\n".join(lines)
+                + "\n\n是否确认只保存成功项？"
+            )
+            if not self._confirm_warning(message):
+                return
 
         try:
             preview = self._order_intake_service.preview_raw_text(
@@ -672,7 +696,10 @@ class RecordOrderWindow(QMainWindow):
                 if not self._confirm_warning(warning_text):
                     return
 
-            save_result = self._order_intake_service.save_preview(preview)
+            save_result = self._order_intake_service.save_preview(
+                preview,
+                allow_partial=bool(failed_results),
+            )
             if not save_result.success:
                 self._show_warning(save_result.error or "订单保存失败")
                 return

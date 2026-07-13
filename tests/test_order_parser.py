@@ -34,7 +34,13 @@ from decimal import Decimal
 
 import pytest
 
-from services.order_parser import ParseResult, format_result, parse_lines, parse_order
+from services.order_parser import (
+    ParseResult,
+    format_result,
+    parse_chinese_integer_amount,
+    parse_lines,
+    parse_order,
+)
 
 
 # ======================================================================
@@ -118,7 +124,7 @@ class TestNumberList:
     def test_out_of_range_in_list(self) -> None:
         r = parse_order("1,50,3各10")
         assert not r.success
-        assert "无法识别" in r.error or "类" in r.error
+        assert "超出范围" in r.error
 
     def test_negative_in_list(self) -> None:
         r = parse_order("1,-2,3各10")
@@ -1796,3 +1802,196 @@ class TestReferenceStyleSmartIntakeParser:
         assert r.numbers == (1, 2)
         assert r.total == Decimal("10")
         assert any("正式结算暂不支持" in warning for warning in r.warnings)
+
+
+class TestTwelveRealSmartIntakeSamples:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "10 11 24 38复式三中二一组20",
+            "10,11,24,38 复式三中二 每组20",
+            "复式三中二 10-11-24-38 一组20",
+            "10 11 24 38 三中二复选20",
+        ],
+    )
+    def test_sample_1_fushi_three_in_two(self, text: str) -> None:
+        result = parse_lines(text)[0]
+        assert result.success
+        assert result.category == "三中二"
+        assert result.numbers == (10, 11, 24, 38)
+        assert result.lianma_groups == (
+            (10, 11, 24),
+            (10, 11, 38),
+            (10, 24, 38),
+            (11, 24, 38),
+        )
+        assert result.amount == Decimal("20")
+        assert result.total == Decimal("80")
+
+    @pytest.mark.parametrize(
+        "text",
+        ["平特6尾1000", "平特 6尾 1000", "平尾6 1000", "平尾6尾1000", "平特尾6各1000"],
+    )
+    def test_sample_2_pingte_tail_aliases(self, text: str) -> None:
+        result = parse_lines(text)[0]
+        assert result.success
+        assert result.category == "平尾"
+        assert result.pingwei_tails == (6,)
+        assert result.amount == Decimal("1000")
+        assert result.total == Decimal("1000")
+
+    def test_sample_3_three_in_three_title_context(self) -> None:
+        results = parse_lines("三中三\n13-23-07=15\n13-35-47=15\n34-40-07=15")
+        assert len(results) == 3
+        assert all(result.success and result.category == "三中三" for result in results)
+        assert [result.lianma_groups for result in results] == [
+            ((7, 13, 23),),
+            ((13, 35, 47),),
+            ((7, 34, 40),),
+        ]
+        assert sum((Decimal(str(result.total)) for result in results), Decimal("0")) == Decimal("45")
+
+    def test_sample_4_mixed_duplicate_error_keeps_zodiac_clause(self) -> None:
+        results = parse_lines("27.49.47.27.44.32各5，龙猪鸡猴各20")
+        assert len(results) == 2
+        assert not results[0].success
+        assert "号码27重复" in results[0].error
+        assert "建议格式" in results[0].error
+        assert results[1].success
+        assert [name for name, _ in results[1].zodiac_groups] == ["龙", "猪", "鸡", "猴"]
+        assert results[1].total == Decimal("80")
+
+    def test_sample_4_fixed_dot_number_list(self) -> None:
+        result = parse_lines("27.49.47.44.32各5")[0]
+        assert result.success
+        assert result.numbers == (27, 32, 44, 47, 49)
+        assert result.amount == Decimal("5")
+        assert result.total == Decimal("25")
+
+    def test_sample_5_number_amount_pairs(self) -> None:
+        results = parse_lines(
+            "29/20 16/40 24/10 30/30\n"
+            "40/20 38/30\n"
+            "49/20 19/20 43/30\n"
+            "11/30 23/20"
+        )
+        assert len(results) == 11
+        assert all(result.success and result.category == "单号投注" for result in results)
+        assert [result.numbers[0] for result in results] == [29, 16, 24, 30, 40, 38, 49, 19, 43, 11, 23]
+        assert sum((Decimal(str(result.total)) for result in results), Decimal("0")) == Decimal("270")
+
+    def test_sample_5_slash_number_list_is_not_amount_pairs(self) -> None:
+        result = parse_lines("02/06/20/22各5")[0]
+        assert result.success
+        assert result.numbers == (2, 6, 20, 22)
+        assert result.total == Decimal("20")
+
+    def test_sample_5_invalid_pair_fragment_keeps_valid_pair(self) -> None:
+        results = parse_lines("29/20 错误片段 16/40")
+        assert [result.success for result in results] == [True, False, True]
+        assert results[0].numbers == (29,)
+        assert "号码/金额对格式无效" in results[1].error
+        assert results[2].numbers == (16,)
+
+    def test_sample_6_compound_attribute_intersections(self) -> None:
+        results = parse_lines("红双各15，大红双各40，小绿单各30")
+        assert [result.category for result in results] == ["红双", "大红双", "小绿单"]
+        assert [result.numbers for result in results] == [
+            (2, 8, 12, 18, 24, 30, 34, 40, 46),
+            (30, 34, 40, 46),
+            (5, 11, 17, 21),
+        ]
+        assert [result.total for result in results] == [Decimal("135"), Decimal("160"), Decimal("120")]
+
+    def test_sample_6_compound_attribute_word_order(self) -> None:
+        expected = parse_order("大红双各40").numbers
+        assert parse_order("红大双各40").numbers == expected
+        assert parse_order("红双大各40").numbers == expected
+        assert parse_order("绿小单各30").numbers == parse_order("小绿单各30").numbers
+
+    def test_sample_7_spoken_amount_and_suffix_region(self) -> None:
+        result = parse_lines("蛇马羊猴鸡鼠，各数5米，澳门。")[0]
+        assert result.success and result.region == "澳门"
+        assert [name for name, _ in result.zodiac_groups] == ["蛇", "马", "羊", "猴", "鸡", "鼠"]
+        assert result.amount == Decimal("5")
+        assert result.total == Decimal("30")
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "虎猴鼠龙。兔羊猪鸡四肖各10块钱",
+            "虎猴鼠龙、兔羊猪鸡 四肖各10",
+            "四肖：虎猴鼠龙/兔羊猪鸡 每组10",
+        ],
+    )
+    def test_sample_8_two_four_zodiac_groups(self, text: str) -> None:
+        results = parse_lines(text)
+        assert len(results) == 2
+        assert all(result.success and result.category == "四肖" for result in results)
+        assert all(result.amount == Decimal("10") and result.total == Decimal("10") for result in results)
+        assert all(len(result.zodiac_groups) == 4 for result in results)
+        assert all(result.category != "连肖" for result in results)
+
+    @pytest.mark.parametrize(
+        "text",
+        ["平码羊个500", "平码羊各500", "平码羊500", "平特一肖羊500", "平特羊500"],
+    )
+    def test_sample_9_regular_zodiac_colloquial(self, text: str) -> None:
+        result = parse_lines(text)[0]
+        assert result.success and result.category == "平特一肖"
+        assert [name for name, _ in result.zodiac_groups] == ["羊"]
+        assert result.amount == Decimal("500")
+        assert result.total == Decimal("500")
+
+    def test_sample_10_each_buy_and_trailing_block_region(self) -> None:
+        results = parse_lines(
+            "01, 13, 25, 37, 49, 19, 29, 39, 16, 26, 36, 每个买5\n"
+            "22, 34, 21, 33, 45, 09, 每个买10\n"
+            "10, 46, 42, 每个买15\n"
+            "18, 买20\n"
+            "06, 30, 每个买25\n"
+            "澳门的。"
+        )
+        assert len(results) == 5
+        assert all(result.success and result.region == "澳门" for result in results)
+        assert [result.total for result in results] == [
+            Decimal("55"), Decimal("60"), Decimal("45"), Decimal("20"), Decimal("50")
+        ]
+        assert sum((Decimal(str(result.total)) for result in results), Decimal("0")) == Decimal("230")
+
+    @pytest.mark.parametrize(
+        ("amount_text", "expected"),
+        [("十", 10), ("二十", 20), ("五十", 50), ("一百", 100), ("五百", 500),
+         ("一千", 1000), ("两千", 2000), ("一万", 10000), ("一千五百", 1500)],
+    )
+    def test_sample_11_chinese_integer_amount_parser(self, amount_text: str, expected: int) -> None:
+        assert parse_chinese_integer_amount(amount_text) == Decimal(expected)
+
+    def test_sample_11_chinese_amount_in_order(self) -> None:
+        result = parse_lines("平特一肖虎五百块钱")[0]
+        assert result.success and result.category == "平特一肖"
+        assert [name for name, _ in result.zodiac_groups] == ["虎"]
+        assert result.amount == Decimal("500")
+        assert result.total == Decimal("500")
+
+    def test_sample_12_region_and_special_title_context(self) -> None:
+        results = parse_lines("新奥\n特\n02,06,20,22,26,28,32,40,42,48 各5")
+        assert len(results) == 1
+        result = results[0]
+        assert result.success and result.region == "澳门" and result.category == "特码"
+        assert result.numbers == (2, 6, 20, 22, 26, 28, 32, 40, 42, 48)
+        assert result.amount == Decimal("5")
+        assert result.total == Decimal("50")
+
+    @pytest.mark.parametrize(
+        ("text", "error_text"),
+        [
+            ("10 11复式三中二一组20", "至少需要3个"),
+            ("10 11 10 38复式三中二一组20", "号码10重复"),
+            ("10 11 24 50复式三中二一组20", "超出范围"),
+        ],
+    )
+    def test_fushi_three_in_two_validation(self, text: str, error_text: str) -> None:
+        result = parse_lines(text)[0]
+        assert not result.success
+        assert error_text in result.error

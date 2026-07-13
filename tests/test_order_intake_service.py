@@ -721,17 +721,24 @@ def test_preview_table_rows_rejects_mixed_regions() -> None:
     assert any("表格地区不一致" in error for error in preview.errors)
 
 
-def test_invalid_item_blocks_whole_order_save(session_factory) -> None:
+def test_invalid_item_allows_confirmed_success_only_save(session_factory) -> None:
     service = OrderIntakeService(session_factory)
     preview = service.preview_raw_text("01/10\n50/10", region="澳门")
-    assert not preview.can_save
+    assert preview.can_save
+    assert preview.valid_items == 1
+    assert preview.invalid_items == 1
+    assert any("仅保存" in warning for warning in preview.warnings)
 
-    save_result = service.save_preview(preview)
-    assert not save_result.success
+    unconfirmed = service.save_preview(preview)
+    assert not unconfirmed.success
+    assert "明确确认" in (unconfirmed.error or "")
+
+    save_result = service.save_preview(preview, allow_partial=True)
+    assert save_result.success
 
     with session_factory() as session:
-        assert session.scalar(select(func.count(Order.id))) == 0
-        assert session.scalar(select(func.count(OperationLog.id))) == 0
+        assert session.scalar(select(func.count(Order.id))) == 1
+        assert session.scalar(select(func.count(OperationLog.id))) == 1
 
 
 def test_saved_order_can_be_settlement_previewed(session_factory) -> None:
@@ -759,3 +766,73 @@ def test_saved_order_can_be_settlement_previewed(session_factory) -> None:
     )
     preview = SettlementService(session_factory).preview_order(order.id, draw.id)
     assert preview.winning_items == 1
+
+
+def test_real_sample_fushi_three_in_two_intake_summary() -> None:
+    preview = _preview("10 11 24 38复式三中二一组20", region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == Decimal("80")
+    assert len(preview.order_items) == 1
+    item = preview.order_items[0]
+    assert item.bet_type == "三中二"
+    assert item.selection == "(10-11-24)-(10-11-38)-(10-24-38)-(11-24-38)"
+    assert item.amount == Decimal("80")
+    assert item.note == "连码组合数=4;连码组大小=3"
+
+
+def test_real_sample_pingte_six_tail_intake_is_supported_ping_tail() -> None:
+    preview = _preview("平特6尾1000", region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == Decimal("1000")
+    assert len(preview.order_items) == 1
+    assert preview.order_items[0].bet_type == "平尾"
+    assert preview.order_items[0].selection == "6"
+    assert _first_valid_item(preview).settlement_support_status == "supported"
+
+
+def test_real_sample_partial_success_preview_keeps_error_and_four_zodiacs() -> None:
+    preview = _preview("27.49.47.27.44.32各5，龙猪鸡猴各20", region="澳门")
+    assert preview.can_save
+    assert preview.valid_items == 4
+    assert preview.invalid_items == 1
+    assert preview.total_amount == Decimal("80")
+    assert "号码27重复" in preview.errors[0]
+    assert [(item.bet_type, item.selection, item.amount) for item in preview.order_items] == [
+        ("平特一肖", "龙", Decimal("20")),
+        ("平特一肖", "猪", Decimal("20")),
+        ("平特一肖", "鸡", Decimal("20")),
+        ("平特一肖", "猴", Decimal("20")),
+    ]
+
+
+def test_real_sample_four_zodiac_groups_are_accounting_only() -> None:
+    preview = _preview("虎猴鼠龙。兔羊猪鸡四肖各10块钱", region="澳门")
+    assert preview.can_save
+    assert preview.total_amount == Decimal("20")
+    assert len(preview.order_items) == 2
+    assert all(item.bet_type == "四肖" and item.amount == Decimal("10") for item in preview.order_items)
+    valid_rows = [row for row in preview.items if row.is_valid]
+    assert all(row.settlement_support_status == "unsupported" for row in valid_rows)
+    assert all(row.order_bet_type != "连肖" for row in valid_rows)
+
+
+def test_real_sample_spoken_zodiacs_and_block_region_intake() -> None:
+    preview = _preview("蛇马羊猴鸡鼠，各数5米，澳门。", region="澳门")
+    assert preview.can_save
+    assert preview.region == "澳门"
+    assert preview.total_amount == Decimal("30")
+    assert [(item.bet_type, item.selection, item.amount) for item in preview.order_items] == [
+        ("平特一肖", zodiac, Decimal("5"))
+        for zodiac in ("蛇", "马", "羊", "猴", "鸡", "鼠")
+    ]
+
+
+def test_real_sample_new_macau_special_title_intake() -> None:
+    preview = _preview(
+        "新奥\n特\n02,06,20,22,26,28,32,40,42,48 各5",
+        region="澳门",
+    )
+    assert preview.can_save
+    assert preview.total_amount == Decimal("50")
+    assert len(preview.order_items) == 10
+    assert all(item.bet_type == "特码" and item.amount == Decimal("5") for item in preview.order_items)

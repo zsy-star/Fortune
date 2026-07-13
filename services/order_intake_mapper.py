@@ -31,7 +31,7 @@ _SINGLE_ITEM_CATEGORIES: dict[str, tuple[str, str]] = {
     "双": ("特码两面", "双"),
 }
 
-_EXPAND_NUMBER_CATEGORIES = frozenset({"单号投注", "纯数字"})
+_EXPAND_NUMBER_CATEGORIES = frozenset({"单号投注", "纯数字", "特码"})
 _ZODIAC_NAMES = frozenset(get_zodiac_number_map(get_default_zodiac_year()))
 _ELEMENTS = frozenset({"金", "木", "水", "火", "土"})
 _SUM_LABELS = frozenset({"合单", "合双", "合大", "合小"})
@@ -108,6 +108,8 @@ def _is_expand_category(category: str) -> bool:
     if category in _ELEMENTS or category in _SUM_LABELS:
         return True
     if _TAIL_PATTERN.fullmatch(category) or _HEAD_PATTERN.fullmatch(category):
+        return True
+    if re.fullmatch(r"(?:[大小])?[红蓝绿][单双]", category):
         return True
     return False
 
@@ -222,6 +224,51 @@ def convert_parse_result(
         return previews, order_items, warnings, errors
 
     category = result.category
+
+    if category == "四肖":
+        selection = ",".join(name for name, _ in result.zodiac_groups)
+        warning = "玩法「四肖」可保存记账，暂不支持正式结算"
+        warnings.append(warning)
+        if not selection:
+            message = "四肖生肖组不能为空"
+            previews.append(
+                _build_item_preview(
+                    source_line=source_line,
+                    original_bet_type=category,
+                    original_selection=source_line,
+                    amount=expected_total,
+                    order_bet_type=None,
+                    order_selection=None,
+                    normalizer=normalizer,
+                    warning=warning,
+                    error=message,
+                )
+            )
+            errors.append(message)
+            return previews, order_items, warnings, errors
+        preview = _build_item_preview(
+            source_line=source_line,
+            original_bet_type=category,
+            original_selection=selection,
+            amount=expected_total,
+            order_bet_type="四肖",
+            order_selection=selection,
+            normalizer=normalizer,
+            warning=warning,
+        )
+        previews.append(preview)
+        if preview.is_valid:
+            order_items.append(
+                OrderItemCreate(
+                    bet_type="四肖",
+                    selection=selection,
+                    amount=expected_total,
+                    note=(result.note or "四肖整组金额；结算规则待确认"),
+                )
+            )
+        else:
+            errors.append(preview.error or "四肖映射失败")
+        return previews, order_items, warnings, errors
 
     if category in _UNSUPPORTED_SETTLEMENT_GROUP_CATEGORIES:
         selection = ",".join(f"{number:02d}" for number in result.numbers)

@@ -198,6 +198,15 @@ def _number_selection_from_result(result: Any) -> str:
 
 
 def _selection_from_parse_result(result: Any) -> str:
+    lianma_groups = tuple(getattr(result, "lianma_groups", ()) or ())
+    if lianma_groups:
+        return "-".join(
+            "(" + "-".join(f"{int(number):02d}" for number in group) + ")"
+            for group in lianma_groups
+        )
+    pingwei_tails = tuple(getattr(result, "pingwei_tails", ()) or ())
+    if pingwei_tails:
+        return "-".join(f"{int(tail)}尾" for tail in pingwei_tails)
     groups = list(getattr(result, "zodiac_groups", []) or [])
     if groups:
         return "-".join(str(name) for name, _numbers in groups)
@@ -217,12 +226,26 @@ def format_parse_result(result: Any, default_region: str | None = None) -> str:
         reason = str(getattr(result, "error", "") or "未说明")
         return f"无法识别: {raw}，原因：{reason}"
 
-    line = _format_line(
-        getattr(result, "region", None) or default_region,
-        getattr(result, "category", None),
-        _selection_from_parse_result(result),
-        getattr(result, "amount", None),
-    )
+    region = normalize_display_region(getattr(result, "region", None), default_region)
+    category = str(getattr(result, "category", None) or "特码")
+    selection = _selection_from_parse_result(result)
+    amount = format_display_amount(getattr(result, "amount", None))
+    total = format_display_amount(getattr(result, "total", None))
+    lianma_groups = tuple(getattr(result, "lianma_groups", ()) or ())
+    if lianma_groups:
+        line = (
+            f"{region}: {category}: {selection} "
+            f"每组 {amount}，组合数 {len(lianma_groups)}，合计 {total}"
+        )
+    elif category == "四肖":
+        line = f"{region}: 四肖: {selection} 整组 {amount}，合计 {total}"
+    elif re.fullmatch(r"(?:[大小])?[红蓝绿][单双]", category):
+        line = (
+            f"{region}: {category}: {format_display_selection(selection)} "
+            f"每号 {amount}，号码数 {len(tuple(getattr(result, 'numbers', ()) or ())) }，合计 {total}"
+        )
+    else:
+        line = _format_line(region, category, selection, amount)
     warnings = list(getattr(result, "warnings", []) or [])
     unsupported = next((warning for warning in warnings if _should_show_unsupported(warning)), None)
     if unsupported:

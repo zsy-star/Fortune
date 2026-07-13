@@ -158,12 +158,23 @@ class OrderIntakeService:
         self._annotate_settlement_support(preview)
         return preview
 
-    def save_preview(self, preview: OrderIntakePreview) -> OrderIntakeSaveResult:
+    def save_preview(
+        self,
+        preview: OrderIntakePreview,
+        *,
+        allow_partial: bool = False,
+    ) -> OrderIntakeSaveResult:
         if not preview.can_save:
             return OrderIntakeSaveResult(
                 success=False,
                 preview=preview,
                 error="预览结果不可保存：" + "; ".join(preview.errors) if preview.errors else "预览不可保存",
+            )
+        if preview.invalid_items and not allow_partial:
+            return OrderIntakeSaveResult(
+                success=False,
+                preview=preview,
+                error="预览存在识别失败项；必须明确确认后才能只保存成功项",
             )
         if not preview.region:
             return OrderIntakeSaveResult(
@@ -477,10 +488,13 @@ class OrderIntakeService:
         if not preview.channel:
             preview.warnings.append("渠道为空")
 
+        if preview.invalid_items and preview.order_items:
+            preview.warnings.append(
+                f"本次识别有 {preview.invalid_items} 个失败项；确认后仅保存 {preview.valid_items} 个成功项"
+            )
+
         preview.can_save = (
-            not preview.errors
-            and preview.invalid_items == 0
-            and preview.region is not None
+            preview.region is not None
             and preview.order_items
             and preview.total_amount > 0
         )
