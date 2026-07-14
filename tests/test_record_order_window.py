@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 
 from services.order_parser import ParseResult, parse_order
 from ui.app_events import app_events
+from ui.windows.record_order_window import _TableColumn
 
 
 class FakeSettingsService:
@@ -210,7 +211,8 @@ class TestInputParsing:
         assert window._order_table.rowCount() == 1
         assert window._order_table.item(0, 1).text() == "连肖"
         assert window._order_table.item(0, 2).text() == "牛,虎,马,猪"
-        assert window._order_table.item(0, 5).text() == "70"
+        assert window._order_table.item(0, _TableColumn.AMOUNT).text() == "70"
+        assert window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).text() == "70"
 
     def test_each_package_multi_zodiac_enters_four_supported_rows(self, window):
         window._input_text.setPlainText("牛兔马猪各包10")
@@ -220,8 +222,9 @@ class TestInputParsing:
         assert window._order_table.rowCount() == 4
         assert [window._order_table.item(row, 1).text() for row in range(4)] == ["平特一肖"] * 4
         assert [window._order_table.item(row, 2).text() for row in range(4)] == ["牛", "兔", "马", "猪"]
-        assert [window._order_table.item(row, 5).text() for row in range(4)] == ["10"] * 4
-        assert [window._order_table.item(row, 10).text() for row in range(4)] == ["支持"] * 4
+        assert [window._order_table.item(row, _TableColumn.AMOUNT).text() for row in range(4)] == ["10"] * 4
+        assert [window._order_table.item(row, _TableColumn.TOTAL_AMOUNT).text() for row in range(4)] == ["10"] * 4
+        assert [window._order_table.item(row, _TableColumn.SETTLEMENT_SUPPORT).text() for row in range(4)] == ["支持"] * 4
 
     def test_ten_non_hit_enters_table_as_one_supported_group(self, window):
         window._input_text.setPlainText("6/18/31/43/22/10/03/15/01/13十不中各4000")
@@ -231,8 +234,9 @@ class TestInputParsing:
         assert window._order_table.rowCount() == 1
         assert window._order_table.item(0, 1).text() == "N不中"
         assert window._order_table.item(0, 2).text() == "01,03,06,10,13,15,18,22,31,43"
-        assert window._order_table.item(0, 5).text() == "4000"
-        assert window._order_table.item(0, 10).text() == "支持"
+        assert window._order_table.item(0, _TableColumn.AMOUNT).text() == "4000"
+        assert window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).text() == "4000"
+        assert window._order_table.item(0, _TableColumn.SETTLEMENT_SUPPORT).text() == "支持"
 
 
 class TestAdvancedOptionsFirstStage:
@@ -295,7 +299,8 @@ class TestAdvancedOptionsFirstStage:
         assert window._order_table.rowCount() == 1
         assert window._order_table.item(0, 1).text() == "特码"
         assert window._order_table.item(0, 2).text() == "08,25"
-        assert window._order_table.item(0, 5).text() == "20"
+        assert window._order_table.item(0, _TableColumn.AMOUNT).text() == "10"
+        assert window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).text() == "20"
 
     def test_detect_region_hong_kong_sets_radio_and_results(self, window):
         checkboxes = self._checkboxes(window)
@@ -380,14 +385,39 @@ class TestAddToTable:
         nums_text = window._order_table.item(0, 2).text()  # "订单信息" 列
         assert nums_text == "01,02,03"
 
-    def test_amount_column_uses_total(self, window):
-        """金额列使用 r.total，每号金额列使用 r.amount。"""
+    def test_amount_and_order_total_columns_use_structured_values(self, window):
+        """金额列使用 r.amount，订单总额列使用 r.total。"""
         self._setup_parsed(window)
         window._on_add_result()
-        amt_col5 = window._order_table.item(0, 5).text()  # "金额" → r.total
-        amt_col6 = window._order_table.item(0, 6).text()  # "每号金额" → r.amount
-        assert amt_col5 == "30"
-        assert amt_col6 == "10"
+        amount = window._order_table.item(0, _TableColumn.AMOUNT).text()
+        total_amount = window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).text()
+        assert amount == "10"
+        assert total_amount == "30"
+
+    def test_amount_280_and_total_4480_are_not_swapped(self, window):
+        window._parsed_results = [
+            ParseResult(
+                success=True,
+                category="特码",
+                numbers=tuple(range(1, 17)),
+                amount=280,
+                total=4480,
+                region="澳门",
+                original_text="16个号码各280",
+            )
+        ]
+
+        window._on_add_result()
+
+        assert window._order_table.item(0, _TableColumn.AMOUNT).text() == "280"
+        assert window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).text() == "4480"
+
+    def test_fushi_three_in_two_displays_amount_and_total(self, window):
+        self._setup_parsed(window, "10 11 24 38复式三中二一组20")
+        window._on_add_result()
+
+        assert window._order_table.item(0, _TableColumn.AMOUNT).text() == "20"
+        assert window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).text() == "80"
 
     def test_remark_column_contains_original_text(self, window):
         """备注列填入原始输入文本。"""
@@ -403,11 +433,26 @@ class TestAddToTable:
         lbl = window._lbl_total.text()
         assert "30" in lbl
 
-    def test_column_header_name(self, window):
-        """列名已经是「每号金额」。"""
-        header = window._order_table.horizontalHeaderItem(6)
-        assert header is not None
-        assert header.text() == "每号金额"
+    def test_table_headers_follow_business_order(self, window):
+        headers = [
+            window._order_table.horizontalHeaderItem(column).text()
+            for column in range(window._order_table.columnCount())
+        ]
+
+        assert window._order_table.columnCount() == 11
+        assert headers == [
+            "区域",
+            "投注类型",
+            "订单信息",
+            "复选类型",
+            "计算方式",
+            "金额",
+            "订单总额",
+            "是否自定义",
+            "申报人",
+            "备注",
+            "结算支持",
+        ]
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -519,7 +564,7 @@ class TestDeleteSelected:
         window._order_table.selectRow(0)
         window._on_delete_selected()
         lbl = window._lbl_total.text()
-        # 仅剩兔各20: 总金额 80（r.total=80 在金额列）
+        # 仅剩兔各20: 订单总额 80（r.total=80 在订单总额列）
         assert "80" in lbl
 
     def test_delete_sets_user_adjusted(self, window):
@@ -1352,7 +1397,7 @@ class TestDeclarerIntegration:
             window._do_parse()
             window._on_add_result()
             assert window._order_table.item(0, 8).text() == "老汪"
-            window._order_table.item(0, 5).setText("25")
+            window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).setText("25")
             with patch("ui.windows.record_order_window.QMessageBox.information"):
                 window._on_save_order()
         finally:
@@ -1590,7 +1635,7 @@ class TestSaveOrder:
             window._input_text.setPlainText("马蛇10")
             window._do_parse()
             window._on_add_result()
-            window._order_table.item(0, 5).setText("30")
+            window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).setText("30")
 
             with (
                 patch(
@@ -1676,8 +1721,8 @@ class TestSaveOrder:
             assert items[0].amount == 10
         assert _log_count(session_factory) == 1
 
-    def test_modify_table_amount_then_save_recalculates_total(self, save_window, session_factory):
-        """修改金额后保存，以表格金额重新计算订单总额和明细金额。"""
+    def test_modify_table_order_total_then_save_recalculates_total(self, save_window, session_factory):
+        """修改订单总额后保存，以表格订单总额重新计算订单和明细金额。"""
         from sqlalchemy import select
 
         from models import Order, OrderItem
@@ -1686,7 +1731,7 @@ class TestSaveOrder:
         save_window._input_text.setPlainText("01/10")
         save_window._do_parse()
         save_window._on_add_result()
-        save_window._order_table.item(0, 5).setText("25")
+        save_window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).setText("25")
         assert save_window._table_user_adjusted is True
 
         with (
@@ -1738,7 +1783,7 @@ class TestSaveOrder:
         save_window._input_text.setPlainText("01/10")
         save_window._do_parse()
         save_window._on_add_result()
-        save_window._order_table.item(0, 5).setText("abc")
+        save_window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).setText("abc")
         with patch("ui.windows.record_order_window.QMessageBox.warning") as warning:
             save_window._on_save_order()
         warning.assert_called_once()
@@ -1767,7 +1812,7 @@ class TestSaveOrder:
         save_window._input_text.setPlainText("01,02,03各10")
         save_window._do_parse()
         save_window._on_add_result()
-        save_window._order_table.item(0, 5).setText("45")
+        save_window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).setText("45")
 
         with (
             patch(
@@ -1803,8 +1848,28 @@ class TestSaveOrder:
         window._on_add_result()
 
         assert "结算风险" not in window._output_text.toPlainText()
-        assert window._order_table.horizontalHeaderItem(10).text() == "结算支持"
-        assert window._order_table.item(0, 10).text() == "支持"
+        assert window._order_table.horizontalHeaderItem(_TableColumn.SETTLEMENT_SUPPORT).text() == "结算支持"
+        support_item = window._order_table.item(0, _TableColumn.SETTLEMENT_SUPPORT)
+        assert support_item.text() == "支持"
+        assert "正式结算已支持" in support_item.toolTip()
+
+    def test_unsupported_four_zodiac_keeps_support_text_and_tooltip(self, window):
+        window._parsed_results = [
+            ParseResult(
+                success=True,
+                category="四肖",
+                amount=70,
+                total=70,
+                zodiac_groups=[("猪", ()), ("牛", ()), ("马", ()), ("虎", ())],
+                original_text="猪牛马虎四肖70",
+            )
+        ]
+
+        window._on_add_result()
+
+        support_item = window._order_table.item(0, _TableColumn.SETTLEMENT_SUPPORT)
+        assert support_item.text() == "暂不支持"
+        assert "暂不支持正式结算" in support_item.toolTip()
 
     def test_unsupported_play_preview_shows_settlement_risk(self, window):
         """不支持正式结算的可保存玩法会在预览中显示风险提示。"""
@@ -1830,7 +1895,10 @@ class TestSaveOrder:
         assert window._order_table.rowCount() == 4
         assert [window._order_table.item(row, 1).text() for row in range(4)] == ["平特一肖"] * 4
         assert [window._order_table.item(row, 2).text() for row in range(4)] == ["龙", "猪", "鸡", "猴"]
-        assert [window._order_table.item(row, 5).text() for row in range(4)] == ["20"] * 4
+        assert [
+            window._order_table.item(row, _TableColumn.AMOUNT).text()
+            for row in range(4)
+        ] == ["20"] * 4
 
     def test_unsupported_play_save_cancel_does_not_persist(self, save_window, session_factory):
         """保存不支持玩法时用户取消确认，不写订单。"""
@@ -1924,10 +1992,10 @@ class TestNoExternalDependencies:
 
 
 class TestAmountTotalSemanticsInTable:
-    """金额列 = r.total（总金额），每号金额列 = r.amount。"""
+    """金额列 = r.amount，订单总额列 = r.total。"""
 
     def test_zodiac_single_row_with_total(self, window):
-        """生肖类合并为一行，金额列为总金额。"""
+        """生肖类合并为一行，金额与订单总额分别显示。"""
         window._input_text.setPlainText("兔各20")
         window._do_parse()
         window._on_add_result()
@@ -1935,22 +2003,24 @@ class TestAmountTotalSemanticsInTable:
         assert window._order_table.rowCount() == 1
         nums_text = window._order_table.item(0, 2).text()  # 订单信息
         assert nums_text == "04,16,28,40"
-        amt = window._order_table.item(0, 5).text()  # 金额 = r.total
-        assert amt == "80"
-        per_num = window._order_table.item(0, 6).text()  # 每号金额 = r.amount
-        assert per_num == "20"
+        amount = window._order_table.item(0, _TableColumn.AMOUNT).text()
+        assert amount == "20"
+        total_amount = window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).text()
+        assert total_amount == "80"
         assert "80" in window._lbl_total.text()
 
     def test_mixed_parse_results_add_correctly(self, window):
-        """多行解析结果各占一行，金额为各行的总金额。"""
+        """多行解析结果各占一行，金额与订单总额不交换。"""
         window._input_text.setPlainText("兔各10\n马各5")
         window._do_parse()
         window._on_add_result()
         # 两个解析结果各占一行
         assert window._order_table.rowCount() == 2
-        # 兔各10: 总金额 40；马各5: 总金额 25；合计 65
-        assert window._order_table.item(0, 5).text() == "40"
-        assert window._order_table.item(1, 5).text() == "25"
+        # 兔各10: 金额 10 / 总额 40；马各5: 金额 5 / 总额 25；合计 65
+        assert window._order_table.item(0, _TableColumn.AMOUNT).text() == "10"
+        assert window._order_table.item(1, _TableColumn.AMOUNT).text() == "5"
+        assert window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).text() == "40"
+        assert window._order_table.item(1, _TableColumn.TOTAL_AMOUNT).text() == "25"
         assert "65" in window._lbl_total.text()
 
     def test_special_zodiac_result_keeps_pingte_bet_type_in_table(self, window):
@@ -1964,7 +2034,8 @@ class TestAmountTotalSemanticsInTable:
         assert window._order_table.rowCount() == 1
         assert window._order_table.item(0, 1).text() == "平特一肖"
         assert window._order_table.item(0, 2).text() == "马,蛇"
-        assert window._order_table.item(0, 5).text() == "20"
+        assert window._order_table.item(0, _TableColumn.AMOUNT).text() == "10"
+        assert window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).text() == "20"
 
 
 # ══════════════════════════════════════════════════════════════════════

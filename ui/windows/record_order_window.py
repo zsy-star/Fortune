@@ -3,6 +3,7 @@
 import html
 import re
 from decimal import Decimal, InvalidOperation
+from enum import IntEnum
 
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtWidgets import (
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QGroupBox,
+    QHeaderView,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -40,6 +42,21 @@ from services.settings_service import SettingsService
 from ui.app_events import app_events
 from ui.unavailable import UNAVAILABLE_TOOLTIP
 
+
+class _TableColumn(IntEnum):
+    REGION = 0
+    BET_TYPE = 1
+    ORDER_INFO = 2
+    COMBINATION_TYPE = 3
+    CALCULATION_METHOD = 4
+    AMOUNT = 5
+    TOTAL_AMOUNT = 6
+    IS_CUSTOM = 7
+    DECLARER = 8
+    REMARK = 9
+    SETTLEMENT_SUPPORT = 10
+
+
 _TABLE_COLUMNS = [
     "区域",
     "投注类型",
@@ -47,7 +64,7 @@ _TABLE_COLUMNS = [
     "复选类型",
     "计算方式",
     "金额",
-    "每号金额",
+    "订单总额",
     "是否自定义",
     "申报人",
     "备注",
@@ -493,38 +510,38 @@ class RecordOrderWindow(QMainWindow):
                         (
                             "平特一肖",
                             ",".join(name for name, _ in r.zodiac_groups),
-                            r.total,
                             r.amount,
+                            r.total,
                         )
                     ]
                 elif r.category == "N不中":
                     table_entries = [
-                        ("N不中", ",".join(f"{n:02d}" for n in r.numbers), r.total, r.amount)
+                        ("N不中", ",".join(f"{n:02d}" for n in r.numbers), r.amount, r.total)
                     ]
                 elif r.category == "平尾":
                     table_entries = [
-                        ("平尾", ",".join(str(tail) for tail in r.pingwei_tails), r.total, r.amount)
+                        ("平尾", ",".join(str(tail) for tail in r.pingwei_tails), r.amount, r.total)
                     ]
                 elif r.category in {"二中二", "三中三", "三中二"} and r.lianma_groups:
                     selection = "-".join(
                         "(" + "-".join(f"{number:02d}" for number in group) + ")"
                         for group in r.lianma_groups
                     )
-                    table_entries = [(r.category, selection, r.total, r.amount)]
+                    table_entries = [(r.category, selection, r.amount, r.total)]
                 elif r.category == "四肖" and r.zodiac_groups:
                     table_entries = [
-                        ("四肖", ",".join(name for name, _ in r.zodiac_groups), r.total, r.amount)
+                        ("四肖", ",".join(name for name, _ in r.zodiac_groups), r.amount, r.total)
                     ]
                 elif r.category in {"连肖", "拖肖", "托肖", "有肖", "友肖", "胆肖"} and r.zodiac_groups:
                     table_entries = [
-                        ("连肖", ",".join(name for name, _ in r.zodiac_groups), r.total, r.amount)
+                        ("连肖", ",".join(name for name, _ in r.zodiac_groups), r.amount, r.total)
                     ]
                 else:
                     table_entries = [
-                        ("特码", ",".join(f"{n:02d}" for n in r.numbers), r.total, r.amount)
+                        ("特码", ",".join(f"{n:02d}" for n in r.numbers), r.amount, r.total)
                     ]
 
-                for bet_type_text, selection_text, total_amount, per_item_amount in table_entries:
+                for bet_type_text, selection_text, amount, total_amount in table_entries:
                     row = self._order_table.rowCount()
                     self._order_table.insertRow(row)
                     items = [
@@ -533,15 +550,20 @@ class RecordOrderWindow(QMainWindow):
                         QTableWidgetItem(selection_text),  # 订单信息
                         QTableWidgetItem(""),  # 复选类型
                         QTableWidgetItem(calc_method),  # 计算方式
-                        QTableWidgetItem(f"{float(total_amount):g}"),  # 金额（总金额）
-                        QTableWidgetItem(f"{float(per_item_amount):g}"),  # 每号/项金额
+                        QTableWidgetItem(f"{float(amount):g}"),  # 金额（每号/组/单注金额）
+                        QTableWidgetItem(f"{float(total_amount):g}"),  # 订单总额
                         QTableWidgetItem("标准"),  # 是否自定义
                         QTableWidgetItem(reporter),  # 申报人
                         QTableWidgetItem(r.original_text),  # 备注
                         self._support_item_for_table(bet_type_text, selection_text, r.original_text),
                     ]
                     for col, item in enumerate(items):
-                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        if col in (_TableColumn.AMOUNT, _TableColumn.TOTAL_AMOUNT):
+                            item.setTextAlignment(
+                                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                            )
+                        else:
+                            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                         self._order_table.setItem(row, col, item)
         finally:
             self._table_loading = False
@@ -768,13 +790,13 @@ class RecordOrderWindow(QMainWindow):
             rows.append(
                 IntakeTableRow(
                     row_number=row + 1,
-                    region=self._table_text(row, 0),
-                    bet_type=self._table_text(row, 1),
-                    selection=self._table_text(row, 2),
-                    total_amount=self._table_text(row, 5),
-                    per_item_amount=self._table_text(row, 6),
-                    note=self._table_text(row, 9),
-                    source_line=self._table_text(row, 9) or None,
+                    region=self._table_text(row, _TableColumn.REGION),
+                    bet_type=self._table_text(row, _TableColumn.BET_TYPE),
+                    selection=self._table_text(row, _TableColumn.ORDER_INFO),
+                    total_amount=self._table_text(row, _TableColumn.TOTAL_AMOUNT),
+                    per_item_amount=self._table_text(row, _TableColumn.AMOUNT),
+                    note=self._table_text(row, _TableColumn.REMARK),
+                    source_line=self._table_text(row, _TableColumn.REMARK) or None,
                 )
             )
         return rows
@@ -787,7 +809,7 @@ class RecordOrderWindow(QMainWindow):
         """更新订单表中的总额标签。"""
         total = Decimal("0")
         for row in range(self._order_table.rowCount()):
-            item = self._order_table.item(row, 5)  # "金额" 列
+            item = self._order_table.item(row, _TableColumn.TOTAL_AMOUNT)
             if item:
                 try:
                     total += Decimal(item.text().strip())
@@ -1260,20 +1282,26 @@ class RecordOrderWindow(QMainWindow):
         self._order_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._order_table.setEditTriggers(QAbstractItemView.EditTrigger.AllEditTriggers)
         self._order_table.itemChanged.connect(self._on_table_item_changed)
-        self._order_table.horizontalHeader().setStretchLastSection(True)
         self._order_table.verticalHeader().setVisible(False)
-        # 列宽：订单信息列给足空间展示逗号拼接的号码
+        self._order_table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self._order_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # 固定业务列保持可读，订单信息列优先占用剩余空间；窗口变窄时使用横向滚动。
         header = self._order_table.horizontalHeader()
-        header.resizeSection(0, 60)   # 区域
-        header.resizeSection(1, 70)   # 投注类型
-        header.resizeSection(2, 200)  # 订单信息（号码列表，重点列）
-        header.resizeSection(3, 70)   # 复选类型
-        header.resizeSection(4, 70)   # 计算方式
-        header.resizeSection(5, 70)   # 金额
-        header.resizeSection(6, 70)   # 每号金额
-        header.resizeSection(7, 70)   # 是否自定义
-        header.resizeSection(8, 80)   # 申报人
-        header.resizeSection(10, 80)  # 结算支持
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(60)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.resizeSection(_TableColumn.REGION, 60)
+        header.resizeSection(_TableColumn.BET_TYPE, 80)
+        header.resizeSection(_TableColumn.ORDER_INFO, 240)
+        header.resizeSection(_TableColumn.COMBINATION_TYPE, 90)
+        header.resizeSection(_TableColumn.CALCULATION_METHOD, 90)
+        header.resizeSection(_TableColumn.AMOUNT, 90)
+        header.resizeSection(_TableColumn.TOTAL_AMOUNT, 100)
+        header.resizeSection(_TableColumn.IS_CUSTOM, 90)
+        header.resizeSection(_TableColumn.DECLARER, 90)
+        header.resizeSection(_TableColumn.REMARK, 140)
+        header.resizeSection(_TableColumn.SETTLEMENT_SUPPORT, 120)
+        header.setSectionResizeMode(_TableColumn.ORDER_INFO, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self._order_table, stretch=1)
 
         summary = QHBoxLayout()
