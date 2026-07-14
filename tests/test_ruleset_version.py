@@ -126,6 +126,11 @@ def test_play_rule_metadata_describes_safe_and_blocked_v2_plays() -> None:
     assert unsafe.availability is SettlementAvailability.BLOCKED_PENDING_RULE_FIX
     assert unsafe.draw_scope is DrawScope.ALL_SEVEN
     assert non_hit_alias is get_play_rule("N不中")
+    assert non_hit_alias is not None
+    assert non_hit_alias.availability is SettlementAvailability.SUPPORTED
+    assert non_hit_alias.draw_scope is DrawScope.REGULAR_SIX
+    assert non_hit_alias.matcher_id == "non_hit_number_v2"
+    assert non_hit_alias.matcher_version == "2.0"
 
 
 @pytest.mark.parametrize(
@@ -136,7 +141,6 @@ def test_play_rule_metadata_describes_safe_and_blocked_v2_plays() -> None:
         "平尾",
         "连肖",
         "连肖复选",
-        "N不中",
         "三中二",
         "几中几复选",
         "包半波",

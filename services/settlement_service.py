@@ -642,7 +642,7 @@ class SettlementService:
             if item.is_winner is False
             else None
         )
-        return {
+        snapshot = {
             "order_item_id": item.order_item_id,
             "bet_type": item.bet_type,
             "normalized_bet_type": item.normalized_bet_type,
@@ -692,6 +692,15 @@ class SettlementService:
             "selection_unit": item.selection_unit,
             "draw_scope": item.draw_scope,
         }
+        if item.normalized_bet_type == NON_HIT_NUMBER:
+            snapshot.update(
+                {
+                    "regular_numbers": list(item.regular_numbers),
+                    "special_number": item.special_number,
+                    "hit_regular_numbers": list(item.hit_regular_numbers),
+                }
+            )
+        return snapshot
 
     def _to_ledger_result(self, record: SettlementRecord) -> SettlementLedgerResult:
         order = record.order

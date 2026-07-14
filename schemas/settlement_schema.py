@@ -30,6 +30,9 @@ class ItemSettlementResult:
     matched_tails: tuple[str, ...] = ()
     selected_numbers: tuple[str, ...] = ()
     hit_numbers: tuple[str, ...] = ()
+    regular_numbers: tuple[str, ...] = ()
+    special_number: str | None = None
+    hit_regular_numbers: tuple[str, ...] = ()
     matched_numbers: tuple[str, ...] = ()
     selected_groups: tuple[str, ...] = ()
     matched_groups: tuple[str, ...] = ()

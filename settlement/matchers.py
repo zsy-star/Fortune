@@ -272,18 +272,28 @@ def match_number_fuxuan(
 def match_non_hit_number(
     selection: str,
     regular_numbers: list[str],
-    special_number: str,
+    _special_number: str,
 ) -> tuple[bool, str | None, str]:
-    draw_numbers = [*(normalize_number(number) for number in regular_numbers), normalize_number(special_number)]
-    draw_set = set(draw_numbers)
+    normalized_regular = [normalize_number(number) for number in regular_numbers]
+    regular_set = set(normalized_regular)
     selected_numbers = [normalize_number(token) for token in selection.split(",") if token]
-    hit_numbers = [number for number in selected_numbers if number in draw_set]
-    matched = not hit_numbers
-    draw_text = ",".join(draw_numbers)
+    hit_regular_numbers = [number for number in selected_numbers if number in regular_set]
+    matched = not hit_regular_numbers
+    regular_text = ",".join(normalized_regular)
     selected_text = ",".join(selected_numbers)
     if matched:
-        return True, None, f"不中使用全部开奖号码 {draw_text}，投注号码 {selected_text} 均未出现"
-    return False, hit_numbers[0], f"不中使用全部开奖号码 {draw_text}，投注号码 {selected_text} 中出现 {','.join(hit_numbers)}"
+        return (
+            True,
+            None,
+            f"N不中只检查前6个平码 {regular_text}，投注号码 {selected_text} 均未出现；"
+            "特别号不参与N不中判断",
+        )
+    return (
+        False,
+        hit_regular_numbers[0],
+        f"N不中只检查前6个平码 {regular_text}，投注号码 {selected_text} 中出现 "
+        f"{','.join(hit_regular_numbers)}；特别号不参与N不中判断",
+    )
 
 
 def match_six_special_zodiac(

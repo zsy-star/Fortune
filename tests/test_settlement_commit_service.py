@@ -190,7 +190,7 @@ def test_commit_winning_special_number_updates_status_and_writes_log(session_fac
     assert "中奖 1" in logs[0].description
 
 
-def test_configured_odds_cannot_bypass_non_hit_v2_settlement_gate(session_factory) -> None:
+def test_configured_ten_non_hit_v2_can_commit_with_group_payout(session_factory) -> None:
     settings = SettingsService(session_factory)
     plan = settings.ensure_default_plan()
     settings.add_item(plan.id, "十不中", "5.0", "0")
@@ -206,12 +206,21 @@ def test_configured_odds_cannot_bypass_non_hit_v2_settlement_gate(session_factor
     )
     draw = create_draw(DrawService(session_factory), special_number="01")
 
-    with pytest.raises(SettlementDataError, match="V2规则修复尚未完成"):
-        SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+    result = SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
 
-    assert OrderService(session_factory).get_order(order.id).status == "active"
-    assert settlement_record_count(session_factory) == 0
-    assert settlement_log_count(session_factory) == 0
+    assert result.win_count == 1
+    assert result.total_bet_amount == 4000
+    assert result.total_payout_amount == 20000
+    assert OrderService(session_factory).get_order(order.id).status == "settled"
+    assert settlement_record_count(session_factory) == 1
+    assert settlement_log_count(session_factory) == 1
+    record = SettlementService(session_factory).get_settlement_record_by_order_id(order.id)
+    assert record is not None
+    item = record.result_snapshot["items"][0]
+    assert item["matcher_id"] == "non_hit_number_v2"
+    assert item["matcher_version"] == "2.0"
+    assert item["odds_key_used"] == "十不中"
+    assert item["hit_regular_numbers"] == []
 
 
 @pytest.mark.parametrize("ruleset_version", [FORTUNE_RULESET_2026_V1, "UNKNOWN_RULESET", ""])

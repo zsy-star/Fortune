@@ -28,15 +28,15 @@ def test_number_fuxuan_is_blocked_even_when_note_is_valid() -> None:
     assert "V2规则修复尚未完成" in result.reason
 
 
-def test_ten_non_hit_is_blocked_pending_v2_rule_fix() -> None:
+def test_ten_non_hit_is_supported_by_v2_rules() -> None:
     result = SettlementSupportService().check_item(
         "N不中",
         "01,03,06,10,13,15,18,22,31,43",
     )
 
-    assert not result.is_supported
-    assert result.status == "unsupported"
-    assert "V2规则修复尚未完成" in result.reason
+    assert result.is_supported
+    assert result.status == "supported"
+    assert result.normalized_bet_type == "non_hit_number"
 
 
 def test_unsupported_saveable_play_returns_user_readable_message() -> None:
@@ -96,7 +96,6 @@ def test_order_item_summary_lists_unsupported_items() -> None:
         "平尾",
         "连肖",
         "连肖复选",
-        "N不中",
         "三中二",
         "几中几复选",
         "包半波",

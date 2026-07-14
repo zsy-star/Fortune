@@ -107,7 +107,7 @@ def test_n_non_hit_misses_when_any_selected_number_appears(session_factory) -> N
     assert item.hit_numbers == ("06",)
 
 
-def test_n_non_hit_misses_when_special_number_appears(session_factory) -> None:
+def test_n_non_hit_ignores_special_number_when_regular_numbers_do_not_hit(session_factory) -> None:
     order = create_order(
         OrderService(session_factory),
         items=[OrderItemCreate(bet_type="N不中", selection="08,09,10,11,12,13,14,15,16,18", amount="4000")],
@@ -118,9 +118,11 @@ def test_n_non_hit_misses_when_special_number_appears(session_factory) -> None:
     item = preview.results[0]
 
     assert item.is_supported is True
-    assert item.is_winner is False
-    assert item.hit_numbers == ("18",)
+    assert item.is_winner is True
+    assert item.hit_numbers == ()
+    assert item.hit_regular_numbers == ()
     assert item.draw_numbers[-1] == "18"
+    assert "特别号不参与N不中判断" in item.reason
 
 
 def test_non_hit_invalid_number_is_unsupported(session_factory) -> None:

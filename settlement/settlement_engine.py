@@ -211,7 +211,11 @@ class SettlementEngine:
             draw_special_zodiac=draw_special_zodiac,
             selected_zodiacs=selected_zodiacs,
             matched_zodiac=matched_zodiac,
-            matcher_id=getattr(matcher, "__name__", None),
+            matcher_id=(
+                play_rule.matcher_id
+                if play_rule and play_rule.matcher_id
+                else getattr(matcher, "__name__", None)
+            ),
             **rule_audit_fields,
             **common_draw_fields,
             **match_fields,
@@ -349,10 +353,16 @@ class SettlementEngine:
             }
         if normalized_type == NON_HIT_NUMBER:
             selected_numbers = tuple(token for token in selection.split(",") if token)
-            draw_set = set(draw_numbers)
+            regular_set = set(regular_numbers)
+            hit_regular_numbers = tuple(
+                number for number in selected_numbers if number in regular_set
+            )
             return {
                 "selected_numbers": selected_numbers,
-                "hit_numbers": tuple(number for number in selected_numbers if number in draw_set),
+                "hit_numbers": hit_regular_numbers,
+                "regular_numbers": regular_numbers,
+                "special_number": special_number,
+                "hit_regular_numbers": hit_regular_numbers,
             }
         if normalized_type == REGULAR_NUMBER:
             selected_numbers = tuple(token for token in selection.split(",") if token)

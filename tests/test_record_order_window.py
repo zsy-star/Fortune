@@ -327,7 +327,7 @@ class TestInputParsing:
         assert [window._order_table.item(row, _TableColumn.TOTAL_AMOUNT).text() for row in range(4)] == ["10"] * 4
         assert [window._order_table.item(row, _TableColumn.SETTLEMENT_SUPPORT).text() for row in range(4)] == ["暂不支持"] * 4
 
-    def test_ten_non_hit_enters_table_as_one_v2_blocked_group(self, window):
+    def test_ten_non_hit_enters_table_as_one_v2_supported_group(self, window):
         window._input_text.setPlainText("6/18/31/43/22/10/03/15/01/13十不中各4000")
         window._do_parse()
         window._on_add_result()
@@ -337,7 +337,7 @@ class TestInputParsing:
         assert window._order_table.item(0, 2).text() == "01,03,06,10,13,15,18,22,31,43"
         assert window._order_table.item(0, _TableColumn.AMOUNT).text() == "4000"
         assert window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).text() == "4000"
-        assert window._order_table.item(0, _TableColumn.SETTLEMENT_SUPPORT).text() == "暂不支持"
+        assert window._order_table.item(0, _TableColumn.SETTLEMENT_SUPPORT).text() == "支持"
 
 
 class TestNicknamePreview:

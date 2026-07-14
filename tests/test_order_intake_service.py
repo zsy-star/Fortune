@@ -505,7 +505,7 @@ def test_ten_non_hit_intake_saves_one_group_item(text: str) -> None:
     assert item.bet_type == "N不中"
     assert item.selection == "01,03,06,10,13,15,18,22,31,43"
     assert item.amount == Decimal("4000")
-    assert preview.items[0].settlement_support_status == "unsupported"
+    assert preview.items[0].settlement_support_status == "supported"
 
 
 def test_number_fuxuan_intake_saves_one_summary_item_with_note() -> None:
