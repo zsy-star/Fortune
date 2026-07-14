@@ -201,6 +201,30 @@ class TestInputParsing:
         r = window._parsed_results[0]
         assert r.region == "香港"
 
+    def test_hong_kong_blue_alias_has_canonical_success_preview(self, window):
+        window._input_text.setPlainText("香港兰波各数280")
+        window._do_parse()
+
+        assert len(window._parsed_results) == 1
+        result = window._parsed_results[0]
+        assert result.region == "香港"
+        assert result.category == "蓝波"
+        assert result.amount == 280
+        assert result.total == 4480
+        output = window._output_text.toPlainText()
+        assert "香港: 蓝波: 03-04-09-10-14-15-20-25-26-31-36-37-41-42-47-48" in output
+        assert "每号 280，号码数 16，合计 4480" in output
+        assert "无法识别" not in output
+
+    def test_mixed_zodiac_and_number_pairs_show_three_success_results(self, window):
+        window._input_text.setPlainText("鼠各数130-31/75-43/75")
+        window._do_parse()
+
+        assert len(window._parsed_results) == 3
+        assert [result.amount for result in window._parsed_results] == [130, 75, 75]
+        assert sum(result.total for result in window._parsed_results) == 280
+        assert "无法识别" not in window._output_text.toPlainText()
+
     def test_ranked_lianxiao_enters_table_as_one_group(self, window):
         window._input_text.setPlainText("四连肖猪牛马虎 70")
         window._do_parse()
@@ -237,6 +261,104 @@ class TestInputParsing:
         assert window._order_table.item(0, _TableColumn.AMOUNT).text() == "4000"
         assert window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).text() == "4000"
         assert window._order_table.item(0, _TableColumn.SETTLEMENT_SUPPORT).text() == "支持"
+
+
+class TestNicknamePreview:
+    def test_nickname_is_green_preview_context_not_error(self, window):
+        window._input_text.setPlainText("王大定:\n2.14.38.26各100")
+
+        window._do_parse()
+
+        assert len(window._last_parse_results) == 1
+        result = window._last_parse_results[0]
+        assert result.success
+        assert result.nickname == "王大定"
+        assert result.nickname_context_changed
+        output = window._output_text.toPlainText()
+        assert output.index("昵称识别：王大定") < output.index("澳门: 特码: 2-14-38-26 各数 100")
+        assert "无法识别: 王大定" not in output
+        assert "#2e7d32" in window._output_text.toHtml().lower()
+
+    def test_nickname_precedes_order_error_without_becoming_error(self, window):
+        window._input_text.setPlainText("王大定:\n错误内容")
+
+        window._do_parse()
+
+        assert len(window._last_parse_results) == 1
+        assert not window._last_parse_results[0].success
+        output = window._output_text.toPlainText()
+        assert output.index("昵称识别：王大定") < output.index("无法识别: 错误内容")
+        assert "无法识别: 王大定" not in output
+
+    def test_nickname_only_shows_neutral_notice_and_cannot_save(self, window):
+        window._input_text.setPlainText("王大定:")
+        window._do_parse()
+
+        assert window._parsed_results == []
+        assert window._last_parse_results == []
+        assert window._order_table.rowCount() == 0
+        output = window._output_text.toPlainText()
+        assert "昵称识别：王大定" in output
+        assert "已识别昵称“王大定”，但未发现可保存订单。" in output
+
+        with patch("ui.windows.record_order_window.QMessageBox.warning") as warning:
+            window._on_save_order()
+        warning.assert_called_once()
+        assert "未发现可保存订单" in warning.call_args.args[2]
+
+    def test_nickname_never_enters_preview_table_or_remark(self, window):
+        window._input_text.setPlainText("王大定:\n2.14.38.26各100")
+        window._do_parse()
+        window._on_add_result()
+
+        assert window._order_table.columnCount() == 11
+        assert window._order_table.rowCount() == 1
+        values = [
+            window._order_table.item(0, column).text()
+            for column in range(window._order_table.columnCount())
+        ]
+        assert all("王大定" not in value for value in values)
+        assert window._order_table.item(0, _TableColumn.REMARK).text() == "2.14.38.26各100"
+        assert window._order_table.item(0, _TableColumn.AMOUNT).text() == "100"
+        assert window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).text() == "400"
+
+    def test_repeated_nickname_titles_keep_input_display_order(self, window):
+        window._input_text.setPlainText(
+            "老陈百宝箱:\n羊猴龙虎鼠各号100\n\n"
+            "老陈百宝箱:\n平鼠羊个500\n\n"
+            "老陈百宝箱:\n33.21.45个150\n\n"
+            "老陈百宝箱:\n澳门38.26.40.28.10.34.06.30.11.35各数两元"
+        )
+
+        window._do_parse()
+
+        assert len(window._last_parse_results) == 4
+        assert window._output_text.toPlainText().count("昵称识别：老陈百宝箱") == 4
+        assert all(result.nickname == "老陈百宝箱" for result in window._last_parse_results)
+        assert all(result.original_text != "老陈百宝箱:" for result in window._last_parse_results)
+        assert window._last_parse_results[-1].amount == 2
+        assert window._last_parse_results[-1].region == "澳门"
+
+    def test_region_play_titles_and_inline_colon_orders_are_not_nicknames(self, window):
+        window._input_text.setPlainText("澳门:\n特:\n01各100\n三中三：13-23-07=15")
+
+        window._do_parse()
+
+        assert len(window._last_parse_results) == 2
+        assert all(result.success for result in window._last_parse_results)
+        assert all(result.nickname == "" for result in window._last_parse_results)
+        assert "昵称识别" not in window._output_text.toPlainText()
+
+    def test_nickname_does_not_add_partial_failure(self, window):
+        window._input_text.setPlainText("王大定:\n01/10\n50/10")
+
+        window._do_parse()
+
+        assert len(window._last_parse_results) == 2
+        assert sum(result.success for result in window._last_parse_results) == 1
+        failed = [result for result in window._last_parse_results if not result.success]
+        assert len(failed) == 1
+        assert failed[0].original_text == "50/10"
 
 
 class TestAdvancedOptionsFirstStage:
@@ -310,6 +432,17 @@ class TestAdvancedOptionsFirstStage:
 
         assert window._radio_hk.isChecked()
         assert window._parsed_results[0].region == "香港"
+        assert "已识别地区：香港" in window._advanced_status.text()
+
+    def test_detect_region_hong_kong_alias_sets_radio_and_results(self, window):
+        checkboxes = self._checkboxes(window)
+        checkboxes["识别地区"].setChecked(True)
+        window._input_text.setPlainText("港彩篮波每号280")
+        window._do_parse()
+
+        assert window._radio_hk.isChecked()
+        assert window._parsed_results[0].region == "香港"
+        assert window._parsed_results[0].category == "蓝波"
         assert "已识别地区：香港" in window._advanced_status.text()
 
     def test_detect_region_macau_sets_radio_and_results(self, window):

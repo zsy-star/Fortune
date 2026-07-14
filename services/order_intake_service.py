@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 
 from sqlalchemy.orm import Session
@@ -22,7 +23,7 @@ from services.order_intake_mapper import (
     resolve_region,
     to_decimal_amount,
 )
-from services.order_parser import ParseOptions, parse_lines
+from services.order_parser import ParseOptions, parse_lines, strip_nickname_title_lines
 from services.order_service import OrderService
 from settlement.bet_normalizer import BetTypeNormalizer
 from settlement.bet_normalizer import (
@@ -72,13 +73,14 @@ class OrderIntakeService:
         zodiac_year: int | None = None,
     ) -> OrderIntakePreview:
         selected_zodiac_year = zodiac_year or (parse_options.zodiac_year if parse_options else None) or get_default_zodiac_year()
+        persistable_raw_text = strip_nickname_title_lines(raw_text)
         metadata = IntakeMetadata(
             customer_name=customer_name,
             config_plan_name=config_plan_name,
             channel=channel,
             region=region,
             source=source,
-            raw_text=raw_text,
+            raw_text=persistable_raw_text,
             zodiac_year=selected_zodiac_year,
         )
         parsed_results = parse_lines(raw_text, options=parse_options, zodiac_year=selected_zodiac_year)
@@ -89,6 +91,10 @@ class OrderIntakeService:
         parsed_result,
         metadata: IntakeMetadata,
     ) -> OrderIntakePreview:
+        metadata = replace(
+            metadata,
+            raw_text=strip_nickname_title_lines(metadata.raw_text),
+        )
         if isinstance(parsed_result, list):
             lines = [line.strip() for line in metadata.raw_text.splitlines() if line.strip()]
             if len(lines) != len(parsed_result):
@@ -102,6 +108,10 @@ class OrderIntakeService:
         rows: list[IntakeTableRow],
         metadata: IntakeMetadata,
     ) -> OrderIntakePreview:
+        metadata = replace(
+            metadata,
+            raw_text=strip_nickname_title_lines(metadata.raw_text),
+        )
         preview = OrderIntakePreview(
             raw_text=(metadata.raw_text or "").strip() or self._raw_text_from_table_rows(rows),
             region=None,

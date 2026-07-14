@@ -34,9 +34,21 @@ from PySide6.QtWidgets import (
 
 from domain.zodiac_config import MAX_ZODIAC_YEAR, MIN_ZODIAC_YEAR, get_default_zodiac_year
 from schemas.order_intake_schema import IntakeMetadata, IntakeTableRow
-from services.order_intake_display_formatter import format_parse_result
+from services.order_intake_display_formatter import (
+    format_nickname_recognition,
+    format_nickname_without_orders,
+    format_parse_result,
+)
 from services.order_intake_service import OrderIntakeService
-from services.order_parser import ParseOptions, ParseResult, parse_lines
+from services.order_parser import (
+    ParseOptions,
+    ParseResult,
+    extract_nickname_context,
+    extract_nickname_titles,
+    extract_region_marker,
+    parse_lines,
+    strip_nickname_title_lines,
+)
 from services.settlement_support_service import SettlementSupportService
 from services.settings_service import SettingsService
 from ui.app_events import app_events
@@ -306,7 +318,7 @@ class RecordOrderWindow(QMainWindow):
                 messages.append("智能纠错已检查，无需修改")
 
         if self._is_checked("_chk_detect_region"):
-            region, error = self._detect_region(prepared)
+            region, error = self._detect_region(strip_nickname_title_lines(prepared))
             if error:
                 self._last_region_conflict = error
                 self._set_advanced_status(error)
@@ -354,11 +366,13 @@ class RecordOrderWindow(QMainWindow):
         return "".join(chars)
 
     def _detect_region(self, text: str) -> tuple[str | None, str | None]:
-        detected = [
-            region
-            for region, pattern in _REGION_MARKERS.items()
-            if pattern.search(text)
-        ]
+        detected = list(
+            dict.fromkeys(
+                region
+                for raw_line in text.splitlines()
+                if (region := extract_region_marker(raw_line)) is not None
+            )
+        )
         if len(detected) > 1:
             return None, "地区冲突：文本同时包含澳门和香港，请拆分订单或手动确认地区。"
         return (detected[0], None) if detected else (None, None)
@@ -372,14 +386,21 @@ class RecordOrderWindow(QMainWindow):
             )
         else:
             replacements = (
+                (r"^\s*(?:港彩|香江|香巷|香岗|香港的|港的)", "香港 "),
                 (r"香港盘", "香港 "),
                 (r"港盘", "香港 "),
-                (r"(^|[\s,，、;；。])港(?=\s|$|[0-9一-龥])", r"\1香港"),
+                (r"(^|[\s,，、;；。])港(?![澳口彩的])(?=\s|$|[0-9一-龥])", r"\1香港"),
             )
-        normalized = text
-        for pattern, replacement in replacements:
-            normalized = re.sub(pattern, replacement, normalized)
-        return normalized
+        normalized_lines: list[str] = []
+        for raw_line in text.splitlines():
+            if extract_nickname_context(raw_line):
+                normalized_lines.append(raw_line)
+                continue
+            normalized = raw_line
+            for pattern, replacement in replacements:
+                normalized = re.sub(pattern, replacement, normalized)
+            normalized_lines.append(normalized)
+        return "\n".join(normalized_lines)
 
     def _set_region(self, region: str) -> None:
         if region == "香港":
@@ -429,10 +450,20 @@ class RecordOrderWindow(QMainWindow):
         # 显示结果（错误行红色，其余保持纯文本格式）
         blocks: list[str] = []
         for r in results:
+            if getattr(r, "nickname_context_changed", False) and getattr(r, "nickname", ""):
+                nickname_text = html.escape(format_nickname_recognition(r.nickname))
+                blocks.append(f"<span style='color:#2e7d32;'>{nickname_text}</span>")
             text = html.escape(format_parse_result(r, default_region=default_region))
             if not r.success:
                 text = f"<span style='color:red;'>{text}</span>"
             blocks.append(text)
+        nickname_titles = extract_nickname_titles(raw)
+        if not results and nickname_titles:
+            for nickname in nickname_titles:
+                nickname_text = html.escape(format_nickname_recognition(nickname))
+                blocks.append(f"<span style='color:#2e7d32;'>{nickname_text}</span>")
+            notice = html.escape(format_nickname_without_orders(nickname_titles[-1]))
+            blocks.append(f"<span style='color:#6b7280;'>{notice}</span>")
         support_lines = self._settlement_support_lines_for_raw(raw)
         if support_lines:
             escaped_lines = "\n".join(html.escape(line) for line in support_lines)
@@ -652,6 +683,14 @@ class RecordOrderWindow(QMainWindow):
         raw = self._current_raw_text_for_save()
         if not raw.strip() and self._order_table.rowCount() == 0:
             self._show_warning("请输入订单内容")
+            return
+        nickname_titles = extract_nickname_titles(raw)
+        if (
+            nickname_titles
+            and not strip_nickname_title_lines(raw)
+            and self._order_table.rowCount() == 0
+        ):
+            self._show_warning(format_nickname_without_orders(nickname_titles[-1]))
             return
         if self._last_region_conflict:
             self._show_warning(self._last_region_conflict)

@@ -5,9 +5,19 @@ from decimal import Decimal
 from services.order_intake_display_formatter import (
     OrderIntakeDisplayItem,
     format_display_item,
+    format_nickname_recognition,
+    format_nickname_without_orders,
     format_parse_result,
 )
 from services.order_parser import parse_lines
+
+
+def test_nickname_display_messages_are_separate_from_order_formatting() -> None:
+    result = parse_lines("王大定:\n2.14.38.26各100")[0]
+
+    assert format_nickname_recognition(result.nickname) == "昵称识别：王大定"
+    assert format_nickname_without_orders(result.nickname) == "已识别昵称“王大定”，但未发现可保存订单。"
+    assert "王大定" not in format_parse_result(result, default_region="澳门")
 
 
 def test_single_number_display() -> None:
@@ -38,6 +48,15 @@ def test_wave_color_display() -> None:
     item = OrderIntakeDisplayItem("澳门", "特码波色", "红波", Decimal("5"))
 
     assert format_display_item(item) == "澳门: 特码: 红波 各数 5"
+
+
+def test_hong_kong_blue_alias_parse_display_uses_canonical_name_numbers_and_total() -> None:
+    result = parse_lines("香港兰波各数280")[0]
+
+    assert format_parse_result(result) == (
+        "香港: 蓝波: 03-04-09-10-14-15-20-25-26-31-36-37-41-42-47-48 "
+        "每号 280，号码数 16，合计 4480"
+    )
 
 
 def test_size_display() -> None:

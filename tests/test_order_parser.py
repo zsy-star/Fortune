@@ -30,17 +30,296 @@
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 
 import pytest
 
+from domain.color_rules import WAVE_NUMBERS
 from services.order_parser import (
     ParseResult,
+    extract_nickname_context,
+    extract_nickname_titles,
+    extract_region_context,
     format_result,
     parse_chinese_integer_amount,
     parse_lines,
     parse_order,
+    strip_nickname_title_lines,
 )
+
+
+@pytest.mark.parametrize(
+    ("title", "nickname"),
+    [
+        ("王大定:", "王大定"),
+        ("王大定：", "王大定"),
+        (" 老陈百宝箱  : ", "老陈百宝箱"),
+        ("昵称 王大定:", "王大定"),
+        ("昵称：王大定", "王大定"),
+        ("Team_7 · 小王:", "Team_7 · 小王"),
+    ],
+)
+def test_extract_nickname_context_supports_strict_title_forms(title: str, nickname: str) -> None:
+    assert extract_nickname_context(title) == nickname
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "澳门:",
+        "香港：",
+        "新澳:",
+        "新奥:",
+        "特:",
+        "特码:",
+        "三中三:",
+        "三中二:",
+        "二中二:",
+        "四连肖:",
+        "十不中:",
+        "平特一肖:",
+        "平尾:",
+        "特码：01各100",
+        "平特一肖：羊500",
+        "三中三：13-23-07=15",
+        "2.14.38.26各100:",
+        "：",
+        "昵称：",
+        "---:",
+    ],
+)
+def test_extract_nickname_context_rejects_titles_orders_and_punctuation(text: str) -> None:
+    assert extract_nickname_context(text) is None
+
+
+@pytest.mark.parametrize(
+    "order_text",
+    [
+        "香港三肖各数280",
+        "牛羊1250",
+        "2.14.38.26各100",
+        "兔鼠羊龙各数280",
+        "鼠各数130-31/75-43/75",
+    ],
+)
+def test_nickname_context_preserves_existing_order_parse_semantics(order_text: str) -> None:
+    baseline = parse_lines(order_text)
+    results = parse_lines(f"王大定:\n{order_text}")
+
+    assert len(results) == len(baseline)
+    assert [
+        (r.success, r.category, r.region, r.numbers, r.amount, r.total, r.error)
+        for r in results
+    ] == [
+        (r.success, r.category, r.region, r.numbers, r.amount, r.total, r.error)
+        for r in baseline
+    ]
+    assert all(result.nickname == "王大定" for result in results)
+    assert results[0].nickname_context_changed
+
+
+def test_nickname_context_displays_once_for_multiple_orders_and_resets_at_blank_block() -> None:
+    results = parse_lines("王大定:\n01/10\n02/20\n\n03/30")
+
+    assert [result.nickname for result in results] == ["王大定", "王大定", ""]
+    assert [result.nickname_context_changed for result in results] == [True, False, False]
+
+
+def test_repeated_nickname_sample_does_not_create_nickname_results() -> None:
+    text = (
+        "老陈百宝箱:\n羊猴龙虎鼠各号100\n\n"
+        "老陈百宝箱:\n平鼠羊个500\n\n"
+        "老陈百宝箱:\n33.21.45个150\n\n"
+        "老陈百宝箱:\n澳门38.26.40.28.10.34.06.30.11.35各数两元"
+    )
+
+    results = parse_lines(text)
+
+    assert len(results) == 4
+    assert all(result.nickname == "老陈百宝箱" for result in results)
+    assert all(result.nickname_context_changed for result in results)
+    assert all("老陈百宝箱" not in result.original_text for result in results)
+    assert results[-1].success and results[-1].region == "澳门"
+    assert results[-1].amount == Decimal("2")
+
+
+def test_region_and_play_titles_keep_priority_over_nickname() -> None:
+    special = parse_lines("澳门:\n特:\n01各100")
+    combination = parse_lines("三中三:\n13-23-07=15")
+
+    assert len(special) == 1
+    assert special[0].success and special[0].region == "澳门"
+    assert special[0].category == "特码" and special[0].nickname == ""
+    assert len(combination) == 1
+    assert combination[0].success and combination[0].category == "三中三"
+    assert combination[0].nickname == ""
+
+
+def test_known_play_prefix_colon_is_order_content_not_nickname() -> None:
+    special = parse_lines("特码：01各100")
+    zodiac = parse_lines("平特一肖：羊500")
+
+    assert special[0].success and special[0].category == "特码"
+    assert zodiac[0].success and zodiac[0].category == "平特一肖"
+    assert not extract_nickname_titles("特码：01各100\n平特一肖：羊500")
+
+
+def test_nickname_only_has_no_results_and_can_be_removed_from_raw_text() -> None:
+    assert parse_lines("王大定:") == []
+    assert extract_nickname_titles("王大定:") == ["王大定"]
+    assert strip_nickname_title_lines("王大定:") == ""
+
+
+def test_nickname_preserves_shared_four_zodiac_block_parser() -> None:
+    order_text = "虎猴鼠龙。兔羊猪鸡四肖各10块钱"
+    baseline = parse_lines(order_text)
+    results = parse_lines(f"王大定:\n{order_text}")
+
+    assert [(r.success, r.category, r.total, r.zodiac_groups) for r in results] == [
+        (r.success, r.category, r.total, r.zodiac_groups) for r in baseline
+    ]
+    assert [result.nickname for result in results] == ["王大定", "王大定"]
+    assert [result.nickname_context_changed for result in results] == [True, False]
+
+
+class TestSafeHomophoneAndRegionAliases:
+    blue_numbers = (3, 4, 9, 10, 14, 15, 20, 25, 26, 31, 36, 37, 41, 42, 47, 48)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "香港蓝波各数280",
+            "香港兰波各数280",
+            "香港篮波各数280",
+            "香港蓝播各数280",
+            "港兰波各280",
+            "港彩兰波每号280",
+            "香巷篮波各数280",
+            "香岗蓝波各注280",
+        ],
+    )
+    def test_hong_kong_blue_wave_aliases_use_domain_numbers(self, text: str) -> None:
+        result = parse_lines(text)[0]
+
+        assert result.success
+        assert result.region == "香港"
+        assert result.category == "蓝波"
+        assert result.numbers == self.blue_numbers == tuple(sorted(WAVE_NUMBERS["蓝波"]))
+        assert result.amount == Decimal("280")
+        assert result.total == Decimal("4480")
+
+    def test_alias_source_text_is_retained_while_category_is_canonical(self) -> None:
+        result = parse_lines("香港兰波各数280")[0]
+
+        assert result.category == "蓝波"
+        assert result.original_text == "兰波各数280"
+
+    @pytest.mark.parametrize("alias", ["香港", "港", "港彩", "香江", "香巷", "香岗", "香港的", "港的"])
+    def test_hong_kong_standalone_region_aliases(self, alias: str) -> None:
+        assert extract_region_context(alias) == "香港"
+        result = parse_lines(f"{alias}\n蓝波各280")[0]
+        assert result.success and result.region == "香港"
+
+    @pytest.mark.parametrize("text", ["港澳蓝波各280", "香港澳门蓝波各280", "港口蓝波各280", "某某港"])
+    def test_ambiguous_or_embedded_hong_kong_text_is_not_a_region(self, text: str) -> None:
+        assert extract_region_context(text) is None
+        result = parse_lines(text)[0]
+        assert result.region != "香港"
+
+    @pytest.mark.parametrize(
+        ("alias", "canonical"),
+        [
+            ("兰波", "蓝波"), ("篮波", "蓝波"), ("蓝播", "蓝波"), ("兰播", "蓝波"),
+            ("洪波", "红波"), ("宏波", "红波"), ("红播", "红波"),
+            ("吕波", "绿波"), ("律波", "绿波"), ("绿播", "绿波"),
+            ("兰单", "蓝单"), ("篮单", "蓝单"), ("兰双", "蓝双"), ("篮双", "蓝双"),
+            ("吕单", "绿单"), ("律单", "绿单"), ("吕双", "绿双"), ("律双", "绿双"),
+            ("洪单", "红单"), ("宏单", "红单"), ("洪双", "红双"), ("宏双", "红双"),
+            ("和单", "合单"), ("和双", "合双"), ("和大", "合大"), ("和小", "合小"),
+        ],
+    )
+    def test_supported_multi_character_bet_aliases(self, alias: str, canonical: str) -> None:
+        result = parse_lines(f"{alias}各10")[0]
+        assert result.success and result.category == canonical
+
+    def test_lianxiao_homophone_uses_existing_lianxiao_play(self) -> None:
+        result = parse_lines("连消图杨各10")[0]
+        assert result.success and result.category == "连肖"
+        assert [name for name, _numbers in result.zodiac_groups] == ["兔", "羊"]
+
+    @pytest.mark.parametrize(
+        ("alias", "canonical"),
+        [
+            ("数", "鼠"), ("扭", "牛"), ("胡", "虎"), ("图", "兔"),
+            ("隆", "龙"), ("舌", "蛇"), ("舍", "蛇"), ("码", "马"),
+            ("杨", "羊"), ("侯", "猴"), ("喉", "猴"), ("机", "鸡"),
+            ("基", "鸡"), ("苟", "狗"), ("朱", "猪"),
+        ],
+    )
+    def test_single_character_zodiac_aliases_require_selection_context(
+        self,
+        alias: str,
+        canonical: str,
+    ) -> None:
+        result = parse_lines(f"{alias}各10")[0]
+        assert result.success and result.category == canonical
+
+    @pytest.mark.parametrize("text", ["各数280", "号码", "阳性", "书画", "小数"])
+    def test_single_character_aliases_do_not_corrupt_ordinary_words(self, text: str) -> None:
+        result = parse_lines(text)[0]
+        assert not result.success
+        assert result.original_text == text
+
+    @pytest.mark.parametrize("nickname", ["杨先生", "王兰波"])
+    def test_bet_aliases_never_modify_nickname_content(self, nickname: str) -> None:
+        assert extract_nickname_context(f"{nickname}:") == nickname
+        result = parse_lines(f"{nickname}:\n01/10")[0]
+        assert result.nickname == nickname
+
+    @pytest.mark.parametrize(
+        "text",
+        ["和尾各10", "和数各10", "红消各10", "兰消各10", "天消各10", "女消各10"],
+    )
+    def test_static_catalog_only_aliases_do_not_register_new_plays(self, text: str) -> None:
+        assert not parse_lines(text)[0].success
+
+
+class TestLeadingZodiacWithNumberAmountPairs:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "鼠各数130-31/75-43/75",
+            "鼠各130-31/75-43/75",
+            "鼠各数130－31/75－43/75",
+            "鼠各号130-31/75-43/75",
+            "鼠130-31/75-43/75",
+        ],
+    )
+    def test_mixed_structure_splits_in_input_order(self, text: str) -> None:
+        results = parse_lines(text)
+
+        assert len(results) == 3
+        assert all(result.success for result in results)
+        assert results[0].category == "平特一肖"
+        assert [name for name, _numbers in results[0].zodiac_groups] == ["鼠"]
+        assert [result.numbers for result in results[1:]] == [(31,), (43,)]
+        assert [result.amount for result in results] == [Decimal("130"), Decimal("75"), Decimal("75")]
+        assert sum((Decimal(str(result.total)) for result in results), Decimal("0")) == Decimal("280")
+        assert [result.original_text for result in results] == [
+            re.split(r"[-－]", text, maxsplit=1)[0],
+            "31/75",
+            "43/75",
+        ]
+
+    def test_invalid_trailing_pair_is_not_silently_swallowed(self) -> None:
+        results = parse_lines("鼠各130-31/75-43/错误")
+        assert [result.success for result in results] == [True, True, False]
+        assert "号码/金额对" in results[-1].error
+
+    def test_repeated_number_pairs_are_not_deduplicated(self) -> None:
+        results = parse_lines("鼠各130-31/75-31/75")
+        assert [result.numbers for result in results[1:]] == [(31,), (31,)]
 
 
 # ======================================================================

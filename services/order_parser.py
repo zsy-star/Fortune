@@ -72,6 +72,74 @@ _zodiac_name: dict[str, str] = {}
 # 号码 → 标准生肖名（反向查询）
 _number_to_zodiac: dict[int, str] = {}
 
+# Only multi-character aliases that map to an already-supported intake play
+# are safe outside a dedicated selection parser.  Do not add single-character
+# substitutions here: nickname/title lines are intentionally handled before
+# these aliases, and zodiac homophones have their own contextual path below.
+SAFE_MULTI_CHAR_ALIASES: dict[str, str] = {
+    "兰波": "蓝波",
+    "篮波": "蓝波",
+    "蓝播": "蓝波",
+    "兰播": "蓝波",
+    "洪波": "红波",
+    "宏波": "红波",
+    "红播": "红波",
+    "吕波": "绿波",
+    "律波": "绿波",
+    "绿播": "绿波",
+    "兰单": "蓝单",
+    "篮单": "蓝单",
+    "兰双": "蓝双",
+    "篮双": "蓝双",
+    "吕单": "绿单",
+    "律单": "绿单",
+    "吕双": "绿双",
+    "律双": "绿双",
+    "洪单": "红单",
+    "宏单": "红单",
+    "洪双": "红双",
+    "宏双": "红双",
+    "和单": "合单",
+    "和双": "合双",
+    "和大": "合大",
+    "和小": "合小",
+    "连消": "连肖",
+}
+
+CONTEXTUAL_ZODIAC_ALIASES: dict[str, str] = {
+    "数": "鼠",
+    "扭": "牛",
+    "胡": "虎",
+    "图": "兔",
+    "隆": "龙",
+    "舌": "蛇",
+    "舍": "蛇",
+    "码": "马",
+    "杨": "羊",
+    "侯": "猴",
+    "喉": "猴",
+    "机": "鸡",
+    "基": "鸡",
+    "苟": "狗",
+    "朱": "猪",
+}
+
+_CONTEXTUAL_ZODIAC_CONTEXTS = frozenset(
+    {"category_selection", "lianxiao_selection", "leading_mixed_selection"}
+)
+
+_HONG_KONG_REGION_ALIASES: tuple[str, ...] = (
+    "香港的",
+    "港彩",
+    "香江",
+    "香巷",
+    "香岗",
+    "香港",
+    "港的",
+    "港",
+)
+_AMBIGUOUS_HONG_KONG_PREFIXES = ("港澳", "香港澳门", "香港澳", "港口")
+
 # ======================================================================
 # 类别规则
 # ======================================================================
@@ -95,10 +163,10 @@ _RULES: list[CategoryRule] = []
 for _aliases, _nums in _ZODIAC_ENTRIES:
     _RULES.append(CategoryRule(_aliases, _nums, _aliases[2], 1))
 
-# 2) 波色（priority=2）
-_WAVE_RED = (1, 2, 7, 8, 12, 13, 18, 19, 23, 24, 29, 30, 34, 35, 40, 45, 46)
-_WAVE_BLUE = (3, 4, 9, 10, 14, 15, 20, 25, 26, 31, 36, 37, 41, 42, 47, 48)
-_WAVE_GREEN = (5, 6, 11, 16, 17, 21, 22, 27, 28, 32, 33, 38, 39, 43, 44, 49)
+# 2) 波色（priority=2）— 单一来源为 domain.color_rules
+_WAVE_RED = tuple(sorted(WAVE_NUMBERS["红波"]))
+_WAVE_BLUE = tuple(sorted(WAVE_NUMBERS["蓝波"]))
+_WAVE_GREEN = tuple(sorted(WAVE_NUMBERS["绿波"]))
 _RULES.append(CategoryRule(("红波", "红", "红波色"), _WAVE_RED, "红波", 2))
 _RULES.append(CategoryRule(("蓝波", "蓝", "蓝波色"), _WAVE_BLUE, "蓝波", 2))
 _RULES.append(CategoryRule(("绿波", "绿", "绿波色"), _WAVE_GREEN, "绿波", 2))
@@ -233,6 +301,48 @@ def _configure_zodiac_year(year: int | None) -> int:
 
 _configure_zodiac_year(get_default_zodiac_year())
 
+
+def normalize_supported_bet_aliases(text: str) -> str:
+    """Normalize safe multi-character aliases without touching single Han characters."""
+    normalized = text
+    for alias, canonical in SAFE_MULTI_CHAR_ALIASES.items():
+        normalized = normalized.replace(alias, canonical)
+    return normalized
+
+
+def normalize_zodiac_token(token: str, context: str) -> str:
+    """Normalize a token only when the complete token is a zodiac selection.
+
+    A failed full-token match returns the input unchanged.  This is what keeps
+    ordinary words such as ``号码``、``各数``、``小数`` and names out of the
+    single-character homophone map.
+    """
+    if context not in _CONTEXTUAL_ZODIAC_CONTEXTS:
+        return token
+
+    compact = re.sub(r"[,，、/\-\s]+", "", token.strip())
+    if not compact:
+        return token
+
+    normalized_names: list[str] = []
+    position = 0
+    while position < len(compact):
+        matched = False
+        for zodiac_id in _ZODIAC_IDS_BY_LEN:
+            if compact.startswith(zodiac_id, position):
+                normalized_names.append(_zodiac_name[zodiac_id])
+                position += len(zodiac_id)
+                matched = True
+                break
+        if matched:
+            continue
+        canonical = CONTEXTUAL_ZODIAC_ALIASES.get(compact[position])
+        if canonical is None:
+            return token
+        normalized_names.append(canonical)
+        position += 1
+    return "".join(normalized_names)
+
 # ======================================================================
 # 连肖关键词
 # ======================================================================
@@ -283,6 +393,9 @@ class ParseResult:
     normalized_text: str = ""
     # “生肖各数”口径：按生肖下号码展开，而不是按连肖整组保存。
     zodiac_number_mode: bool = False
+    # 仅用于本次多行解析和右侧预览；mapper 和持久化 DTO 不读取这两个字段。
+    nickname: str = ""
+    nickname_context_changed: bool = False
 
 
 @dataclass(frozen=True)
@@ -308,6 +421,8 @@ class OrderParseContext:
     combination_mode: str = ""
     shared_amount: Decimal | None = None
     zodiac_year: int | None = None
+    nickname: str = ""
+    nickname_pending_display: bool = False
 
 
 # ======================================================================
@@ -410,7 +525,7 @@ def _normalize_chinese_amounts(text: str) -> str:
         return f"{match.group(1)}{_format_decimal_plain(value)}"
 
     text = re.sub(
-        rf"((?:每个\s*(?:买|包)?|各\s*(?:买|包)?|各组|各数|各号|每组|每注|每数|每|打|买)\s*)({amount_word})",
+        rf"((?:每个\s*(?:买|包)?|各\s*(?:买|包)?|各组|各数|各号|各注|每组|每注|每数|每号|每|打|买)\s*)({amount_word})",
         marker_repl,
         text,
     )
@@ -485,14 +600,14 @@ def _normalize_smart_text(text: str) -> str:
     t = t.replace("平肖", "平特一肖")
     t = t.replace("特肖", "平特一肖")
     t = re.sub(r"平特(?=$|[，,。；;\s])", "平特一肖", t)
-    t = re.sub(r"^(.+?)(各组|各数|各号|每注|每数|各|每|打|买)(\d+(?:\.\d+)?)(?:平特|平特一肖)$", r"\1平特一肖\2\3", t)
+    t = re.sub(r"^(.+?)(各组|各数|各号|各注|每组|每注|每数|每号|各|每|打|买)(\d+(?:\.\d+)?)(?:平特|平特一肖)$", r"\1平特一肖\2\3", t)
     t = re.sub(rf"^([{''.join(sorted(set(_zodiac_name.values())))}]+)数各", r"\1各数", t)
     t = re.sub(rf"^([{''.join(sorted(set(_zodiac_name.values())))}]+)数(?=(?:每|打|买))", r"\1", t)
     t = re.sub(rf"^([{''.join(sorted(set(_zodiac_name.values())))}]+)平(?=\d|各|每|打|买)", r"\1平特一肖", t)
 
     # “36号48号各数25”需要在去“号”之前插入号码分隔符。
     t = re.sub(r"(\d{1,2})号(?=\s*\d{1,2}号)", r"\1,", t)
-    t = re.sub(r"(\d{1,2})号\s*(?=(?:各组|各数|各号|每注|每数|各|每|打|买))", r"\1", t)
+    t = re.sub(r"(\d{1,2})号\s*(?=(?:各组|各数|各号|各注|每组|每注|每数|每号|各|每|打|买))", r"\1", t)
     t = re.sub(r"(\d{1,2})号\s*(\d+(?:\.\d+)?)(?:块钱|元|块|米|蚊)?(?=$|[，,。；;\s])", r"\1各\2", t)
     t = re.sub(r"(\d{1,2})号(?:码)?", r"\1", t)
     t = re.sub(r"(\d)(?:块钱|元|块|米|蚊)", r"\1", t)
@@ -640,7 +755,8 @@ def _parse_zodiac_groups(text: str) -> list[tuple[str, tuple[int, ...]]]:
 
 def _parse_exact_zodiac_selection(text: str) -> list[tuple[str, tuple[int, ...]]]:
     """Parse a selection made only of zodiac names, allowing common separators."""
-    normalized = re.sub(r"[,，、/\-\s]+", "", text.strip())
+    normalized_token = normalize_zodiac_token(text, "category_selection")
+    normalized = re.sub(r"[,，、/\-\s]+", "", normalized_token.strip())
     if not normalized:
         return []
     groups = _parse_zodiac_groups(normalized)
@@ -772,7 +888,7 @@ def _try_parse_tuo_zodiacs(text: str) -> list[tuple[str, tuple[int, ...]]] | Non
 
 
 # ── "各" / "各数" 分隔符正则 ──
-_SEP_PATTERN = re.compile(r"各组|各数|各号|每注|每数|各|每|打|买")
+_SEP_PATTERN = re.compile(r"各组|各数|各号|各注|每组|每注|每数|每号|各|每|打|买")
 
 # ── 复试连肖格式: "牛鸡猪狗虎复试3.4.5连各组50" ──
 _FUSHI_PATTERN = re.compile(
@@ -1417,16 +1533,9 @@ def parse_order(
             exclude_nums = set(parsed_ex)
         text = text[:exclude_m.start()].strip()
 
-    # ── 提取地域前缀 ──
-    region = ""
-    for prefix, full_name in (
-        ("澳门", "澳门"), ("新澳", "澳门"), ("新奥", "澳门"),
-        ("澳", "澳门"), ("奥", "澳门"), ("香港", "香港"), ("港", "香港"),
-    ):
-        if text.startswith(prefix):
-            region = full_name
-            text = text[len(prefix):].strip()
-            break
+    # ── 提取受位置约束的地域标记，再归一安全的多字玩法别名 ──
+    text, region = _strip_region_marker(text)
+    text = normalize_supported_bet_aliases(text)
 
     explicit_combination = parse_explicit_combination(text, region=region)
     if explicit_combination is not None:
@@ -1647,6 +1756,7 @@ def parse_order(
 
     def _try_match(cat: str, amt: float) -> ParseResult | None:
         """尝试所有匹配策略，成功返回 ParseResult，失败返回 None。"""
+        cat = normalize_zodiac_token(cat, "category_selection")
         groups_for_special = _parse_exact_zodiac_selection(cat)
         use_zodiac_each = (
             options.zodiac_each_mode
@@ -1854,6 +1964,18 @@ def _normalize_line(text: str) -> str | None:
     if not t:
         return None
 
+    # 已知玩法后的冒号是显示分隔符，不属于投注内容。
+    play_prefix = re.match(r"^(?P<title>[^:：]+?)\s*[:：]\s*(?P<order>\S.+)$", t)
+    if play_prefix:
+        play_title = extract_play_context(play_prefix.group("title"))
+        if play_title:
+            order_text = play_prefix.group("order")
+            if play_title in _LIANMA_TYPES:
+                order_text = re.sub(r"\s*=\s*", "各", order_text, count=1)
+                t = f"{play_title} {order_text}"
+            else:
+                t = f"{play_title}{order_text}"
+
     # “生肖串，口语停顿，各数金额”按多个生肖分别下注；无停顿的历史
     # “生肖各数金额”仍保留按生肖号码展开的既有口径。
     zodiac_chars = "".join(sorted(set(_zodiac_name.values())))
@@ -1884,7 +2006,7 @@ def _normalize_line(text: str) -> str | None:
 
     # "各X元" / "每X元" → "各X"
     t = re.sub(
-        r'(每个(?:买|包)?|各(?:买|包)?|各组|各数|各号|每组|每注|每数|各|每|打|买)'
+        r'(每个(?:买|包)?|各(?:买|包)?|各组|各数|各号|各注|每组|每注|每数|每号|各|每|打|买)'
         r'(\d+(?:\.\d+)?)(块钱|元|块|米|蚊)',
         r'\1\2',
         t,
@@ -1896,7 +2018,7 @@ def _normalize_line(text: str) -> str | None:
     # 中文逗号、顿号 → 英文逗号（号码分隔）
     t = t.replace('，', ',').replace('、', ',')
     # 号码列表后的逗号只是口语停顿，不应进入“各/每/买”金额结构。
-    t = re.sub(r',\s*(?=(?:每个(?:买|包)?|各(?:买|包)?|各组|各数|各号|每组|每注|每数|各|每|打|买))', '', t)
+    t = re.sub(r',\s*(?=(?:每个(?:买|包)?|各(?:买|包)?|各组|各数|各号|各注|每组|每注|每数|每号|各|每|打|买))', '', t)
 
     # 去掉首尾逗号（"澳门,09,45,各5" 保留逗号；",09,45,各5" 清理首部逗号）
     t = re.sub(r'^[,\s]+', '', t)
@@ -1933,9 +2055,36 @@ def _extract_declared_total(text: str) -> tuple[str, Decimal | None]:
     return cleaned, total
 
 
+def normalize_region_alias(token: str) -> str | None:
+    """Normalize an exact standalone region token to a persisted region value."""
+    compact = re.sub(r"[\s:：,，、。.;；]+", "", (token or "").strip())
+    if compact in {"澳门的", "澳门码", "澳门", "新澳", "新奥", "澳的", "澳", "奥"}:
+        return "澳门"
+    if compact in {*_HONG_KONG_REGION_ALIASES, "香港码"}:
+        return "香港"
+    return None
+
+
+def _looks_like_order_before_region_suffix(text: str) -> bool:
+    """Require order syntax before accepting a short Hong Kong suffix."""
+    candidate = normalize_supported_bet_aliases(text.strip())
+    if not candidate:
+        return False
+    if _SEP_PATTERN.search(candidate) and _AMOUNT_PATTERN.search(candidate):
+        return True
+    return bool(re.search(r"\d{1,2}\s*[/／]\s*(?:\d|[零〇一二两三四五六七八九十])", candidate))
+
+
 def _strip_region_marker(text: str) -> tuple[str, str]:
+    """Strip only standalone, prefix, or order-shaped suffix region markers."""
     t = text.strip()
-    region = ""
+    if not t:
+        return t, ""
+
+    # These phrases are explicitly ambiguous/non-Hong-Kong and must not be
+    # consumed by the short ``港``/``香港`` aliases.
+    hong_kong_prefix_blocked = t.startswith(_AMBIGUOUS_HONG_KONG_PREFIXES)
+
     for marker, full_name in (
         ("澳门码", "澳门"),
         ("澳门", "澳门"),
@@ -1943,12 +2092,17 @@ def _strip_region_marker(text: str) -> tuple[str, str]:
         ("新奥", "澳门"),
         ("澳", "澳门"),
         ("奥", "澳门"),
-        ("香港码", "香港"),
-        ("香港", "香港"),
-        ("港", "香港"),
     ):
         if t.startswith(marker):
-            return t[len(marker):].strip(), full_name
+            remainder = t[len(marker):].lstrip(" :：,，、。.;；")
+            return remainder.strip(), full_name
+
+    if not hong_kong_prefix_blocked:
+        for marker in ("香港码", *_HONG_KONG_REGION_ALIASES):
+            if t.startswith(marker):
+                remainder = t[len(marker):].lstrip(" :：,，、。.;；")
+                return remainder.strip(), "香港"
+
     for marker, full_name in (
         ("澳门的", "澳门"),
         ("澳门码", "澳门"),
@@ -1958,21 +2112,35 @@ def _strip_region_marker(text: str) -> tuple[str, str]:
         ("澳的", "澳门"),
         ("澳", "澳门"),
         ("奥", "澳门"),
-        ("香港的", "香港"),
-        ("香港码", "香港"),
-        ("香港", "香港"),
-        ("港", "香港"),
     ):
         if t.endswith(marker):
-            return t[: -len(marker)].rstrip(" ,，、。.").strip(), full_name
-    return t, region
+            return t[: -len(marker)].rstrip(" :：,，、。.;；").strip(), full_name
+
+    for marker in _HONG_KONG_REGION_ALIASES:
+        if t.endswith(marker):
+            before = t[: -len(marker)].rstrip(" :：,，、。.;；").strip()
+            if _looks_like_order_before_region_suffix(before):
+                return before, "香港"
+    return t, ""
+
+
+def extract_region_marker(text: str) -> str | None:
+    """Return a safely positioned region marker without changing the input."""
+    standalone = normalize_region_alias(text)
+    if standalone:
+        return standalone
+    _body, region = _strip_region_marker(text)
+    return region or None
 
 
 def _with_region(segment: str, region: str) -> str:
     if not region:
         return segment.strip()
     segment = segment.strip()
-    if segment.startswith(("澳门", "新澳", "新奥", "澳", "奥", "香港", "港")):
+    if segment.startswith(_AMBIGUOUS_HONG_KONG_PREFIXES):
+        return segment
+    _body, explicit_region = _strip_region_marker(segment)
+    if explicit_region:
         return segment
     return region + segment
 
@@ -2017,7 +2185,7 @@ def _split_comma_clauses(line: str) -> list[str]:
         elif (
             re.fullmatch(r"\d{1,2}", part)
             and index + 1 < len(parts)
-            and re.match(r"\d{1,2}(?:各组|各数|各号|每注|每数|各|每|打|买)", parts[index + 1])
+            and re.match(r"\d{1,2}(?:各组|各数|各号|各注|每组|每注|每数|每号|各|每|打|买)", parts[index + 1])
         ):
             combined.append(part + "," + parts[index + 1])
             index += 1
@@ -2176,24 +2344,102 @@ _PLAY_TITLE_ALIASES: dict[str, str] = {
     "六肖中特": "六肖中特",
     "N不中": "N不中",
     "不中": "N不中",
+    "连肖": "连肖",
+    "四连肖": "连肖",
+    "四肖": "四肖",
+    "十不中": "N不中",
 }
 
 
 def extract_region_context(text: str) -> str | None:
     """Return a region only when the whole clause is an explicit region marker."""
-    compact = re.sub(r"[\s,，、。.;；]+", "", (text or "").strip())
-    compact = compact.removesuffix("的")
-    if compact in {"澳门", "澳门码", "新澳", "新奥", "澳", "奥"}:
-        return "澳门"
-    if compact in {"香港", "香港码", "港"}:
-        return "香港"
-    return None
+    return normalize_region_alias(text)
 
 
 def extract_play_context(text: str) -> str | None:
     """Return a play title only for an exact standalone title clause."""
     compact = re.sub(r"[\s:：,，、。.;；]+", "", (text or "").strip())
     return _PLAY_TITLE_ALIASES.get(compact)
+
+
+def _is_reserved_nickname_title(text: str) -> bool:
+    compact = re.sub(r"\s+", "", text.strip())
+    if not compact:
+        return True
+    if extract_region_context(compact) or extract_play_context(compact):
+        return True
+    if compact in set(_BET_TYPE_INFIX) | set(_LIANMA_TYPES) | {"四连肖", "连肖", "四肖", "十不中"}:
+        return True
+    return any(compact == rule.name or compact in rule.aliases for rule in _RULES)
+
+
+def extract_nickname_context(text: str) -> str | None:
+    """Return a strict, display-only nickname title or ``None``.
+
+    Supported forms are ``name:`` / ``name：``, ``昵称 name:`` and
+    ``昵称：name``. Region and known play titles always win over nicknames.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return None
+
+    labeled = re.fullmatch(r"昵称\s*[:：]\s*(?P<nickname>.+?)\s*", raw)
+    if labeled:
+        candidate = labeled.group("nickname")
+    else:
+        titled = re.fullmatch(r"(?P<nickname>.+?)\s*[:：]\s*", raw)
+        if not titled:
+            return None
+        candidate = re.sub(r"^昵称\s+", "", titled.group("nickname").strip())
+
+    candidate = re.sub(r"\s+", " ", candidate).strip()
+    visible = re.sub(r"\s+", "", candidate)
+    if not visible or len(visible) > 30 or candidate == "昵称":
+        return None
+    if not re.fullmatch(r"[\u3400-\u9fffA-Za-z0-9_ .·•@#&+\-()（）\[\]【】]+", candidate):
+        return None
+    if not re.search(r"[\u3400-\u9fffA-Za-z0-9]", candidate):
+        return None
+    if _is_reserved_nickname_title(candidate):
+        return None
+
+    without_region, found_region = _strip_region_marker(candidate)
+    if found_region and _is_reserved_nickname_title(without_region):
+        return None
+
+    amount_token = rf"(?:\d+(?:\.\d+)?|[{_CN_AMOUNT_CHARS}]+)"
+    if re.search(rf"(?:各组|各数|各号|各注|每组|每注|每数|每号|各|每|打|买|包)\s*{amount_token}", candidate):
+        return None
+    if re.search(rf"(?:=|/|／)\s*{amount_token}", candidate):
+        return None
+    if re.search(r"\d{1,2}\s*[.,，、/／\-]\s*\d{1,2}", candidate):
+        return None
+    return candidate
+
+
+def extract_nickname_titles(text: str) -> list[str]:
+    """Collect valid nickname titles in input order without creating results."""
+    return [
+        nickname
+        for line in (text or "").splitlines()
+        if (nickname := extract_nickname_context(line)) is not None
+    ]
+
+
+def strip_nickname_title_lines(text: str) -> str:
+    """Remove display-only nickname lines before creating persistence DTOs."""
+    return "\n".join(
+        line
+        for line in (text or "").splitlines()
+        if extract_nickname_context(line) is None
+    ).strip()
+
+
+def _apply_nickname_context(result: ParseResult, context: OrderParseContext) -> ParseResult:
+    result.nickname = context.nickname
+    result.nickname_context_changed = bool(context.nickname and context.nickname_pending_display)
+    context.nickname_pending_display = False
+    return result
 
 
 def split_logical_clauses(text: str) -> list[str]:
@@ -2209,7 +2455,7 @@ def split_logical_clauses(text: str) -> list[str]:
 def parse_number_amount_pairs(text: str, *, region: str = "") -> list[ParseResult] | None:
     """Parse `number/amount` pairs without confusing slash-separated selections."""
     body = text.strip().strip(" ,，、")
-    if re.search(r"(?:各组|各数|各号|每组|每注|每数|每个|各|每|打|买)", body):
+    if re.search(r"(?:各组|各数|各号|各注|每组|每注|每数|每号|每个|各|每|打|买)", body):
         return None
     if re.search(r"(?:二中二|三中三|三中二|不中|连肖|四肖|平尾|平特一肖|包半波)", body):
         return None
@@ -2249,6 +2495,73 @@ def parse_number_amount_pairs(text: str, *, region: str = "") -> list[ParseResul
                 total=amount,
             )
         )
+    return results
+
+
+def parse_leading_selection_with_amount_pairs(
+    text: str,
+    *,
+    region: str = "",
+) -> list[ParseResult] | None:
+    """Parse one zodiac amount followed by ordered ``number/amount`` items.
+
+    The leading zodiac is deliberately represented by the existing
+    ``平特一肖`` single-selection semantics so its amount is counted once.
+    This exception is limited to this unambiguous mixed structure and does not
+    change the historical standalone ``鼠各数130`` number-expansion behavior.
+    """
+    source_body, explicit_region = _strip_region_marker(text)
+    effective_region = explicit_region or region
+    source_body = source_body.strip()
+    normalized = normalize_supported_bet_aliases(_normalize_smart_text(source_body))
+
+    explicit_pattern = re.compile(
+        rf"^(?P<selection>.+?)\s*(?P<marker>各数|各号|各)\s*"
+        rf"(?P<amount>{_AMOUNT_TOKEN_TEXT})(?P<rest>[-－—].+)$"
+    )
+    bare_pattern = re.compile(
+        rf"^(?P<selection>[^\d\s]+?)\s*(?P<amount>{_AMOUNT_TOKEN_TEXT})"
+        rf"(?P<rest>[-－—].+)$"
+    )
+    match = explicit_pattern.fullmatch(normalized) or bare_pattern.fullmatch(normalized)
+    if match is None:
+        return None
+
+    normalized_fragments = [part.strip() for part in re.split(r"[-－—]", match.group("rest")) if part.strip()]
+    if not normalized_fragments or not any("/" in part or "／" in part for part in normalized_fragments):
+        return None
+
+    selection = normalize_zodiac_token(match.group("selection"), "leading_mixed_selection")
+    groups = _parse_exact_zodiac_selection(selection)
+    if len(groups) != 1:
+        return None
+
+    try:
+        leading_amount = parse_amount_token(match.group("amount"))
+    except ValueError as exc:
+        return [ParseResult(region=effective_region, success=False, error=str(exc))]
+
+    source_parts = [part.strip() for part in re.split(r"[-－—]", source_body)]
+    leading = _build_special_zodiac_result(
+        region=effective_region,
+        groups=groups,
+        amount=leading_amount,
+    )
+    leading.original_text = source_parts[0] if source_parts else source_body
+    results = [leading]
+
+    for index, fragment in enumerate(normalized_fragments, start=1):
+        pair_results = parse_number_amount_pairs(fragment, region=effective_region)
+        if pair_results is None or len(pair_results) != 1:
+            pair_result = ParseResult(
+                region=effective_region,
+                success=False,
+                error=f"号码/金额对格式无效：{fragment}",
+            )
+        else:
+            pair_result = pair_results[0]
+        pair_result.original_text = source_parts[index] if index < len(source_parts) else fragment
+        results.append(pair_result)
     return results
 
 
@@ -2394,10 +2707,13 @@ def parse_lines(
             context.play_type = ""
             context.combination_mode = ""
             context.shared_amount = None
+            context.nickname = ""
+            context.nickname_pending_display = False
             continue
 
         block_region = ""
         cleaned_raw_lines: list[str] = []
+        block_nicknames: list[str] = []
         for raw_line in block.splitlines():
             raw_line = raw_line.strip()
             if not raw_line:
@@ -2405,6 +2721,13 @@ def parse_lines(
             standalone_region = extract_region_context(raw_line)
             if standalone_region:
                 block_region = standalone_region
+                continue
+            if extract_play_context(raw_line):
+                cleaned_raw_lines.append(raw_line)
+                continue
+            if nickname := extract_nickname_context(raw_line):
+                cleaned_raw_lines.append(raw_line)
+                block_nicknames.append(nickname)
                 continue
             region_candidate = raw_line.rstrip("。.;； ")
             stripped, found_region = _strip_region_marker(region_candidate)
@@ -2417,18 +2740,41 @@ def parse_lines(
         if block_region:
             context.region = block_region
 
-        four_zodiac_text = "。".join(cleaned_raw_lines)
-        four_zodiac_results = _parse_shared_four_zodiac_text(four_zodiac_text, region=context.region)
+        four_zodiac_text = "。".join(
+            raw_line
+            for raw_line in cleaned_raw_lines
+            if extract_nickname_context(raw_line) is None
+        )
+        four_zodiac_results = (
+            None
+            if len(block_nicknames) > 1
+            else _parse_shared_four_zodiac_text(four_zodiac_text, region=context.region)
+        )
         if four_zodiac_results is not None:
+            if block_nicknames:
+                context.nickname = block_nicknames[0]
+                context.nickname_pending_display = True
             for result in four_zodiac_results:
                 source = result.error and four_zodiac_text or ",".join(name for name, _ in result.zodiac_groups)
-                results.append(_with_error_suggestion(result, source))
+                results.append(
+                    _apply_nickname_context(
+                        _with_error_suggestion(result, source),
+                        context,
+                    )
+                )
             context.play_type = ""
             context.combination_mode = ""
             context.shared_amount = None
+            context.nickname = ""
+            context.nickname_pending_display = False
             continue
 
         for raw_line in cleaned_raw_lines:
+            nickname = extract_nickname_context(raw_line)
+            if nickname:
+                context.nickname = nickname
+                context.nickname_pending_display = True
+                continue
             sub_lines: list[str] = []
             for sub in re.split(r"[。；;]", raw_line):
                 normalized = _normalize_line(sub)
@@ -2445,6 +2791,23 @@ def parse_lines(
                     context.combination_mode = ""
                     continue
 
+                mixed_results = None
+                if context.play_type in {"", "特码"}:
+                    mixed_results = parse_leading_selection_with_amount_pairs(
+                        line,
+                        region=context.region,
+                    )
+                if mixed_results is not None:
+                    for result in mixed_results:
+                        source = result.original_text or line
+                        results.append(
+                            _apply_nickname_context(
+                                _with_error_suggestion(result, source),
+                                context,
+                            )
+                        )
+                    continue
+
                 pair_results = None
                 if context.play_type in {"", "特码"}:
                     pair_results = parse_number_amount_pairs(line, region=context.region)
@@ -2452,7 +2815,12 @@ def parse_lines(
                     pair_sources = [token for token in re.split(r"[\s,，、]+", line.strip()) if token]
                     for index, result in enumerate(pair_results):
                         source = pair_sources[index] if index < len(pair_sources) else line
-                        results.append(_with_error_suggestion(result, source))
+                        results.append(
+                            _apply_nickname_context(
+                                _with_error_suggestion(result, source),
+                                context,
+                            )
+                        )
                     continue
 
                 for clause in split_logical_clauses(line):
@@ -2462,11 +2830,18 @@ def parse_lines(
                     contextual_clause = _apply_play_context(clause, context.play_type)
                     parse_text = _with_region(contextual_clause, context.region)
                     result = parse_order(parse_text, options=options)
-                    results.append(_with_error_suggestion(result, clause))
+                    results.append(
+                        _apply_nickname_context(
+                            _with_error_suggestion(result, clause),
+                            context,
+                        )
+                    )
 
         context.play_type = ""
         context.combination_mode = ""
         context.shared_amount = None
+        context.nickname = ""
+        context.nickname_pending_display = False
 
     if declared_total is not None and results:
         calculated_total = sum((Decimal(str(r.total)) for r in results if r.success), Decimal("0"))

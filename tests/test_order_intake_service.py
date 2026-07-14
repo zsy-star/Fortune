@@ -32,6 +32,114 @@ def _first_valid_item(preview):
     return next(item for item in preview.items if item.is_valid)
 
 
+def test_nickname_is_excluded_from_preview_and_saved_order(session_factory) -> None:
+    service = OrderIntakeService(session_factory)
+    preview = service.preview_raw_text(
+        "王大定:\n01/10",
+        customer_name="昵称安全测试",
+        channel="微信",
+        region="澳门",
+    )
+
+    assert preview.can_save
+    assert preview.raw_text == "01/10"
+    assert preview.valid_items == 1 and preview.invalid_items == 0
+    assert all("王大定" not in item.source_line for item in preview.items)
+    assert all(getattr(item, "note", None) is None for item in preview.order_items)
+    assert not hasattr(preview, "nickname")
+
+    saved = service.save_preview(preview)
+    assert saved.success and saved.order is not None
+    detail = service._order_service.get_order(saved.order.id)
+    assert detail is not None
+    assert detail.raw_text == "01/10"
+    assert detail.customer_name == "昵称安全测试"
+    assert all("王大定" not in (item.note or "") for item in detail.items)
+
+
+def test_nickname_is_excluded_from_adjusted_table_raw_text() -> None:
+    service = OrderIntakeService()
+    preview = service.preview_table_rows(
+        [
+            IntakeTableRow(
+                row_number=1,
+                region="澳门",
+                bet_type="特码",
+                selection="01",
+                total_amount="10",
+                per_item_amount="10",
+                note="原备注",
+            )
+        ],
+        IntakeMetadata(
+            channel="微信",
+            region="澳门",
+            source="record_window_adjusted",
+            raw_text="王大定:\n01/10",
+        ),
+    )
+
+    assert preview.can_save
+    assert preview.raw_text == "01/10"
+    assert preview.order_items[0].note == "原备注"
+
+
+def test_nickname_does_not_count_as_partial_failure() -> None:
+    with_nickname = _preview("王大定:\n01/10\n50/10", region="澳门")
+    baseline = _preview("01/10\n50/10", region="澳门")
+
+    assert (with_nickname.valid_items, with_nickname.invalid_items) == (
+        baseline.valid_items,
+        baseline.invalid_items,
+    ) == (1, 1)
+    assert all("王大定" not in item.source_line for item in with_nickname.items)
+
+
+def test_nickname_only_cannot_create_preview_order() -> None:
+    preview = _preview("王大定:", region="澳门")
+
+    assert not preview.can_save
+    assert preview.raw_text == ""
+    assert preview.items == []
+    assert preview.valid_items == preview.invalid_items == 0
+    assert preview.errors == ["输入为空"]
+
+
+def test_nickname_does_not_change_four_zodiac_settlement_support() -> None:
+    preview = _preview("王大定:\n虎猴鼠龙。兔羊猪鸡四肖各10块钱", region="澳门")
+
+    assert preview.can_save
+    assert preview.raw_text == "虎猴鼠龙。兔羊猪鸡四肖各10块钱"
+    assert len(preview.order_items) == 2
+    assert all(item.bet_type == "四肖" for item in preview.order_items)
+    assert all(item.settlement_support_status == "unsupported" for item in preview.items)
+
+
+def test_hong_kong_blue_wave_alias_uses_existing_intake_and_settlement_mapping() -> None:
+    preview = _preview("香港兰波各数280")
+
+    assert preview.can_save
+    assert preview.region == "香港"
+    assert preview.total_amount == Decimal("4480")
+    assert [(item.bet_type, item.selection, item.amount) for item in preview.order_items] == [
+        ("特码波色", "蓝波", Decimal("4480")),
+    ]
+    valid_item = _first_valid_item(preview)
+    assert valid_item.settlement_support_status == "supported"
+
+
+def test_mixed_zodiac_and_number_amount_pairs_use_three_existing_order_items() -> None:
+    preview = _preview("鼠各数130-31/75-43/75", region="香港")
+
+    assert preview.can_save
+    assert preview.total_amount == Decimal("280")
+    assert [(item.bet_type, item.selection, item.amount) for item in preview.order_items] == [
+        ("平特一肖", "鼠", Decimal("130")),
+        ("特码", "31", Decimal("75")),
+        ("特码", "43", Decimal("75")),
+    ]
+
+
 @pytest.mark.parametrize(
     ("text", "category", "norm_type", "order_type"),
     [

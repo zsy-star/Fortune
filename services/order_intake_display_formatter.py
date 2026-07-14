@@ -54,6 +54,16 @@ _DIRECT_SPECIAL_SELECTIONS = {
 _ZODIAC_NAMES = {"鼠", "牛", "虎", "兔", "龙", "蛇", "马", "羊", "猴", "鸡", "狗", "猪"}
 
 
+def format_nickname_recognition(nickname: str) -> str:
+    """Format an in-memory nickname context for the record-window preview."""
+    return f"昵称识别：{str(nickname or '').strip()}"
+
+
+def format_nickname_without_orders(nickname: str) -> str:
+    """Format the neutral notice used when a nickname has no order results."""
+    return f"已识别昵称“{str(nickname or '').strip()}”，但未发现可保存订单。"
+
+
 @dataclass(frozen=True, slots=True)
 class OrderIntakeDisplayItem:
     """Small DTO for testing and non-parser callers of the display formatter."""
@@ -181,7 +191,7 @@ def format_intake_item(item: Any, default_region: str | None = None) -> str:
 def _amount_marker_prefix(text: str, category: str) -> str:
     if category == "单号投注" and "/" in text:
         return text.split("/", 1)[0]
-    match = re.search(r"(?:各组|各数|各号|每注|每数|各|每|打|买)", text)
+    match = re.search(r"(?:各组|各数|各号|各注|每组|每注|每数|每号|各|每|打|买)", text)
     return text[: match.start()] if match else text
 
 
@@ -239,6 +249,13 @@ def format_parse_result(result: Any, default_region: str | None = None) -> str:
         )
     elif category == "四肖":
         line = f"{region}: 四肖: {selection} 整组 {amount}，合计 {total}"
+    elif category in {"红波", "蓝波", "绿波"}:
+        numbers = tuple(getattr(result, "numbers", ()) or ())
+        number_selection = "-".join(f"{int(number):02d}" for number in numbers)
+        line = (
+            f"{region}: {category}: {number_selection} "
+            f"每号 {amount}，号码数 {len(numbers)}，合计 {total}"
+        )
     elif re.fullmatch(r"(?:[大小])?[红蓝绿][单双]", category):
         line = (
             f"{region}: {category}: {format_display_selection(selection)} "
