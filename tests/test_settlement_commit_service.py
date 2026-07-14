@@ -3,7 +3,10 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
+from sqlalchemy import select
 
+from domain.play_rules import FORTUNE_RULESET_2026_V1, FORTUNE_RULESET_2026_V2
+from models import Order
 from schemas.draw_schema import LotteryDrawCreate
 from schemas.order_schema import OrderCreate, OrderItemCreate
 from services.draw_service import DrawService
@@ -128,6 +131,9 @@ def test_commit_saveable_but_unsupported_play_blocks_persistence(session_factory
 
 
 def test_commit_winning_special_number_updates_status_and_writes_log(session_factory) -> None:
+    settings = SettingsService(session_factory)
+    plan = settings.ensure_default_plan()
+    settings.add_item(plan.id, "特码", "40", "1")
     order_service = OrderService(session_factory)
     order = create_order(order_service, items=[OrderItemCreate(bet_type="特码", selection="01", amount="10")])
     draw = create_draw(DrawService(session_factory), special_number="01")
@@ -166,13 +172,25 @@ def test_commit_winning_special_number_updates_status_and_writes_log(session_fac
     assert record.result_snapshot["items"][0]["selection"] == "01"
     assert record.result_snapshot["items"][0]["amount"] == "10.00"
     assert record.result_snapshot["items"][0]["is_winner"] is True
+    assert record.result_snapshot["ruleset_version"] == FORTUNE_RULESET_2026_V2
+    assert record.result_snapshot["order"]["ruleset_version"] == FORTUNE_RULESET_2026_V2
+    audit = record.result_snapshot["items"][0]
+    assert audit["normalized_type"] == "special_number"
+    assert audit["ruleset_version"] == FORTUNE_RULESET_2026_V2
+    assert audit["matcher_id"] == "match_special_number"
+    assert audit["matcher_version"] is None
+    assert audit["odds_key_used"] == "特码"
+    assert audit["rebate_key_used"] == "特码"
+    assert audit["payout_tier"] is None
+    assert audit["selection_unit"] == "number"
+    assert audit["draw_scope"] == "special_only"
     logs = LogService(session_factory).list_logs(module="settlement", action="commit")
     assert len(logs) == 1
     assert order.order_no in logs[0].description
     assert "中奖 1" in logs[0].description
 
 
-def test_commit_ten_non_hit_writes_snapshot_with_specific_configured_odds(session_factory) -> None:
+def test_configured_odds_cannot_bypass_non_hit_v2_settlement_gate(session_factory) -> None:
     settings = SettingsService(session_factory)
     plan = settings.ensure_default_plan()
     settings.add_item(plan.id, "十不中", "5.0", "0")
@@ -188,17 +206,34 @@ def test_commit_ten_non_hit_writes_snapshot_with_specific_configured_odds(sessio
     )
     draw = create_draw(DrawService(session_factory), special_number="01")
 
-    result = SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+    with pytest.raises(SettlementDataError, match="V2规则修复尚未完成"):
+        SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
 
-    assert result.win_count == 1
-    assert result.total_payout_amount == 20000
-    record = SettlementService(session_factory).get_settlement_record_by_order_id(order.id)
-    assert record is not None
-    item = record.result_snapshot["items"][0]
-    assert item["result"] == "hit"
-    assert item["odds"] == "5"
-    assert item["payout_amount"] == "20000.00"
-    assert item["draw_numbers"] == ["02", "03", "04", "05", "06", "07", "01"]
+    assert OrderService(session_factory).get_order(order.id).status == "active"
+    assert settlement_record_count(session_factory) == 0
+    assert settlement_log_count(session_factory) == 0
+
+
+@pytest.mark.parametrize("ruleset_version", [FORTUNE_RULESET_2026_V1, "UNKNOWN_RULESET", ""])
+def test_non_v2_order_can_be_read_but_cannot_commit_settlement(
+    session_factory,
+    ruleset_version: str,
+) -> None:
+    order = create_order(OrderService(session_factory))
+    draw = create_draw(DrawService(session_factory))
+    with session_factory() as session:
+        persisted = session.scalars(select(Order).where(Order.id == order.id)).one()
+        persisted.ruleset_version = ruleset_version
+        session.commit()
+
+    detail = OrderService(session_factory).get_order(order.id)
+    assert detail is not None
+    assert detail.ruleset_version == ruleset_version
+    with pytest.raises(SettlementDataError, match="规则版本不允许正式结算"):
+        SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+
+    assert settlement_record_count(session_factory) == 0
+    assert settlement_log_count(session_factory) == 0
 
 
 def test_commit_losing_special_number_by_issue_updates_status(session_factory) -> None:

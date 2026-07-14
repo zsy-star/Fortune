@@ -10,6 +10,10 @@ BET_TYPE_PINGTE_ZODIAC = "平特一肖"
 BET_TYPE_LIANXIAO = "连肖"
 BET_TYPE_LIANWEI = "连尾"
 BET_TYPE_NUMBER = "号码"
+BET_TYPE_PINGTE_MAIN_ZODIAC = "平特一肖带主肖"
+BET_TYPE_ERZHONGTE_FUXUAN = "二中特复选"
+BET_TYPE_REGULAR_POSITION = "正码特"
+BET_TYPE_PINGTE_ZERO_TAIL = "平特0尾"
 
 SUPPORTED_BET_TYPES: frozenset[str] = frozenset(
     {
@@ -35,6 +39,10 @@ SUPPORTED_BET_TYPES: frozenset[str] = frozenset(
         "几中几复选",
         "连肖复选",
         "四肖",
+        BET_TYPE_PINGTE_MAIN_ZODIAC,
+        BET_TYPE_ERZHONGTE_FUXUAN,
+        BET_TYPE_REGULAR_POSITION,
+        BET_TYPE_PINGTE_ZERO_TAIL,
     }
 )
 

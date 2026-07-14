@@ -7,6 +7,7 @@ from typing import Any
 
 from domain.color_rules import get_wave_color
 from domain.number_rules import normalize_number, odd_even_label, size_label, tail_number
+from domain.play_rules import FORTUNE_RULESET_2026_V2, get_play_rule
 from domain.zodiac_rules import get_zodiac
 from domain.zodiac_config import get_default_zodiac_year, validate_zodiac_year
 from schemas.settlement_schema import ItemSettlementResult, OrderSettlementPreview
@@ -96,13 +97,24 @@ MATCHERS: dict[str, Matcher] = {
 class SettlementEngine:
     """Evaluate order items against an explicitly supplied lottery draw."""
 
-    def __init__(self, normalizer: BetTypeNormalizer | None = None, *, zodiac_year: int | None = None):
+    def __init__(
+        self,
+        normalizer: BetTypeNormalizer | None = None,
+        *,
+        zodiac_year: int | None = None,
+        ruleset_version: str = FORTUNE_RULESET_2026_V2,
+    ):
         self._zodiac_year = validate_zodiac_year(zodiac_year or get_default_zodiac_year())
         self._normalizer = normalizer or BetTypeNormalizer(zodiac_year=self._zodiac_year)
+        self._ruleset_version = str(ruleset_version)
 
     @property
     def zodiac_year(self) -> int:
         return self._zodiac_year
+
+    @property
+    def ruleset_version(self) -> str:
+        return self._ruleset_version
 
     def evaluate_item(self, order_item: Any, lottery_draw: Any) -> ItemSettlementResult:
         draw = self._validate_draw(lottery_draw)
@@ -111,6 +123,13 @@ class SettlementEngine:
         draw_special_number = draw["special_number"]
         draw_special_zodiac = get_zodiac(draw_special_number, year=self._zodiac_year)
         common_draw_fields = self._draw_reference_fields(draw_regular_numbers, draw_special_number)
+        play_rule = get_play_rule(getattr(order_item, "bet_type", ""))
+        rule_audit_fields = {
+            "ruleset_version": self._ruleset_version,
+            "matcher_version": play_rule.matcher_version if play_rule else None,
+            "selection_unit": play_rule.selection_unit.value if play_rule else None,
+            "draw_scope": play_rule.draw_scope.value if play_rule else None,
+        }
         try:
             normalized = self._normalizer.normalize(
                 order_item.bet_type,
@@ -131,6 +150,8 @@ class SettlementEngine:
                 draw_special_number=draw_special_number,
                 draw_special_zodiac=draw_special_zodiac,
                 unsupported_reason=str(exc),
+                matcher_id=None,
+                **rule_audit_fields,
                 **common_draw_fields,
             )
 
@@ -190,6 +211,8 @@ class SettlementEngine:
             draw_special_zodiac=draw_special_zodiac,
             selected_zodiacs=selected_zodiacs,
             matched_zodiac=matched_zodiac,
+            matcher_id=getattr(matcher, "__name__", None),
+            **rule_audit_fields,
             **common_draw_fields,
             **match_fields,
         )
@@ -221,6 +244,7 @@ class SettlementEngine:
             winning_items=len(winning),
             losing_items=len(losing),
             results=results,
+            ruleset_version=self._ruleset_version,
         )
 
     def _validate_draw(self, lottery_draw: Any) -> dict[str, Any]:

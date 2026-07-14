@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
+from domain.play_rules import FORTUNE_RULESET_2026_V1, FORTUNE_RULESET_2026_V2
 from services.settlement_support_service import SettlementSupportService
 
 
@@ -14,26 +17,26 @@ def test_supported_special_number_returns_supported() -> None:
     assert "已支持" in result.message
 
 
-def test_supported_number_fuxuan_reads_note() -> None:
+def test_number_fuxuan_is_blocked_even_when_note_is_valid() -> None:
     result = SettlementSupportService().check_item(
         "几中几复选",
         "01,02,03,04",
         note="复选类型=复3",
     )
 
-    assert result.is_supported
-    assert result.normalized_bet_type == "number_fuxuan"
+    assert not result.is_supported
+    assert "V2规则修复尚未完成" in result.reason
 
 
-def test_ten_non_hit_is_supported_as_one_valid_group() -> None:
+def test_ten_non_hit_is_blocked_pending_v2_rule_fix() -> None:
     result = SettlementSupportService().check_item(
         "N不中",
         "01,03,06,10,13,15,18,22,31,43",
     )
 
-    assert result.is_supported
-    assert result.status == "supported"
-    assert result.normalized_bet_type == "non_hit_number"
+    assert not result.is_supported
+    assert result.status == "unsupported"
+    assert "V2规则修复尚未完成" in result.reason
 
 
 def test_unsupported_saveable_play_returns_user_readable_message() -> None:
@@ -69,7 +72,7 @@ def test_four_zodiac_accounting_play_is_explicitly_unsupported() -> None:
 
     assert not result.is_supported
     assert result.status == "unsupported"
-    assert "暂不支持玩法：四肖" in result.reason
+    assert "仅允许记账保存" in result.reason
     assert "可保存为记账订单" in result.suggestion
 
 
@@ -83,3 +86,99 @@ def test_order_item_summary_lists_unsupported_items() -> None:
 
     assert "含暂不支持正式结算玩法" in summary
     assert "特串/01,02" in summary
+
+
+@pytest.mark.parametrize(
+    "bet_type",
+    [
+        "平特一肖",
+        "平特一肖带主肖",
+        "平尾",
+        "连肖",
+        "连肖复选",
+        "N不中",
+        "三中二",
+        "几中几复选",
+        "包半波",
+        "连尾",
+        "二中特",
+        "二中特复选",
+        "特串",
+        "四肖",
+        "正码特",
+        "平特0尾",
+    ],
+)
+def test_v2_unsafe_plays_are_all_blocked_from_formal_settlement(bet_type: str) -> None:
+    result = SettlementSupportService().check_item(bet_type, "01,02,03")
+
+    assert not result.is_supported
+    assert result.status == "unsupported"
+    assert "暂不支持正式结算" in result.message
+
+
+@pytest.mark.parametrize(
+    ("bet_type", "single_selection", "multi_selection"),
+    [
+        ("二中二", "(01-02)", "(01-02)-(03-04)"),
+        ("三中三", "(01-02-03)", "(01-02-03)-(04-05-06)"),
+    ],
+)
+def test_lianma_allows_only_one_explicit_group(
+    bet_type: str,
+    single_selection: str,
+    multi_selection: str,
+) -> None:
+    service = SettlementSupportService()
+
+    assert service.check_item(bet_type, single_selection).is_supported
+    blocked = service.check_item(bet_type, multi_selection)
+
+    assert not blocked.is_supported
+    assert "暂只允许单个" in blocked.reason
+
+
+@pytest.mark.parametrize("ruleset_version", [FORTUNE_RULESET_2026_V1, "UNKNOWN", None, ""])
+def test_non_v2_or_unknown_ruleset_blocks_formal_settlement(ruleset_version) -> None:
+    service = SettlementSupportService()
+    items = [SimpleNamespace(bet_type="特码", selection="01", note=None)]
+
+    results = service.check_order_items(items, ruleset_version=ruleset_version)
+
+    assert len(results) == 1
+    assert not results[0].is_supported
+    assert "禁止自动按V2解释" in results[0].reason
+
+
+def test_v2_ruleset_continues_to_play_level_gate() -> None:
+    service = SettlementSupportService()
+    items = [SimpleNamespace(bet_type="特码", selection="01", note=None)]
+
+    results = service.check_order_items(items, ruleset_version=FORTUNE_RULESET_2026_V2)
+
+    assert len(results) == 1
+    assert results[0].is_supported
+
+
+def test_unsafe_normalized_alias_cannot_bypass_canonical_gate() -> None:
+    result = SettlementSupportService().check_item("多生肖", "马,蛇")
+
+    assert not result.is_supported
+    assert result.normalized_bet_type == "special_zodiac_group"
+    assert "连肖" in result.reason
+
+
+def test_non_v2_multi_item_support_returns_one_blocked_result_per_item() -> None:
+    items = [
+        SimpleNamespace(bet_type="特码", selection="01", note=None),
+        SimpleNamespace(bet_type="平码", selection="02", note=None),
+    ]
+
+    results = SettlementSupportService().check_order_items(
+        items,
+        ruleset_version=FORTUNE_RULESET_2026_V1,
+    )
+
+    assert [result.play_type for result in results] == ["特码", "平码"]
+    assert all(not result.is_supported for result in results)
+    assert all("订单规则版本门禁" in result.reason for result in results)

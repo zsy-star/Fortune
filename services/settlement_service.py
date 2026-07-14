@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from core.database import SessionLocal
 from domain.bet_types import normalize_region
+from domain.play_rules import FORTUNE_RULESET_2026_V2, is_v2_ruleset
 from domain.non_hit_rules import (
     format_non_hit_count_chinese,
     non_hit_odds_bet_type_candidates,
@@ -191,7 +192,10 @@ class SettlementService:
     def check_order_support(self, order_id: int) -> list[SettlementSupportResult]:
         with self._session_factory() as session:
             order = self._get_order(session, order_id)
-            return self._support_service.check_order_items(order.items)
+            return self._support_service.check_order_items(
+                order.items,
+                ruleset_version=order.ruleset_version,
+            )
 
 
     def commit_order_settlement(self, order_id: int, draw_id: int) -> OrderSettlementCommitResult:
@@ -251,7 +255,17 @@ class SettlementService:
         if record_repo.get_by_order_id(order.id) is not None:
             raise SettlementDataError(f"订单已有结算记录，不能重复结算：{order.order_no}")
 
-        unsupported_before_preview = self._support_service.unsupported_results(order.items)
+        ruleset_support = self._support_service.check_ruleset_version(order.ruleset_version)
+        if not ruleset_support.is_supported:
+            raise SettlementDataError(
+                "订单规则版本不允许正式结算："
+                f"{ruleset_support.reason}"
+            )
+
+        unsupported_before_preview = self._support_service.unsupported_results(
+            order.items,
+            ruleset_version=order.ruleset_version,
+        )
         if unsupported_before_preview:
             raise SettlementDataError(
                 "存在暂不支持玩法，暂不能正式结算：" + self._format_unsupported_support(unsupported_before_preview)
@@ -429,15 +443,34 @@ class SettlementService:
             payout_amount=payout,
             odds_plan_name=plan_name,
             odds_source=odds_source,
+            odds_key_used=str(odds_item.bet_type).strip(),
             payout_note=f"中奖金额 = 投注金额 {_decimal_money(item.amount)} x 赔率 {_decimal_odds(odds)}",
         )
 
     def _engine_for_order(self, order: Any) -> tuple[SettlementEngine, str | None]:
+        raw_ruleset = getattr(order, "ruleset_version", FORTUNE_RULESET_2026_V2)
+        if not is_v2_ruleset(raw_ruleset):
+            value = str(raw_ruleset or "未设置").strip() or "未设置"
+            raise SettlementDataError(
+                f"订单规则版本 {value} 不受V2结算支持，禁止自动按V2解释"
+            )
         raw_year = getattr(order, "zodiac_year", None)
         if raw_year is None:
             year = get_default_zodiac_year()
-            return SettlementEngine(zodiac_year=year), f"订单未记录生肖年份，使用默认年份 {year} 兼容"
-        return SettlementEngine(zodiac_year=validate_zodiac_year(raw_year)), None
+            return (
+                SettlementEngine(
+                    zodiac_year=year,
+                    ruleset_version=FORTUNE_RULESET_2026_V2,
+                ),
+                f"订单未记录生肖年份，使用默认年份 {year} 兼容",
+            )
+        return (
+            SettlementEngine(
+                zodiac_year=validate_zodiac_year(raw_year),
+                ruleset_version=FORTUNE_RULESET_2026_V2,
+            ),
+            None,
+        )
 
     def _apply_item_rebate(
         self,
@@ -472,6 +505,7 @@ class SettlementService:
             item,
             rebate_rate=rebate_rate,
             rebate_amount=rebate_amount,
+            rebate_key_used=str(rebate_item.bet_type).strip(),
             rebate_note=f"{odds_source} / {plan_name or '未配置方案'}：{note}",
         )
 
@@ -556,6 +590,7 @@ class SettlementService:
         warnings: list[str],
     ) -> dict[str, Any]:
         return {
+            "ruleset_version": order.ruleset_version,
             "order": {
                 "id": order.id,
                 "order_no": order.order_no,
@@ -563,6 +598,7 @@ class SettlementService:
                 "total_amount": str(order.total_amount),
                 "status_before": order.status,
                 "zodiac_year": order.zodiac_year,
+                "ruleset_version": order.ruleset_version,
             },
             "draw": {
                 "id": draw.id,
@@ -610,6 +646,7 @@ class SettlementService:
             "order_item_id": item.order_item_id,
             "bet_type": item.bet_type,
             "normalized_bet_type": item.normalized_bet_type,
+            "normalized_type": item.normalized_bet_type,
             "selection": item.selection,
             "amount": str(item.amount),
             "result": result,
@@ -646,6 +683,14 @@ class SettlementService:
             "rebate_rate": _decimal_odds(item.rebate_rate) if item.rebate_rate is not None else None,
             "rebate_amount": _decimal_money(item.rebate_amount),
             "rebate_note": item.rebate_note,
+            "ruleset_version": item.ruleset_version,
+            "matcher_id": item.matcher_id,
+            "matcher_version": item.matcher_version,
+            "odds_key_used": item.odds_key_used,
+            "rebate_key_used": item.rebate_key_used,
+            "payout_tier": item.payout_tier,
+            "selection_unit": item.selection_unit,
+            "draw_scope": item.draw_scope,
         }
 
     def _to_ledger_result(self, record: SettlementRecord) -> SettlementLedgerResult:

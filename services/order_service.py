@@ -77,6 +77,7 @@ class OrderService:
                     raw_text=order_create.raw_text,
                     total_amount=total_amount,
                     zodiac_year=order_create.zodiac_year,
+                    ruleset_version=order_create.ruleset_version,
                     status="active",
                     created_at=now,
                     updated_at=now,
@@ -120,6 +121,7 @@ class OrderService:
                     status=order.status,
                     item_count=len(order.items),
                     zodiac_year=order.zodiac_year,
+                    ruleset_version=order.ruleset_version,
                 )
             except Exception:
                 session.rollback()
@@ -476,6 +478,7 @@ class OrderService:
             updated_at=order.updated_at,
             item_count=len(order.items),
             zodiac_year=order.zodiac_year,
+            ruleset_version=order.ruleset_version,
         )
 
     def _to_detail(self, order: Order) -> OrderDetailResult:
@@ -503,6 +506,7 @@ class OrderService:
                 for item in order.items
             ],
             zodiac_year=order.zodiac_year,
+            ruleset_version=order.ruleset_version,
         )
 
     def _to_settlement_ledger_result(self, record) -> SettlementLedgerResult:

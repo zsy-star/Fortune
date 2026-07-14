@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from schemas.draw_schema import LotteryDrawCreate
 from schemas.order_schema import OrderCreate, OrderItemCreate
 from services.draw_service import DrawService
 from services.order_service import OrderService
 from services.settlement_service import SettlementService
+from settlement.exceptions import SettlementDataError
 
 
 def create_tail_draw(draw_service: DrawService):
@@ -145,7 +148,7 @@ def test_package_halfwave_invalid_combo_is_unsupported(session_factory) -> None:
     assert preview.results[0].unsupported_reason
 
 
-def test_tail_and_halfwave_snapshot_contains_reference_data(session_factory) -> None:
+def test_tail_and_halfwave_preview_keeps_reference_data_but_v2_commit_is_blocked(session_factory) -> None:
     order = create_order(
         OrderService(session_factory),
         items=[
@@ -155,28 +158,20 @@ def test_tail_and_halfwave_snapshot_contains_reference_data(session_factory) -> 
     )
     draw = create_tail_draw(DrawService(session_factory))
 
-    result = SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+    service = SettlementService(session_factory)
+    preview = service.preview_order(order.id, draw.id)
+    tail_item, halfwave_item = preview.results
+    assert tail_item.draw_numbers == ("01", "12", "23", "34", "45", "06", "19")
+    assert tail_item.draw_tails == ("1", "2", "3", "4", "5", "6", "9")
+    assert tail_item.selected_tails == ("1", "2")
+    assert tail_item.matched_tails == ("1", "2")
+    assert halfwave_item.draw_special_number == "19"
+    assert halfwave_item.draw_special_wave == "红波"
+    assert halfwave_item.draw_special_odd_even == "单"
+    assert halfwave_item.draw_special_big_small == "小"
+    assert halfwave_item.selected_halfwaves == ("红单", "红小")
+    assert halfwave_item.matched_halfwave in {"红单", "红小"}
 
-    assert result.win_count == 2
-    record = SettlementService(session_factory).get_settlement_record_by_order_id(order.id)
-    assert record is not None
-    snapshot = record.result_snapshot
-    tail_item, halfwave_item = snapshot["items"]
-    assert tail_item["draw_numbers"] == ["01", "12", "23", "34", "45", "06", "19"]
-    assert tail_item["draw_tails"] == ["1", "2", "3", "4", "5", "6", "9"]
-    assert tail_item["selected_tails"] == ["1", "2"]
-    assert tail_item["matched_tails"] == ["1", "2"]
-    assert halfwave_item["draw_special_number"] == "19"
-    assert halfwave_item["draw_special_wave"] == "红波"
-    assert halfwave_item["draw_special_odd_even"] == "单"
-    assert halfwave_item["draw_special_big_small"] == "小"
-    assert halfwave_item["selected_halfwaves"] == ["红单", "红小"]
-    assert halfwave_item["matched_halfwave"] in {"红单", "红小"}
-    assert snapshot["settlement"]["total_payout_amount"] == "0.00"
-    assert tail_item["payout_amount"] == "0.00"
-    assert halfwave_item["payout_amount"] == "0.00"
-    assert snapshot["settlement"]["total_rebate_amount"] == "0.00"
-    assert snapshot["settlement"]["statistic_net_amount"] == "-20.00"
-    assert tail_item["rebate_amount"] == "0.00"
-    assert halfwave_item["rebate_amount"] == "0.00"
-    assert "balance" not in str(snapshot).lower()
+    with pytest.raises(SettlementDataError, match="暂不支持玩法"):
+        service.commit_order_settlement(order.id, draw.id)
+    assert service.get_settlement_record_by_order_id(order.id) is None

@@ -152,7 +152,7 @@ def test_lianxiao_misses_when_special_zodiac_is_not_selected(session_factory) ->
     assert item.draw_special_zodiac == "马"
 
 
-def test_lianxiao_group_amount_from_intake_flows_to_preview_and_snapshot(session_factory) -> None:
+def test_lianxiao_group_amount_flows_to_preview_but_v2_commit_is_blocked(session_factory) -> None:
     intake = OrderIntakeService(session_factory)
     save_result = intake.parse_and_save(
         "连肖 龙羊猴 各30",
@@ -175,14 +175,9 @@ def test_lianxiao_group_amount_from_intake_flows_to_preview_and_snapshot(session
     assert item.amount == Decimal("30.00")
     assert preview.total_payout_amount == Decimal("0.00")
 
-    service.commit_order_settlement(save_result.order.id, draw.id)
-    record = service.get_settlement_record_by_order_id(save_result.order.id)
-    assert record is not None
-    snapshot_item = record.result_snapshot["items"][0]
-    assert snapshot_item["bet_type"] == "连肖"
-    assert snapshot_item["selection"] == "龙,羊,猴"
-    assert snapshot_item["amount"] == "30.00"
-    assert record.result_snapshot["settlement"]["total_payout_amount"] == "0.00"
+    with pytest.raises(SettlementDataError, match="V2规则修复尚未完成"):
+        service.commit_order_settlement(save_result.order.id, draw.id)
+    assert service.get_settlement_record_by_order_id(save_result.order.id) is None
 
 
 def test_lianxiao_invalid_selection_is_unsupported(session_factory) -> None:
@@ -197,43 +192,19 @@ def test_lianxiao_invalid_selection_is_unsupported(session_factory) -> None:
     assert "无法解析生肖列表" in preview.results[0].reason
 
 
-def test_complex_zodiac_commit_writes_snapshot_with_zero_payout_when_odds_missing(session_factory) -> None:
+def test_legacy_multi_zodiac_alias_cannot_bypass_v2_lianxiao_gate(session_factory) -> None:
     order_id = create_multi_zodiac_order(session_factory, selection="马,蛇", amount="15")
     draw = create_draw(DrawService(session_factory), special_number="01")
 
-    result = SettlementService(session_factory).commit_order_settlement(order_id, draw.id)
+    with pytest.raises(SettlementDataError, match="V2规则别名同样受门禁限制"):
+        SettlementService(session_factory).commit_order_settlement(order_id, draw.id)
 
-    assert result.win_count == 1
-    assert result.lose_count == 0
-    assert result.unsupported_items == 0
     with session_factory() as session:
-        record = session.query(SettlementRecord).filter_by(order_id=order_id).one()
         order = session.get(Order, order_id)
         assert order is not None
         assert order.raw_text == "多生肖马,蛇各15"
-        assert record.hit_count == 1
-        assert record.miss_count == 0
-        assert record.unsupported_count == 0
-        snapshot = record.result_snapshot
-
-    assert snapshot["draw"]["special_number"] == "01"
-    assert snapshot["draw"]["special_zodiac"] == "马"
-    item_snapshot = snapshot["items"][0]
-    assert item_snapshot["bet_type"] == "多生肖"
-    assert item_snapshot["selection"] == "蛇,马"
-    assert item_snapshot["amount"] == "15.00"
-    assert item_snapshot["is_winner"] is True
-    assert item_snapshot["draw_special_number"] == "01"
-    assert item_snapshot["draw_special_zodiac"] == "马"
-    assert item_snapshot["selected_zodiacs"] == ["蛇", "马"]
-    assert item_snapshot["matched_zodiac"] == "马"
-    assert snapshot["settlement"]["total_payout_amount"] == "0.00"
-    assert item_snapshot["payout_amount"] == "0.00"
-    assert item_snapshot["payout_note"] == "未配置赔率"
-    assert snapshot["settlement"]["total_rebate_amount"] == "0.00"
-    assert snapshot["settlement"]["statistic_net_amount"] == "-15.00"
-    assert item_snapshot["rebate_amount"] == "0.00"
-    assert "balance" not in str(snapshot).lower()
+        assert order.status == "active"
+        assert session.query(SettlementRecord).filter_by(order_id=order_id).first() is None
 
 
 def test_complex_zodiac_commit_is_blocked_when_any_item_is_unsupported(session_factory) -> None:

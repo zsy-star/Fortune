@@ -450,7 +450,7 @@ def test_each_package_multi_zodiac_matches_existing_each_output() -> None:
         ("平特一肖", "马", Decimal("10")),
         ("平特一肖", "猪", Decimal("10")),
     ]
-    assert all(row.settlement_support_status == "supported" for row in packaged.items)
+    assert all(row.settlement_support_status == "unsupported" for row in packaged.items)
 
 
 def test_each_package_normalization_does_not_change_package_bet_names() -> None:
@@ -505,7 +505,7 @@ def test_ten_non_hit_intake_saves_one_group_item(text: str) -> None:
     assert item.bet_type == "N不中"
     assert item.selection == "01,03,06,10,13,15,18,22,31,43"
     assert item.amount == Decimal("4000")
-    assert preview.items[0].settlement_support_status == "supported"
+    assert preview.items[0].settlement_support_status == "unsupported"
 
 
 def test_number_fuxuan_intake_saves_one_summary_item_with_note() -> None:
@@ -523,7 +523,7 @@ def test_number_fuxuan_intake_saves_one_summary_item_with_note() -> None:
     assert row.original_bet_type == "几中几复选"
     assert row.order_selection == "01,02,03,04"
     assert row.normalized_bet_type == "number_fuxuan"
-    assert row.settlement_support_status == "supported"
+    assert row.settlement_support_status == "unsupported"
 
 
 def test_lianxiao_fuxuan_intake_saves_one_summary_item_with_note() -> None:
@@ -704,7 +704,7 @@ def test_pingwei_intake_saves_one_summary_item() -> None:
     assert item.selection == "1,3,4,6"
     assert item.amount == Decimal("4000.00")
     assert item.note == "平尾尾数个数=4"
-    assert not any("平尾" in warning for warning in preview.warnings)
+    assert any("平尾" in warning and "暂不支持正式结算" in warning for warning in preview.warnings)
     row = _first_valid_item(preview)
     assert row.original_bet_type == "平尾"
     assert row.order_selection == "1,3,4,6"
@@ -958,14 +958,14 @@ def test_real_sample_fushi_three_in_two_intake_summary() -> None:
     assert item.note == "连码组合数=4;连码组大小=3"
 
 
-def test_real_sample_pingte_six_tail_intake_is_supported_ping_tail() -> None:
+def test_real_sample_pingte_six_tail_intake_is_blocked_pending_v2_rule_fix() -> None:
     preview = _preview("平特6尾1000", region="澳门")
     assert preview.can_save
     assert preview.total_amount == Decimal("1000")
     assert len(preview.order_items) == 1
     assert preview.order_items[0].bet_type == "平尾"
     assert preview.order_items[0].selection == "6"
-    assert _first_valid_item(preview).settlement_support_status == "supported"
+    assert _first_valid_item(preview).settlement_support_status == "unsupported"
 
 
 def test_real_sample_partial_success_preview_keeps_error_and_four_zodiacs() -> None:

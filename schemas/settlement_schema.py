@@ -48,6 +48,14 @@ class ItemSettlementResult:
     rebate_rate: Decimal | None = None
     rebate_amount: Decimal = Decimal("0.00")
     rebate_note: str | None = None
+    ruleset_version: str | None = None
+    matcher_id: str | None = None
+    matcher_version: str | None = None
+    odds_key_used: str | None = None
+    rebate_key_used: str | None = None
+    payout_tier: str | None = None
+    selection_unit: str | None = None
+    draw_scope: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +84,7 @@ class OrderSettlementPreview:
     total_payout_amount: Decimal = Decimal("0.00")
     total_rebate_amount: Decimal = Decimal("0.00")
     statistic_net_amount: Decimal = Decimal("0.00")
+    ruleset_version: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

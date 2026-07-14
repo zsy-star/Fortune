@@ -9,6 +9,7 @@ from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, Te
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from models.base import Base
+from domain.play_rules import FORTUNE_RULESET_2026_V2
 
 
 class Order(Base):
@@ -23,6 +24,12 @@ class Order(Base):
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)
     total_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     zodiac_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ruleset_version: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default=FORTUNE_RULESET_2026_V2,
+        server_default=FORTUNE_RULESET_2026_V2,
+    )
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

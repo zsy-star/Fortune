@@ -1001,7 +1001,10 @@ class OrderDetailPage(QWidget):
             self._status_label.setText(self._unsupported_support_message(unsupported_support))
 
     def _support_results_for_detail(self, detail: OrderDetailResult) -> list[SettlementSupportResult]:
-        return self._settlement_support_service.check_order_items(detail.items)
+        return self._settlement_support_service.check_order_items(
+            detail.items,
+            ruleset_version=detail.ruleset_version,
+        )
 
     def _unsupported_support_message(self, results: list[SettlementSupportResult]) -> str:
         lines = [

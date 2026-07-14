@@ -358,7 +358,7 @@ def test_lianxiao_fuxuan_stays_unsupported_until_reference_examples_confirm_rule
     assert item.unsupported_reason == "复选类玩法结算规则待确认"
 
 
-def test_commit_allowed_for_new_complex_number_rules_and_snapshot_groups(session_factory) -> None:
+def test_commit_blocks_v2_multi_group_and_pending_complex_number_rules(session_factory) -> None:
     order_service = OrderService(session_factory)
     order = create_order(
         order_service,
@@ -375,18 +375,11 @@ def test_commit_allowed_for_new_complex_number_rules_and_snapshot_groups(session
     )
     draw = create_draw(DrawService(session_factory))
 
-    result = SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+    with pytest.raises(SettlementDataError, match="暂不支持玩法"):
+        SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
 
-    assert result.unsupported_items == 0
-    assert result.win_count == 3
-    record = SettlementService(session_factory).get_settlement_record_by_order_id(order.id)
-    assert record is not None
-    assert record.unsupported_count == 0
-    snapshot = record.result_snapshot
-    assert snapshot["items"][0]["matched_groups"] == ["(01-02)"]
-    assert snapshot["items"][1]["matched_tails"] == ["1"]
-    assert snapshot["items"][2]["fuxuan_type"] == "复3"
-    assert snapshot["items"][2]["matched_groups"] == ["(01-02-03)"]
+    assert OrderService(session_factory).get_order(order.id).status == "active"
+    assert SettlementService(session_factory).get_settlement_record_by_order_id(order.id) is None
 
 
 def test_six_special_zodiac_hits_when_special_zodiac_is_selected(session_factory) -> None:
@@ -527,7 +520,7 @@ def test_commit_is_allowed_without_unsupported_and_writes_zero_payout_when_odds_
         order_service,
         items=[
             OrderItemCreate(bet_type="平码", selection="03", amount="10"),
-            OrderItemCreate(bet_type="不中", selection="08,09,10,11,12", amount="10"),
+            OrderItemCreate(bet_type="特码", selection="07", amount="10"),
         ],
     )
     draw = create_draw(DrawService(session_factory))
@@ -545,8 +538,6 @@ def test_commit_is_allowed_without_unsupported_and_writes_zero_payout_when_odds_
     snapshot = record.result_snapshot
     assert snapshot["items"][0]["draw_regular_numbers"] == ["01", "02", "03", "04", "05", "06"]
     assert snapshot["items"][1]["draw_numbers"] == ["01", "02", "03", "04", "05", "06", "07"]
-    assert snapshot["items"][1]["selected_numbers"] == ["08", "09", "10", "11", "12"]
-    assert snapshot["items"][1]["hit_numbers"] == []
     assert snapshot["items"][1]["result"] == "hit"
     assert snapshot["settlement"]["total_payout_amount"] == "0.00"
     assert snapshot["items"][0]["payout_amount"] == "0.00"

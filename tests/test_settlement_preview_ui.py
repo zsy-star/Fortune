@@ -448,7 +448,10 @@ def test_order_detail_preview_button_states(session_factory) -> None:
     app()
     order_service = OrderService(session_factory)
     log_service = LogService(session_factory)
-    order = create_order(order_service)
+    order = create_order(
+        order_service,
+        items=[OrderItemCreate(bet_type="特码", selection="01", amount="10.00")],
+    )
     page = OrderDetailPage(
         order_service=order_service,
         log_service=log_service,

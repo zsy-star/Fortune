@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 
 from domain.bet_types import normalize_bet_type, normalize_region
 from domain.exceptions import InvalidAmountError
+from domain.play_rules import FORTUNE_RULESET_2026_V2
 from domain.zodiac_config import get_default_zodiac_year, validate_zodiac_year
 
 
@@ -57,6 +58,7 @@ class OrderCreate:
     channel: str | None = None
     config_plan_name: str | None = None
     zodiac_year: int | None = None
+    ruleset_version: str = FORTUNE_RULESET_2026_V2
 
     def __post_init__(self) -> None:
         self.region = normalize_region(self.region)
@@ -81,6 +83,11 @@ class OrderCreate:
         if self.config_plan_name is not None:
             self.config_plan_name = self.config_plan_name.strip() or None
         self.zodiac_year = validate_zodiac_year(self.zodiac_year or get_default_zodiac_year())
+        self.ruleset_version = str(self.ruleset_version or "").strip()
+        if self.ruleset_version != FORTUNE_RULESET_2026_V2:
+            raise ValueError(
+                "新订单只能使用规则版本 " + FORTUNE_RULESET_2026_V2
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +99,7 @@ class OrderResult:
     status: str
     item_count: int
     zodiac_year: int | None = None
+    ruleset_version: str = FORTUNE_RULESET_2026_V2
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +139,7 @@ class OrderSummary:
     updated_at: datetime
     item_count: int
     zodiac_year: int | None = None
+    ruleset_version: str = FORTUNE_RULESET_2026_V2
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,3 +191,4 @@ class OrderDetailResult:
     updated_at: datetime
     items: list[OrderItemResult]
     zodiac_year: int | None = None
+    ruleset_version: str = FORTUNE_RULESET_2026_V2
