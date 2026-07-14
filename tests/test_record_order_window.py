@@ -21,6 +21,7 @@ OrderService、SQLAlchemy Session 或 49wz777.com。
 from __future__ import annotations
 
 import os
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -224,6 +225,69 @@ class TestInputParsing:
         assert [result.amount for result in window._parsed_results] == [130, 75, 75]
         assert sum(result.total for result in window._parsed_results) == 280
         assert "无法识别" not in window._output_text.toPlainText()
+
+    def test_hong_kong_special_header_block_shows_context_real_numbers_and_total_check(self, window):
+        window._input_text.setPlainText(
+            "香港特\n"
+            "11.23各数20米\n"
+            "35.47各数10米\n"
+            "鼠猪鸡兔各数5米\n"
+            "02.03.13.33各数5米\n"
+            "共计:160米"
+        )
+        window._do_parse()
+
+        assert len(window._parsed_results) == 4
+        assert sum((Decimal(str(result.total)) for result in window._parsed_results), Decimal("0")) == 160
+        output = window._output_text.toPlainText()
+        assert "地区识别：香港" in output
+        assert "玩法上下文：特码" in output
+        assert "香港: 特码: 11-23 每号 20，合计 40" in output
+        assert "合计校验通过：160" in output
+        assert "特码: 特码" not in output
+        assert "无法识别" not in output
+
+    def test_hong_kong_special_header_without_order_is_context_not_error(self, window):
+        window._input_text.setPlainText("香港特")
+        window._do_parse()
+
+        assert window._parsed_results == []
+        output = window._output_text.toPlainText()
+        assert "地区识别：香港" in output
+        assert "玩法上下文：特码" in output
+        assert "无法识别" not in output
+
+    def test_hong_kong_issue_header_preserves_duplicate_numbers_and_shows_issue_hint(self, window):
+        window._input_text.setPlainText("港76期\n12，23，12，24各20斤\n共80斤")
+        window._do_parse()
+
+        assert len(window._parsed_results) == 1
+        assert window._parsed_results[0].numbers == (12, 23, 12, 24)
+        output = window._output_text.toPlainText()
+        assert "期号识别：76期（仅本次预览）" in output
+        assert "合计校验通过：80" in output
+
+    def test_hong_kong_zodiac_package_table_uses_real_special_zodiac_type(self, window):
+        window._input_text.setPlainText("香港特码：蛇 包80")
+        window._do_parse()
+        window._on_add_result()
+
+        assert len(window._parsed_results) == 1
+        assert window._parsed_results[0].category == "特码生肖"
+        assert window._parsed_results[0].numbers == ()
+        assert window._order_table.rowCount() == 1
+        assert window._order_table.item(0, _TableColumn.BET_TYPE).text() == "特码生肖"
+        assert window._order_table.item(0, _TableColumn.ORDER_INFO).text() == "蛇"
+        assert window._order_table.item(0, _TableColumn.AMOUNT).text() == "80"
+        assert window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).text() == "80"
+        assert window._order_table.item(0, _TableColumn.SETTLEMENT_SUPPORT).text() == "支持"
+
+    def test_declared_total_mismatch_is_visible_in_red_preview_text(self, window):
+        window._input_text.setPlainText("香港特\n11.23各数20米\n共计:30米")
+        window._do_parse()
+
+        output = window._output_text.toPlainText()
+        assert "输入合计30，识别合计40，相差10" in output
 
     def test_ranked_lianxiao_enters_table_as_one_group(self, window):
         window._input_text.setPlainText("四连肖猪牛马虎 70")

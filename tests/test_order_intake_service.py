@@ -140,6 +140,72 @@ def test_mixed_zodiac_and_number_amount_pairs_use_three_existing_order_items() -
     ]
 
 
+def test_hong_kong_special_block_excludes_header_and_summary_from_persistence() -> None:
+    raw = (
+        "香港特\n11.23各数20米\n35.47各数10米\n"
+        "鼠猪鸡兔各数5米\n02.03.13.33各数5米\n共计:160米"
+    )
+    preview = _preview(raw)
+
+    assert preview.can_save and preview.region == "香港"
+    assert preview.total_amount == Decimal("160")
+    assert len(preview.order_items) == 24
+    assert all(item.bet_type == "特码" for item in preview.order_items)
+    assert "香港特" not in preview.raw_text
+    assert "共计" not in preview.raw_text
+    assert preview.raw_text.splitlines() == [
+        "11.23各数20米", "35.47各数10米", "鼠猪鸡兔各数5米", "02.03.13.33各数5米"
+    ]
+
+
+def test_declared_total_mismatch_blocks_save_without_creating_summary_item() -> None:
+    preview = _preview("香港特\n11.23各数20米\n共计:50米")
+
+    assert not preview.can_save
+    assert preview.total_amount == Decimal("40")
+    assert preview.errors == ["输入合计50，识别合计40，相差10"]
+    assert len(preview.order_items) == 2
+    assert all("共计" not in item.selection for item in preview.order_items)
+    assert preview.raw_text == "11.23各数20米"
+
+
+def test_hong_kong_issue_batch_preserves_duplicate_number_order_items() -> None:
+    raw = (
+        "港76期\n主猴羊各数20斤\n12，23，12，24各20斤\n"
+        "10，17，29，41，20，22，34，46各10斤\n共320斤"
+    )
+    preview = _preview(raw)
+
+    assert preview.can_save and preview.total_amount == Decimal("320")
+    repeated_twelves = [item for item in preview.order_items if item.selection == "12"]
+    assert len(repeated_twelves) == 3
+    assert [item.amount for item in repeated_twelves] == [Decimal("20")] * 3
+    assert "76期" not in preview.raw_text and "共320" not in preview.raw_text
+
+
+def test_zodiac_package_saves_as_real_special_zodiac_and_order_detail_matches(session_factory) -> None:
+    service = OrderIntakeService(session_factory)
+    preview = service.preview_raw_text("香港特码：蛇 包80")
+
+    assert preview.can_save and preview.total_amount == Decimal("80")
+    assert [(item.bet_type, item.selection, item.amount) for item in preview.order_items] == [
+        ("特码生肖", "蛇", Decimal("80")),
+    ]
+    valid_item = _first_valid_item(preview)
+    assert valid_item.original_bet_type == "特码生肖"
+    assert valid_item.order_bet_type == "特码生肖"
+    assert valid_item.normalized_bet_type == "special_zodiac"
+    assert valid_item.settlement_support_status == "supported"
+
+    saved = service.save_preview(preview)
+    assert saved.success and saved.order is not None
+    detail = service._order_service.get_order(saved.order.id)
+    assert detail is not None
+    assert [(item.bet_type, item.selection, item.amount) for item in detail.items] == [
+        ("特码生肖", "蛇", Decimal("80")),
+    ]
+
+
 @pytest.mark.parametrize(
     ("text", "category", "norm_type", "order_type"),
     [

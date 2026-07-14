@@ -23,7 +23,7 @@ from services.order_intake_mapper import (
     resolve_region,
     to_decimal_amount,
 )
-from services.order_parser import ParseOptions, parse_lines, strip_nickname_title_lines
+from services.order_parser import ParseOptions, parse_lines, strip_non_order_context_lines
 from services.order_service import OrderService
 from settlement.bet_normalizer import BetTypeNormalizer
 from settlement.bet_normalizer import (
@@ -73,7 +73,7 @@ class OrderIntakeService:
         zodiac_year: int | None = None,
     ) -> OrderIntakePreview:
         selected_zodiac_year = zodiac_year or (parse_options.zodiac_year if parse_options else None) or get_default_zodiac_year()
-        persistable_raw_text = strip_nickname_title_lines(raw_text)
+        persistable_raw_text = strip_non_order_context_lines(raw_text)
         metadata = IntakeMetadata(
             customer_name=customer_name,
             config_plan_name=config_plan_name,
@@ -93,7 +93,7 @@ class OrderIntakeService:
     ) -> OrderIntakePreview:
         metadata = replace(
             metadata,
-            raw_text=strip_nickname_title_lines(metadata.raw_text),
+            raw_text=strip_non_order_context_lines(metadata.raw_text),
         )
         if isinstance(parsed_result, list):
             lines = [line.strip() for line in metadata.raw_text.splitlines() if line.strip()]
@@ -110,7 +110,7 @@ class OrderIntakeService:
     ) -> OrderIntakePreview:
         metadata = replace(
             metadata,
-            raw_text=strip_nickname_title_lines(metadata.raw_text),
+            raw_text=strip_non_order_context_lines(metadata.raw_text),
         )
         preview = OrderIntakePreview(
             raw_text=(metadata.raw_text or "").strip() or self._raw_text_from_table_rows(rows),
@@ -429,8 +429,14 @@ class OrderIntakeService:
         all_previews: list = []
         all_order_items: list[OrderItemCreate] = []
         total_amount = Decimal("0")
+        total_validation_error = ""
 
         for index, result in enumerate(parsed_results):
+            if getattr(result, "total_validation_passed", None) is False:
+                total_validation_error = str(
+                    getattr(result, "total_validation_message", "")
+                    or "输入合计与识别合计不一致"
+                )
             source_line = (
                 getattr(result, "normalized_text", None)
                 or getattr(result, "original_text", None)
@@ -493,6 +499,9 @@ class OrderIntakeService:
         preview.valid_items = sum(1 for item in preview.items if item.is_valid)
         preview.invalid_items = sum(1 for item in preview.items if not item.is_valid)
 
+        if total_validation_error and total_validation_error not in preview.errors:
+            preview.errors.append(total_validation_error)
+
         if not preview.customer_name:
             preview.warnings.append("申报人未设置")
         if not preview.channel:
@@ -507,6 +516,7 @@ class OrderIntakeService:
             preview.region is not None
             and preview.order_items
             and preview.total_amount > 0
+            and not total_validation_error
         )
         self._annotate_settlement_support(preview)
         return preview

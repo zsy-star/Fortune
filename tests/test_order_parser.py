@@ -41,11 +41,15 @@ from services.order_parser import (
     extract_nickname_context,
     extract_nickname_titles,
     extract_region_context,
+    extract_region_marker,
     format_result,
     parse_chinese_integer_amount,
     parse_lines,
     parse_order,
+    parse_region_play_header,
+    parse_summary_line,
     strip_nickname_title_lines,
+    strip_non_order_context_lines,
 )
 
 
@@ -320,6 +324,167 @@ class TestLeadingZodiacWithNumberAmountPairs:
     def test_repeated_number_pairs_are_not_deduplicated(self) -> None:
         results = parse_lines("鼠各130-31/75-31/75")
         assert [result.numbers for result in results[1:]] == [(31,), (31,)]
+
+
+class TestHongKongColloquialScreenshotSamples:
+    def test_sample_1_buy_hong_kong_numbers_and_total(self) -> None:
+        results = parse_lines("买香港，2.12.24.34.40.30.18.8.46各10元。\n共90元")
+        assert len(results) == 1
+        result = results[0]
+        assert result.success and result.region == "香港"
+        assert result.numbers == (2, 8, 12, 18, 24, 30, 34, 40, 46)
+        assert result.amount == Decimal("10") and result.total == Decimal("90")
+        assert result.total_validation_passed is True
+        assert result.total_validation_message == "合计校验通过：90"
+
+    def test_sample_2_inline_hong_kong_special_zodiacs_expand_per_number(self) -> None:
+        results = parse_lines("香港特码狗牛蛇各25\n共300")
+        assert len(results) == 1
+        result = results[0]
+        assert result.success and result.region == "香港" and result.category == "特码"
+        assert result.numbers == (2, 6, 9, 14, 18, 21, 26, 30, 33, 38, 42, 45)
+        assert result.amount == Decimal("25") and result.total == Decimal("300")
+
+    def test_sample_3_trailing_xiang_expands_zodiac_numbers(self) -> None:
+        result = parse_lines("牛鸡羊各号20香")[0]
+        assert result.success and result.region == "香港" and result.category == "特码"
+        assert result.numbers == (6, 10, 12, 18, 22, 24, 30, 34, 36, 42, 46, 48)
+        assert result.total == Decimal("240")
+
+    @pytest.mark.parametrize("text", ["香港特码：蛇 包80", "蛇包80", "蛇 包80", "蛇包八十", "蛇包80元"])
+    def test_sample_4_zodiac_package_remains_one_group(self, text: str) -> None:
+        result = parse_lines(text)[0]
+        assert result.success and result.category == "特码生肖"
+        assert [name for name, _numbers in result.zodiac_groups] == ["蛇"]
+        assert result.numbers == ()
+        assert result.amount == Decimal("80") and result.total == Decimal("80")
+
+    def test_sample_5_number_amount_phrases_with_jin(self) -> None:
+        results = parse_lines("港11号20斤，02号10斤")
+        assert len(results) == 2 and all(result.success for result in results)
+        assert [result.region for result in results] == ["香港", "香港"]
+        assert [result.numbers for result in results] == [(11,), (2,)]
+        assert [result.total for result in results] == [Decimal("20"), Decimal("10")]
+
+    @pytest.mark.parametrize("text", ["11号20斤", "11号买20斤", "11号各20斤", "11/20斤"])
+    def test_number_amount_jin_variants(self, text: str) -> None:
+        result = parse_lines(text)[0]
+        assert result.success and result.numbers == (11,)
+        assert result.amount == Decimal("20") and result.total == Decimal("20")
+
+    def test_sample_6_hong_kong_special_header_and_full_block(self) -> None:
+        text = (
+            "香港特\n11.23各数20米\n35.47各数10米\n"
+            "鼠猪鸡兔各数5米\n02.03.13.33各数5米\n共计:160米"
+        )
+        results = parse_lines(text)
+        assert len(results) == 4 and all(result.success for result in results)
+        assert [result.total for result in results] == [
+            Decimal("40"), Decimal("20"), Decimal("80"), Decimal("20")
+        ]
+        assert results[0].numbers == (11, 23)
+        assert results[2].numbers == (4, 7, 8, 10, 16, 19, 20, 22, 28, 31, 32, 34, 40, 43, 44, 46)
+        assert all(result.category == "特码" and result.region == "香港" for result in results)
+        assert results[0].region_context_changed and results[0].play_context_changed
+        assert results[-1].total_validation_message == "合计校验通过：160"
+        assert all(result.original_text != "香港特" for result in results)
+
+    def test_sample_7_issue_header_preserves_duplicate_number_stakes(self) -> None:
+        text = (
+            "港76期\n主猴羊各数20斤\n12，23，12，24各20斤\n"
+            "10，17，29，41，20，22，34，46各10斤\n共320斤"
+        )
+        results = parse_lines(text)
+        assert len(results) == 3 and all(result.success for result in results)
+        assert results[0].total == Decimal("160")
+        assert results[1].numbers == (12, 23, 12, 24)
+        assert results[1].total == Decimal("80")
+        assert results[2].total == Decimal("80")
+        assert sum((Decimal(str(result.total)) for result in results), Decimal("0")) == Decimal("320")
+        assert results[0].issue_hint == "76期" and results[0].issue_context_changed
+
+    def test_same_duplicate_line_remains_strict_outside_issue_batch(self) -> None:
+        result = parse_lines("香港12，23，12，24各20斤")[0]
+        assert not result.success and "号码12重复" in result.error
+
+    def test_sample_8_blue_wave_each_digits_with_jin(self) -> None:
+        result = parse_lines("香港兰波各数字60斤")[0]
+        assert result.success and result.region == "香港" and result.category == "蓝波"
+        assert result.numbers == tuple(sorted(WAVE_NUMBERS["蓝波"]))
+        assert result.amount == Decimal("60") and result.total == Decimal("960")
+
+    def test_sample_9_middle_hong_kong_token_expands_zodiacs(self) -> None:
+        result = parse_lines("猪鸡香港各数10")[0]
+        assert result.success and result.region == "香港" and result.category == "特码"
+        assert result.numbers == (8, 10, 20, 22, 32, 34, 44, 46)
+        assert result.total == Decimal("80")
+
+    @pytest.mark.parametrize(
+        "marker",
+        ["各数", "各数字", "各号", "各号码", "每号", "每个号", "每个号码", "各注"],
+    )
+    def test_zodiac_each_number_marker_variants(self, marker: str) -> None:
+        result = parse_lines(f"香港特码蛇{marker}10")[0]
+
+        assert result.success and result.category == "特码"
+        assert result.numbers == (2, 14, 26, 38)
+        assert result.amount == Decimal("10") and result.total == Decimal("40")
+
+    @pytest.mark.parametrize("text", ["香11号20", "买香，11号20"])
+    def test_short_xiang_at_verified_order_prefix_is_hong_kong(self, text: str) -> None:
+        result = parse_lines(text)[0]
+
+        assert result.success and result.region == "香港" and result.numbers == (11,)
+
+    @pytest.mark.parametrize("title", ["香港特", "香港特码", "港特", "港特码", "香特", "香特码"])
+    def test_region_play_titles_do_not_create_orders(self, title: str) -> None:
+        assert parse_lines(title) == []
+        header = parse_region_play_header(title)
+        assert header is not None and header.region == "香港" and header.play_type == "特码"
+
+    @pytest.mark.parametrize("title", ["买香港", "买港", "买香"])
+    def test_buy_region_titles_do_not_create_orders(self, title: str) -> None:
+        assert parse_lines(title) == []
+        header = parse_region_play_header(title)
+        assert header is not None and header.region == "香港" and header.play_type == ""
+
+    @pytest.mark.parametrize(
+        ("text", "amount"),
+        [("共90元", 90), ("共300", 300), ("共计160米", 160), ("共计:160米", 160),
+         ("合计160", 160), ("总计160元", 160), ("共320斤", 320), ("共计：160", 160)],
+    )
+    def test_summary_line_variants(self, text: str, amount: int) -> None:
+        assert parse_summary_line(text) == Decimal(amount)
+        assert parse_lines(text) == []
+
+    def test_mismatched_total_is_explicit_metadata(self) -> None:
+        result = parse_lines("香港特\n11.23各数20米\n共计:50米")[0]
+        assert result.success
+        assert result.total_validation_passed is False
+        assert result.total_validation_message == "输入合计50，识别合计40，相差10"
+
+    @pytest.mark.parametrize("text", ["香水", "香肠", "香波各10"])
+    def test_short_xiang_is_not_global_region_replacement(self, text: str) -> None:
+        result = parse_lines(text)[0]
+        assert result.region != "香港"
+
+    def test_hong_kong_macau_phrase_is_not_normalized_to_hong_kong(self) -> None:
+        assert extract_region_marker("港澳") != "香港"
+
+    @pytest.mark.parametrize("nickname", ["小香", "王大香"])
+    def test_xiang_nicknames_remain_unchanged(self, nickname: str) -> None:
+        assert extract_nickname_context(f"{nickname}:") == nickname
+        result = parse_lines(f"{nickname}:\n01/10")[0]
+        assert result.nickname == nickname
+
+    def test_non_order_context_is_removed_before_persistence(self) -> None:
+        raw = "王大香:\n香港特\n11.23各数20米\n共计:40米"
+        assert strip_non_order_context_lines(raw) == "11.23各数20米"
+
+    def test_existing_each_package_semantics_do_not_expand(self) -> None:
+        result = parse_lines("牛兔马猪各包10")[0]
+        assert result.category == "多生肖"
+        assert result.total == Decimal("40") and not result.zodiac_number_mode
 
 
 # ======================================================================

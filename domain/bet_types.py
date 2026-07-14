@@ -5,6 +5,7 @@ from __future__ import annotations
 from domain.exceptions import InvalidBetTypeError, InvalidRegionError
 
 BET_TYPE_SPECIAL = "特码"
+BET_TYPE_SPECIAL_ZODIAC = "特码生肖"
 BET_TYPE_PINGTE_ZODIAC = "平特一肖"
 BET_TYPE_LIANXIAO = "连肖"
 BET_TYPE_LIANWEI = "连尾"
@@ -13,6 +14,7 @@ BET_TYPE_NUMBER = "号码"
 SUPPORTED_BET_TYPES: frozenset[str] = frozenset(
     {
         BET_TYPE_SPECIAL,
+        BET_TYPE_SPECIAL_ZODIAC,
         BET_TYPE_PINGTE_ZODIAC,
         BET_TYPE_LIANXIAO,
         BET_TYPE_LIANWEI,

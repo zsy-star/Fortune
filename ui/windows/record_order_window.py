@@ -35,9 +35,13 @@ from PySide6.QtWidgets import (
 from domain.zodiac_config import MAX_ZODIAC_YEAR, MIN_ZODIAC_YEAR, get_default_zodiac_year
 from schemas.order_intake_schema import IntakeMetadata, IntakeTableRow
 from services.order_intake_display_formatter import (
+    format_issue_hint,
     format_nickname_recognition,
     format_nickname_without_orders,
     format_parse_result,
+    format_play_context,
+    format_region_recognition,
+    format_total_validation,
 )
 from services.order_intake_service import OrderIntakeService
 from services.order_parser import (
@@ -46,6 +50,7 @@ from services.order_parser import (
     extract_nickname_context,
     extract_nickname_titles,
     extract_region_marker,
+    parse_region_play_header,
     parse_lines,
     strip_nickname_title_lines,
 )
@@ -453,10 +458,25 @@ class RecordOrderWindow(QMainWindow):
             if getattr(r, "nickname_context_changed", False) and getattr(r, "nickname", ""):
                 nickname_text = html.escape(format_nickname_recognition(r.nickname))
                 blocks.append(f"<span style='color:#2e7d32;'>{nickname_text}</span>")
+            if getattr(r, "region_context_changed", False) and getattr(r, "region", ""):
+                region_text = html.escape(format_region_recognition(r.region))
+                blocks.append(f"<span style='color:#2563eb;'>{region_text}</span>")
+            if getattr(r, "play_context_changed", False) and getattr(r, "play_context", ""):
+                play_text = html.escape(format_play_context(r.play_context))
+                blocks.append(f"<span style='color:#2563eb;'>{play_text}</span>")
+            if getattr(r, "issue_context_changed", False) and getattr(r, "issue_hint", ""):
+                issue_text = html.escape(format_issue_hint(r.issue_hint))
+                blocks.append(f"<span style='color:#6b7280;'>{issue_text}</span>")
             text = html.escape(format_parse_result(r, default_region=default_region))
             if not r.success:
                 text = f"<span style='color:red;'>{text}</span>"
             blocks.append(text)
+            total_validation = format_total_validation(r)
+            if total_validation:
+                color = "#2e7d32" if getattr(r, "total_validation_passed", None) else "red"
+                blocks.append(
+                    f"<span style='color:{color};'>{html.escape(total_validation)}</span>"
+                )
         nickname_titles = extract_nickname_titles(raw)
         if not results and nickname_titles:
             for nickname in nickname_titles:
@@ -464,6 +484,26 @@ class RecordOrderWindow(QMainWindow):
                 blocks.append(f"<span style='color:#2e7d32;'>{nickname_text}</span>")
             notice = html.escape(format_nickname_without_orders(nickname_titles[-1]))
             blocks.append(f"<span style='color:#6b7280;'>{notice}</span>")
+        if not results:
+            for raw_line in raw.splitlines():
+                header = parse_region_play_header(raw_line)
+                if header is None:
+                    continue
+                if header.region:
+                    blocks.append(
+                        f"<span style='color:#2563eb;'>"
+                        f"{html.escape(format_region_recognition(header.region))}</span>"
+                    )
+                if header.play_type:
+                    blocks.append(
+                        f"<span style='color:#2563eb;'>"
+                        f"{html.escape(format_play_context(header.play_type))}</span>"
+                    )
+                if header.issue_hint:
+                    blocks.append(
+                        f"<span style='color:#6b7280;'>"
+                        f"{html.escape(format_issue_hint(header.issue_hint))}</span>"
+                    )
         support_lines = self._settlement_support_lines_for_raw(raw)
         if support_lines:
             escaped_lines = "\n".join(html.escape(line) for line in support_lines)
@@ -535,6 +575,15 @@ class RecordOrderWindow(QMainWindow):
                     table_entries = [
                         ("平特一肖", name, r.amount, r.amount)
                         for name, _ in r.zodiac_groups
+                    ]
+                elif r.category == "特码生肖" and r.zodiac_groups:
+                    table_entries = [
+                        (
+                            "特码生肖",
+                            ",".join(name for name, _ in r.zodiac_groups),
+                            r.amount,
+                            r.total,
+                        )
                     ]
                 elif r.category == "平特一肖" and r.zodiac_groups:
                     table_entries = [

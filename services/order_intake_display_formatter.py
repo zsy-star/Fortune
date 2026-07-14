@@ -64,6 +64,22 @@ def format_nickname_without_orders(nickname: str) -> str:
     return f"已识别昵称“{str(nickname or '').strip()}”，但未发现可保存订单。"
 
 
+def format_region_recognition(region: str) -> str:
+    return f"地区识别：{str(region or '').strip()}"
+
+
+def format_play_context(play_type: str) -> str:
+    return f"玩法上下文：{str(play_type or '').strip()}"
+
+
+def format_issue_hint(issue_hint: str) -> str:
+    return f"期号识别：{str(issue_hint or '').strip()}（仅本次预览）"
+
+
+def format_total_validation(result: Any) -> str:
+    return str(getattr(result, "total_validation_message", "") or "").strip()
+
+
 @dataclass(frozen=True, slots=True)
 class OrderIntakeDisplayItem:
     """Small DTO for testing and non-parser callers of the display formatter."""
@@ -191,7 +207,10 @@ def format_intake_item(item: Any, default_region: str | None = None) -> str:
 def _amount_marker_prefix(text: str, category: str) -> str:
     if category == "单号投注" and "/" in text:
         return text.split("/", 1)[0]
-    match = re.search(r"(?:各组|各数|各号|各注|每组|每注|每数|每号|各|每|打|买)", text)
+    match = re.search(
+        r"(?:各组|各数字|各号码|每个号码|每个号|各数|各号|各注|每组|每注|每数|每号|各|每|打|买)",
+        text,
+    )
     return text[: match.start()] if match else text
 
 
@@ -217,14 +236,14 @@ def _selection_from_parse_result(result: Any) -> str:
     pingwei_tails = tuple(getattr(result, "pingwei_tails", ()) or ())
     if pingwei_tails:
         return "-".join(f"{int(tail)}尾" for tail in pingwei_tails)
+    category = str(getattr(result, "category", "") or "")
+    numbers = tuple(getattr(result, "numbers", ()) or ())
+    if category in {"单号投注", "纯数字", "特码"} and numbers:
+        return _number_selection_from_result(result)
     groups = list(getattr(result, "zodiac_groups", []) or [])
     if groups:
         return "-".join(str(name) for name, _numbers in groups)
 
-    category = str(getattr(result, "category", "") or "")
-    numbers = tuple(getattr(result, "numbers", ()) or ())
-    if category in {"单号投注", "纯数字"} and numbers:
-        return _number_selection_from_result(result)
     if numbers and not category:
         return _number_selection_from_result(result)
     return category or _number_selection_from_result(result)
@@ -249,6 +268,16 @@ def format_parse_result(result: Any, default_region: str | None = None) -> str:
         )
     elif category == "四肖":
         line = f"{region}: 四肖: {selection} 整组 {amount}，合计 {total}"
+    elif category == "特码生肖" and list(getattr(result, "zodiac_groups", []) or []):
+        line = f"{region}: 特码生肖: {selection} 整组 {amount}，合计 {total}"
+    elif category == "特码" and tuple(getattr(result, "numbers", ()) or ()):
+        line = f"{region}: 特码: {selection} 每号 {amount}，合计 {total}"
+    elif (
+        region == "香港"
+        and category in {"单号投注", "纯数字"}
+        and tuple(getattr(result, "numbers", ()) or ())
+    ):
+        line = f"{region}: 特码: {selection} 每号 {amount}，合计 {total}"
     elif category in {"红波", "蓝波", "绿波"}:
         numbers = tuple(getattr(result, "numbers", ()) or ())
         number_selection = "-".join(f"{int(number):02d}" for number in numbers)

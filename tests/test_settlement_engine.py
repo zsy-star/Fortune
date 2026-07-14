@@ -10,6 +10,7 @@ from models import Order
 from schemas.draw_schema import LotteryDrawCreate
 from schemas.order_schema import OrderCreate, OrderItemCreate
 from services.draw_service import DrawService
+from services.order_intake_service import OrderIntakeService
 from services.order_service import OrderService
 from services.settlement_service import SettlementService
 from settlement.bet_normalizer import BetTypeNormalizer
@@ -112,6 +113,40 @@ def test_settlement_engine_uses_configured_zodiac_year() -> None:
     assert preview_2026.results[0].draw_special_zodiac == "马"
     assert preview_2025.results[0].is_winner is True
     assert preview_2025.results[0].draw_special_zodiac == "蛇"
+
+
+def test_hong_kong_special_zodiac_package_checks_only_special_number_zodiac() -> None:
+    preview = OrderIntakeService().preview_raw_text("香港特码：蛇 包80")
+    assert preview.can_save
+    assert len(preview.order_items) == 1
+    item = preview.order_items[0]
+    assert (item.bet_type, item.selection, item.amount) == ("特码生肖", "蛇", Decimal("80"))
+
+    engine = SettlementEngine(zodiac_year=2026)
+
+    regular_has_snake = engine.evaluate_item(
+        item,
+        DrawLike(
+            region="香港",
+            regular_numbers=["02", "03", "04", "05", "06", "07"],
+            special_number="08",
+        ),
+    )
+    assert regular_has_snake.normalized_bet_type == "special_zodiac"
+    assert regular_has_snake.is_winner is False
+    assert regular_has_snake.matched_number is None
+
+    only_special_is_snake = engine.evaluate_item(
+        item,
+        DrawLike(
+            region="香港",
+            regular_numbers=["01", "03", "04", "05", "06", "07"],
+            special_number="02",
+        ),
+    )
+    assert only_special_is_snake.normalized_bet_type == "special_zodiac"
+    assert only_special_is_snake.is_winner is True
+    assert only_special_is_snake.matched_number == "02"
 
 
 def test_color_half_wave_and_invalid_selection() -> None:

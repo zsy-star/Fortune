@@ -5,7 +5,12 @@ from __future__ import annotations
 import re
 from decimal import Decimal, InvalidOperation
 
-from domain.bet_types import REGION_MACAU, normalize_bet_type, normalize_region
+from domain.bet_types import (
+    BET_TYPE_SPECIAL_ZODIAC,
+    REGION_MACAU,
+    normalize_bet_type,
+    normalize_region,
+)
 from domain.exceptions import InvalidBetTypeError, InvalidNumberError, InvalidRegionError
 from domain.number_rules import normalize_number
 from domain.zodiac_config import get_default_zodiac_year, get_zodiac_number_map
@@ -373,6 +378,50 @@ def convert_parse_result(
             )
         else:
             errors.append(preview.error or "类别映射失败")
+        return previews, order_items, warnings, errors
+
+    if category == BET_TYPE_SPECIAL_ZODIAC and result.zodiac_groups:
+        selection = ",".join(name for name, _ in result.zodiac_groups)
+        try:
+            normalize_bet_type(BET_TYPE_SPECIAL_ZODIAC)
+        except InvalidBetTypeError as exc:
+            message = str(exc)
+            previews.append(
+                _build_item_preview(
+                    source_line=source_line,
+                    original_bet_type=category,
+                    original_selection=selection,
+                    amount=expected_total,
+                    order_bet_type=None,
+                    order_selection=None,
+                    normalizer=normalizer,
+                    error=message,
+                )
+            )
+            errors.append(message)
+            return previews, order_items, warnings, errors
+
+        preview = _build_item_preview(
+            source_line=source_line,
+            original_bet_type=category,
+            original_selection=selection,
+            amount=expected_total,
+            order_bet_type=BET_TYPE_SPECIAL_ZODIAC,
+            order_selection=selection,
+            preview_bet_type=BET_TYPE_SPECIAL_ZODIAC,
+            normalizer=normalizer,
+        )
+        previews.append(preview)
+        if preview.is_valid:
+            order_items.append(
+                OrderItemCreate(
+                    bet_type=BET_TYPE_SPECIAL_ZODIAC,
+                    selection=selection,
+                    amount=expected_total,
+                )
+            )
+        else:
+            errors.append(preview.error or "特码生肖映射失败")
         return previews, order_items, warnings, errors
 
     if category == "平特一肖" and result.zodiac_groups:

@@ -5,9 +5,13 @@ from decimal import Decimal
 from services.order_intake_display_formatter import (
     OrderIntakeDisplayItem,
     format_display_item,
+    format_issue_hint,
     format_nickname_recognition,
     format_nickname_without_orders,
     format_parse_result,
+    format_play_context,
+    format_region_recognition,
+    format_total_validation,
 )
 from services.order_parser import parse_lines
 
@@ -57,6 +61,34 @@ def test_hong_kong_blue_alias_parse_display_uses_canonical_name_numbers_and_tota
         "香港: 蓝波: 03-04-09-10-14-15-20-25-26-31-36-37-41-42-47-48 "
         "每号 280，号码数 16，合计 4480"
     )
+
+
+def test_hong_kong_special_context_displays_actual_numbers_instead_of_category_name() -> None:
+    results = parse_lines("香港特\n11.23各数20米")
+
+    assert format_parse_result(results[0]) == "香港: 特码: 11-23 每号 20，合计 40"
+    assert "特码: 特码" not in format_parse_result(results[0])
+
+
+def test_hong_kong_zodiac_package_display_is_one_special_zodiac_group() -> None:
+    result = parse_lines("香港特码：蛇 包80")[0]
+
+    assert format_parse_result(result) == "香港: 特码生肖: 蛇 整组 80，合计 80"
+
+
+def test_pingte_zodiac_is_not_relabelled_as_special_zodiac() -> None:
+    result = parse_lines("平特一肖蛇各80")[0]
+
+    assert format_parse_result(result, default_region="澳门") == "澳门: 平特一肖: 蛇 各数 80"
+
+
+def test_context_and_total_validation_messages_are_preview_only_formatters() -> None:
+    result = parse_lines("港76期\n12，23，12，24各20斤\n共80斤")[0]
+
+    assert format_region_recognition(result.region) == "地区识别：香港"
+    assert format_issue_hint(result.issue_hint) == "期号识别：76期（仅本次预览）"
+    assert format_play_context("特码") == "玩法上下文：特码"
+    assert format_total_validation(result) == "合计校验通过：80"
 
 
 def test_size_display() -> None:
