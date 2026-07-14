@@ -568,7 +568,7 @@ def _normalize_pingte_zodiac_colloquial(text: str) -> str:
     """Normalize only a verified Pingte-zodiac + amount shape."""
     amount_token = rf"(?:\d+(?:\.\d+)?|[{_CN_AMOUNT_CHARS}]+)(?:块钱|元|块|米|斤|蚊)?"
     match = re.fullmatch(
-        rf"(?:平码|平特一肖|平特一肖|平特)\s*(?P<selection>.+?)\s*(?:个|各)?\s*(?P<amount>{amount_token})",
+        rf"(?:平码|平特一肖|平特一肖|平特|平)\s*(?P<selection>.+?)\s*(?:个|各)?\s*(?P<amount>{amount_token})",
         text.strip(),
     )
     if match is None:
@@ -2609,6 +2609,19 @@ def split_logical_clauses(text: str) -> list[str]:
     return clauses
 
 
+_ZODIAC_NUMBER_MARKERS = (
+    "各数字",
+    "各号码",
+    "每个号码",
+    "每个号",
+    "各数",
+    "各号",
+    "每号",
+    "各注",
+)
+_ZODIAC_NUMBER_MARKER_PATTERN = "|".join(_ZODIAC_NUMBER_MARKERS)
+
+
 def parse_number_amount_pairs(text: str, *, region: str = "") -> list[ParseResult] | None:
     """Parse `number/amount` pairs without confusing slash-separated selections."""
     body = text.strip().strip(" ,，、")
@@ -2662,10 +2675,9 @@ def parse_leading_selection_with_amount_pairs(
 ) -> list[ParseResult] | None:
     """Parse one zodiac amount followed by ordered ``number/amount`` items.
 
-    The leading zodiac is deliberately represented by the existing
-    ``平特一肖`` single-selection semantics so its amount is counted once.
-    This exception is limited to this unambiguous mixed structure and does not
-    change the historical standalone ``鼠各数130`` number-expansion behavior.
+    An explicit each-number marker expands the leading zodiac into ordinary
+    special-number stakes. Bare zodiac shorthand keeps its historical
+    ``平特一肖`` fallback semantics.
     """
     source_body, explicit_region = _strip_region_marker(text)
     effective_region = explicit_region or region
@@ -2673,7 +2685,7 @@ def parse_leading_selection_with_amount_pairs(
     normalized = normalize_supported_bet_aliases(_normalize_smart_text(source_body))
 
     explicit_pattern = re.compile(
-        rf"^(?P<selection>.+?)\s*(?P<marker>各数|各号|各)\s*"
+        rf"^(?P<selection>.+?)\s*(?P<marker>{_ZODIAC_NUMBER_MARKER_PATTERN}|各)\s*"
         rf"(?P<amount>{_AMOUNT_TOKEN_TEXT})(?P<rest>[-－—].+)$"
     )
     bare_pattern = re.compile(
@@ -2699,11 +2711,25 @@ def parse_leading_selection_with_amount_pairs(
         return [ParseResult(region=effective_region, success=False, error=str(exc))]
 
     source_parts = [part.strip() for part in re.split(r"[-－—]", source_body)]
-    leading = _build_special_zodiac_result(
-        region=effective_region,
-        groups=groups,
-        amount=leading_amount,
-    )
+    marker = match.groupdict().get("marker") or ""
+    if marker in _ZODIAC_NUMBER_MARKERS:
+        leading_numbers = tuple(sorted({number for _name, numbers in groups for number in numbers}))
+        leading = ParseResult(
+            region=effective_region,
+            success=True,
+            category="特码",
+            numbers=leading_numbers,
+            amount=leading_amount,
+            total=leading_amount * len(leading_numbers),
+            zodiac_groups=groups,
+            zodiac_number_mode=True,
+        )
+    else:
+        leading = _build_special_zodiac_result(
+            region=effective_region,
+            groups=groups,
+            amount=leading_amount,
+        )
     leading.original_text = source_parts[0] if source_parts else source_body
     results = [leading]
 
@@ -2720,19 +2746,6 @@ def parse_leading_selection_with_amount_pairs(
         pair_result.original_text = source_parts[index] if index < len(source_parts) else fragment
         results.append(pair_result)
     return results
-
-
-_ZODIAC_NUMBER_MARKERS = (
-    "各数字",
-    "各号码",
-    "每个号码",
-    "每个号",
-    "各数",
-    "各号",
-    "每号",
-    "各注",
-)
-_ZODIAC_NUMBER_MARKER_PATTERN = "|".join(_ZODIAC_NUMBER_MARKERS)
 
 
 def parse_zodiac_package_bet(
@@ -2803,9 +2816,6 @@ def parse_zodiac_number_expansion(
     marker = match.group("marker")
     if marker == "各" and not explicit_play:
         return None
-    if not explicit_play and play_type != "特码" and effective_region != "香港":
-        return None
-
     groups = _parse_exact_zodiac_selection(match.group("selection"))
     if not groups:
         return None

@@ -37,6 +37,7 @@ import pytest
 
 from domain.color_rules import WAVE_NUMBERS
 from services.order_parser import (
+    ParseOptions,
     ParseResult,
     extract_nickname_context,
     extract_nickname_titles,
@@ -294,27 +295,43 @@ class TestLeadingZodiacWithNumberAmountPairs:
         "text",
         [
             "鼠各数130-31/75-43/75",
-            "鼠各130-31/75-43/75",
             "鼠各数130－31/75－43/75",
             "鼠各号130-31/75-43/75",
-            "鼠130-31/75-43/75",
+            "鼠各数字130-31/75-43/75",
+            "鼠各号码130-31/75-43/75",
+            "鼠每号130-31/75-43/75",
+            "鼠每个号130-31/75-43/75",
+            "鼠每个号码130-31/75-43/75",
+            "鼠各注130-31/75-43/75",
         ],
     )
-    def test_mixed_structure_splits_in_input_order(self, text: str) -> None:
-        results = parse_lines(text)
+    def test_explicit_each_number_mixed_structure_expands_in_input_order(self, text: str) -> None:
+        results = parse_lines(text, options=ParseOptions(zodiac_year=2026))
 
         assert len(results) == 3
         assert all(result.success for result in results)
-        assert results[0].category == "平特一肖"
+        assert results[0].category == "特码"
+        assert results[0].numbers == (7, 19, 31, 43)
+        assert results[0].zodiac_number_mode
         assert [name for name, _numbers in results[0].zodiac_groups] == ["鼠"]
         assert [result.numbers for result in results[1:]] == [(31,), (43,)]
         assert [result.amount for result in results] == [Decimal("130"), Decimal("75"), Decimal("75")]
-        assert sum((Decimal(str(result.total)) for result in results), Decimal("0")) == Decimal("280")
+        assert [result.total for result in results] == [Decimal("520"), Decimal("75"), Decimal("75")]
+        assert sum((Decimal(str(result.total)) for result in results), Decimal("0")) == Decimal("670")
         assert [result.original_text for result in results] == [
             re.split(r"[-－]", text, maxsplit=1)[0],
             "31/75",
             "43/75",
         ]
+
+    @pytest.mark.parametrize("text", ["鼠各130-31/75-43/75", "鼠130-31/75-43/75"])
+    def test_bare_zodiac_mixed_structure_keeps_existing_pingte_fallback(self, text: str) -> None:
+        results = parse_lines(text, options=ParseOptions(zodiac_year=2026))
+
+        assert len(results) == 3 and all(result.success for result in results)
+        assert results[0].category == "平特一肖"
+        assert results[0].total == Decimal("130")
+        assert sum((Decimal(str(result.total)) for result in results), Decimal("0")) == Decimal("280")
 
     def test_invalid_trailing_pair_is_not_silently_swallowed(self) -> None:
         results = parse_lines("鼠各130-31/75-43/错误")
@@ -322,8 +339,38 @@ class TestLeadingZodiacWithNumberAmountPairs:
         assert "号码/金额对" in results[-1].error
 
     def test_repeated_number_pairs_are_not_deduplicated(self) -> None:
-        results = parse_lines("鼠各130-31/75-31/75")
+        results = parse_lines("鼠各数130-31/75-31/75", options=ParseOptions(zodiac_year=2026))
+        assert results[0].numbers == (7, 19, 31, 43)
+        assert results[0].total == Decimal("520")
         assert [result.numbers for result in results[1:]] == [(31,), (31,)]
+        assert sum((Decimal(str(result.total)) for result in results), Decimal("0")) == Decimal("670")
+
+    def test_standalone_zodiac_each_numbers_uses_dynamic_year_and_special_number_type(self) -> None:
+        result_2026 = parse_lines("鼠各数130", options=ParseOptions(zodiac_year=2026))[0]
+        result_2025 = parse_lines("鼠各数130", options=ParseOptions(zodiac_year=2025))[0]
+
+        assert result_2026.category == result_2025.category == "特码"
+        assert result_2026.numbers == (7, 19, 31, 43)
+        assert result_2025.numbers == (6, 18, 30, 42)
+        assert result_2026.amount == Decimal("130") and result_2026.total == Decimal("520")
+
+    def test_multiple_zodiacs_each_numbers_expand_to_one_special_number_result(self) -> None:
+        result = parse_lines("兔鼠羊龙各数280", options=ParseOptions(zodiac_year=2026))[0]
+
+        assert result.category == "特码"
+        assert result.numbers == (3, 4, 7, 12, 15, 16, 19, 24, 27, 28, 31, 36, 39, 40, 43, 48)
+        assert result.amount == Decimal("280") and result.total == Decimal("4480")
+
+    @pytest.mark.parametrize("text", ["牛平1250", "平鼠羊个500", "平码羊个500"])
+    def test_explicit_pingte_phrases_remain_pingte(self, text: str) -> None:
+        result = parse_lines(text, options=ParseOptions(zodiac_year=2026))[0]
+
+        assert result.success and result.category == "平特一肖"
+
+    def test_strict_duplicate_number_list_is_still_rejected(self) -> None:
+        result = parse_lines("01.01.02各10")[0]
+
+        assert not result.success and "号码01重复" in result.error
 
 
 class TestHongKongColloquialScreenshotSamples:

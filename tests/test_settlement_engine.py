@@ -149,6 +149,29 @@ def test_hong_kong_special_zodiac_package_checks_only_special_number_zodiac() ->
     assert only_special_is_snake.matched_number == "02"
 
 
+def test_zodiac_each_numbers_save_and_settle_as_special_numbers_not_pingte() -> None:
+    preview = OrderIntakeService().preview_raw_text(
+        "鼠各数130-31/75-43/75",
+        region="香港",
+        zodiac_year=2026,
+    )
+
+    assert preview.can_save and preview.total_amount == Decimal("670")
+    assert [item.bet_type for item in preview.order_items] == ["特码"] * 6
+    assert [item.selection for item in preview.order_items] == ["07", "19", "31", "43", "31", "43"]
+
+    engine = SettlementEngine(zodiac_year=2026)
+    results = [
+        engine.evaluate_item(
+            item,
+            DrawLike(region="香港", special_number="31"),
+        )
+        for item in preview.order_items
+    ]
+    assert all(result.normalized_bet_type == "special_number" for result in results)
+    assert [result.is_winner for result in results] == [False, False, True, False, True, False]
+
+
 def test_color_half_wave_and_invalid_selection() -> None:
     assert match_color("红波", "01")[0] is True
     assert match_color("蓝波", "01")[0] is False

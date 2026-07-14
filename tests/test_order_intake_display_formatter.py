@@ -76,6 +76,14 @@ def test_hong_kong_zodiac_package_display_is_one_special_zodiac_group() -> None:
     assert format_parse_result(result) == "香港: 特码生肖: 蛇 整组 80，合计 80"
 
 
+def test_standalone_zodiac_each_numbers_display_real_special_numbers_and_total() -> None:
+    result = parse_lines("鼠各数130")[0]
+
+    assert format_parse_result(result, default_region="澳门") == (
+        "澳门: 特码: 07-19-31-43 每号 130，合计 520"
+    )
+
+
 def test_pingte_zodiac_is_not_relabelled_as_special_zodiac() -> None:
     result = parse_lines("平特一肖蛇各80")[0]
 

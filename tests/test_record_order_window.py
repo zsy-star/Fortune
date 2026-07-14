@@ -223,8 +223,21 @@ class TestInputParsing:
 
         assert len(window._parsed_results) == 3
         assert [result.amount for result in window._parsed_results] == [130, 75, 75]
-        assert sum(result.total for result in window._parsed_results) == 280
+        assert sum((Decimal(str(result.total)) for result in window._parsed_results), Decimal("0")) == 670
         assert "无法识别" not in window._output_text.toPlainText()
+
+    def test_zodiac_each_numbers_table_uses_special_number_type_amount_and_total(self, window):
+        window._input_text.setPlainText("鼠各数130")
+        window._do_parse()
+        window._on_add_result()
+
+        assert len(window._parsed_results) == 1
+        assert window._parsed_results[0].numbers == (7, 19, 31, 43)
+        assert window._order_table.rowCount() == 1
+        assert window._order_table.item(0, _TableColumn.BET_TYPE).text() == "特码"
+        assert window._order_table.item(0, _TableColumn.ORDER_INFO).text() == "07,19,31,43"
+        assert window._order_table.item(0, _TableColumn.AMOUNT).text() == "130"
+        assert window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).text() == "520"
 
     def test_hong_kong_special_header_block_shows_context_real_numbers_and_total_check(self, window):
         window._input_text.setPlainText(

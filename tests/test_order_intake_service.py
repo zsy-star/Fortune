@@ -128,16 +128,20 @@ def test_hong_kong_blue_wave_alias_uses_existing_intake_and_settlement_mapping()
     assert valid_item.settlement_support_status == "supported"
 
 
-def test_mixed_zodiac_and_number_amount_pairs_use_three_existing_order_items() -> None:
+def test_mixed_zodiac_and_number_amount_pairs_expand_and_preserve_additional_stakes() -> None:
     preview = _preview("鼠各数130-31/75-43/75", region="香港")
 
     assert preview.can_save
-    assert preview.total_amount == Decimal("280")
+    assert preview.total_amount == Decimal("670")
     assert [(item.bet_type, item.selection, item.amount) for item in preview.order_items] == [
-        ("平特一肖", "鼠", Decimal("130")),
+        ("特码", "07", Decimal("130")),
+        ("特码", "19", Decimal("130")),
+        ("特码", "31", Decimal("130")),
+        ("特码", "43", Decimal("130")),
         ("特码", "31", Decimal("75")),
         ("特码", "43", Decimal("75")),
     ]
+    assert all(item.normalized_bet_type == "special_number" for item in preview.items if item.is_valid)
 
 
 def test_hong_kong_special_block_excludes_header_and_summary_from_persistence() -> None:
