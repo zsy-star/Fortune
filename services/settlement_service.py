@@ -64,7 +64,9 @@ from services.settlement_support_service import SettlementSupportResult, Settlem
 ORDER_STATUS_SETTLED = "settled"
 CENT = Decimal("0.01")
 PINGTE_ZODIAC_TYPES = frozenset({PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC})
-REQUIRED_ODDS_TYPES = PINGTE_ZODIAC_TYPES | frozenset({PING_TAIL, LIANXIAO_ZODIAC})
+REQUIRED_ODDS_TYPES = PINGTE_ZODIAC_TYPES | frozenset(
+    {SPECIAL_NUMBER, PING_TAIL, LIANXIAO_ZODIAC}
+)
 
 ODDS_CANDIDATES: dict[str, tuple[str, ...]] = {
     SPECIAL_NUMBER: ("特码号码", "特码", "号码", "特号", "单号投注", "纯数字"),
@@ -554,6 +556,8 @@ class SettlementService:
 
     @staticmethod
     def _required_item_kind(item: ItemSettlementResult) -> str:
+        if item.normalized_bet_type == SPECIAL_NUMBER:
+            return "特码号码"
         if item.normalized_bet_type == PINGTE_MAIN_ZODIAC:
             return "主肖"
         if item.normalized_bet_type == PINGTE_ZODIAC:
@@ -566,6 +570,8 @@ class SettlementService:
 
     @staticmethod
     def _required_odds_label(item: ItemSettlementResult) -> str:
+        if item.normalized_bet_type == SPECIAL_NUMBER:
+            return "特码号码赔率"
         if item.normalized_bet_type == PINGTE_MAIN_ZODIAC:
             return "主肖专用赔率"
         if item.normalized_bet_type == PINGTE_ZODIAC:

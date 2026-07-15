@@ -17,6 +17,7 @@ from schemas.settlement_schema import SettlementLedgerResult
 from services.draw_service import DrawService
 from services.log_service import LogService
 from services.order_service import OrderService
+from services.settings_service import SettingsService
 from services.settlement_service import SettlementService
 import ui.pages.settlement_ledger_page as settlement_ledger_module
 from ui.pages.settlement_ledger_page import _SettlementSnapshotDialog
@@ -68,6 +69,12 @@ def settle_order(
             special_number="01",
         )
     )
+    settings = SettingsService(session_factory)
+    plan = settings.ensure_default_plan()
+    try:
+        settings.add_item(plan.id, "特码", "1", "0")
+    except ValueError as exc:
+        assert "已存在该投注类型" in str(exc)
     SettlementService(session_factory).commit_order_settlement(order_id, draw.id)
     with session_factory() as session:
         order = session.get(Order, order_id)
@@ -298,7 +305,7 @@ def test_settlement_ledger_page_lists_only_settled_orders_with_log_summary(sessi
     assert page._table.item(0, 4).text() == "澳门"
     assert page._table.item(0, 5).text() == "settled"
     assert page._table.item(0, 6).text() == "10.00"
-    assert page._table.item(0, 7).text() == "0.00"
+    assert page._table.item(0, 7).text() == "10.00"
     assert page._table.item(0, 9).text() != "-"
     assert page._table.item(0, 10).text() == "中1 / 未0 / 不支持0"
     assert settled.order_no in page._table.item(0, 11).toolTip()

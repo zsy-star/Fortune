@@ -713,8 +713,17 @@ def _parse_number_list(text: str) -> tuple[int, ...] | None:
     return tuple(sorted(set(numbers)))
 
 
-def _parse_strict_number_list(text: str) -> tuple[int, ...] | str | None:
-    """Parse an explicitly numeric list without silently deduplicating it."""
+def _parse_strict_number_list(
+    text: str,
+    *,
+    preserve_duplicates: bool = False,
+) -> tuple[int, ...] | str | None:
+    """Parse an explicitly numeric list without silently deduplicating it.
+
+    ``preserve_duplicates`` is reserved for an already explicit 特码号码
+    context. All ordinary number-list callers retain the strict duplicate
+    rejection below.
+    """
     raw = text.strip()
     if not raw:
         return None
@@ -734,9 +743,9 @@ def _parse_strict_number_list(text: str) -> tuple[int, ...] | str | None:
             return f"号码{token}超出范围（01-49）"
         numbers.append(number)
     duplicates = sorted({number for number in numbers if numbers.count(number) > 1})
-    if duplicates:
+    if duplicates and not preserve_duplicates:
         return "、".join(f"号码{number:02d}重复" for number in duplicates)
-    return tuple(sorted(numbers))
+    return tuple(numbers) if preserve_duplicates else tuple(sorted(numbers))
 
 
 def _apply_exclusion(result: ParseResult, exclude_nums: set[int]) -> None:
@@ -1608,6 +1617,7 @@ def parse_order(
         ("平特一肖", "平特一肖"),
         ("特肖", "平特一肖"),
         ("平特一尾", "平特一尾"),
+        ("特码号码", "特码"),
         ("特码波色", "特码波色"),
         ("特码两面", "特码两面"),
         ("六肖中特", "六肖中特"),
@@ -1916,6 +1926,22 @@ def parse_order(
         # 3b. 纯数字号码列表
         strict_numbers = _parse_strict_number_list(cat)
         if isinstance(strict_numbers, str):
+            # 特码号码明确允许同号按出现次数拆成独立注；其它玩法仍走
+            # 严格号码列表校验，不能借此放宽组内重复规则。
+            if bet_type_override == "特码" and "重复" in strict_numbers:
+                special_numbers = _parse_strict_number_list(
+                    cat,
+                    preserve_duplicates=True,
+                )
+                if not isinstance(special_numbers, str) and special_numbers is not None:
+                    return ParseResult(
+                        region=region,
+                        success=True,
+                        category="特码",
+                        numbers=special_numbers,
+                        amount=amt,
+                        total=amt * len(special_numbers),
+                    )
             return ParseResult(region=region, success=False, error=strict_numbers)
         num_list = strict_numbers if strict_numbers is not None else _parse_number_list(cat)
         if num_list is not None:

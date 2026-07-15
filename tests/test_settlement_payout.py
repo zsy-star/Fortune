@@ -170,7 +170,7 @@ def test_unsupported_item_participates_in_rebate_when_exact_config_exists(sessio
     assert preview.statistic_net_amount == Decimal("-9.00")
 
 
-def test_hit_without_odds_configuration_has_zero_payout_and_note(session_factory) -> None:
+def test_hit_without_odds_configuration_marks_special_number_not_ready(session_factory) -> None:
     order = create_order(
         OrderService(session_factory),
         items=[OrderItemCreate(bet_type="特码", selection="01", amount="10")],
@@ -184,10 +184,12 @@ def test_hit_without_odds_configuration_has_zero_payout_and_note(session_factory
     assert item.odds is None
     assert item.payout_amount == Decimal("0.00")
     assert item.odds_source == "未配置"
-    assert item.payout_note == "未配置赔率"
+    assert item.missing_odds is True
+    assert item.settlement_ready is False
+    assert "不能正式结算" in item.payout_note
 
 
-def test_hit_without_matching_odds_item_has_zero_payout_and_note(session_factory) -> None:
+def test_hit_without_matching_odds_item_marks_special_number_not_ready(session_factory) -> None:
     settings = SettingsService(session_factory)
     plan = settings.ensure_default_plan()
     settings.add_item(plan.id, "波色", "2", "0")
@@ -204,7 +206,9 @@ def test_hit_without_matching_odds_item_has_zero_payout_and_note(session_factory
     assert item.payout_amount == Decimal("0.00")
     assert item.odds_plan_name == "默认方案"
     assert item.odds_source == "默认方案"
-    assert item.payout_note == "未找到赔率配置"
+    assert item.missing_odds is True
+    assert item.settlement_ready is False
+    assert "缺少特码号码赔率配置" in item.payout_note
 
 
 def test_declarer_bound_plan_takes_priority_over_default_plan(session_factory) -> None:

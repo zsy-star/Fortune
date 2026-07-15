@@ -14,6 +14,7 @@ from schemas.order_schema import OrderCreate, OrderItemCreate
 from services.draw_service import DrawService
 from services.log_service import LogService
 from services.order_service import OrderService
+from services.settings_service import SettingsService
 from services.settlement_service import SettlementService
 from ui.dialogs.settlement_preview_dialog import SettlementPreviewDialog
 from ui.pages.order_detail_page import OrderDetailPage
@@ -80,6 +81,12 @@ def open_preview_dialog(session_factory, order_id: int) -> SettlementPreviewDial
         settlement_service=settlement_service,
     )
     return dialog
+
+
+def configure_special_odds(session_factory) -> None:
+    settings = SettingsService(session_factory)
+    plan = settings.ensure_default_plan()
+    settings.add_item(plan.id, "特码", "40", "1")
 
 
 def test_dialog_shows_order_info(session_factory) -> None:
@@ -213,16 +220,16 @@ def test_preview_supported_winning_losing_and_unsupported(session_factory) -> No
     assert dialog._lbl_losing.text() == "1"
     assert dialog._result_table.rowCount() == 3
 
-    assert dialog._result_table.item(0, 4).text() == "中奖"
-    assert dialog._result_table.item(1, 4).text() == "未中奖"
+    assert dialog._result_table.item(0, 4).text() == "中奖（缺赔率）"
+    assert dialog._result_table.item(1, 4).text() == "未中奖（缺赔率）"
     assert dialog._result_table.item(2, 4).text() == "中奖（缺赔率）"
     assert dialog._result_table.item(2, 3).text() == "是"
     assert dialog._result_table.item(0, 2).text() == "10.00"
     assert dialog._result_table.item(0, 5).text() == "01"
     assert dialog._result_table.item(1, 5).text() == "—"
-    assert dialog._result_table.item(0, 6).text() == "—"
-    assert dialog._result_table.item(0, 7).text() == "0.00"
-    assert "未配置赔率" in dialog._result_table.item(0, 8).text()
+    assert dialog._result_table.item(0, 6).text() == "未配置"
+    assert dialog._result_table.item(0, 7).text() == "—"
+    assert "不能正式结算" in dialog._result_table.item(0, 8).text()
     assert dialog._result_table.item(0, 9).toolTip() == dialog._result_table.item(0, 9).text()
     assert dialog._lbl_total_payout.text() == "0.00"
 
@@ -314,6 +321,7 @@ def test_commit_with_unsupported_preview_is_blocked(session_factory) -> None:
 
 def test_commit_cancel_confirmation_does_not_call_service(session_factory) -> None:
     app()
+    configure_special_odds(session_factory)
     order_service = OrderService(session_factory)
     draw_service = DrawService(session_factory)
     order = create_order(order_service, items=[OrderItemCreate(bet_type="特码", selection="01", amount="10.00")])
@@ -338,6 +346,7 @@ def test_commit_cancel_confirmation_does_not_call_service(session_factory) -> No
 
 def test_commit_confirm_calls_service_and_persists_status_and_log(session_factory) -> None:
     app()
+    configure_special_odds(session_factory)
     order_service = OrderService(session_factory)
     draw_service = DrawService(session_factory)
     log_service = LogService(session_factory)
@@ -389,6 +398,7 @@ def test_commit_confirm_calls_service_and_persists_status_and_log(session_factor
 
 def test_commit_settled_order_repeat_click_shows_friendly_warning(session_factory) -> None:
     app()
+    configure_special_odds(session_factory)
     order_service = OrderService(session_factory)
     draw_service = DrawService(session_factory)
     log_service = LogService(session_factory)
@@ -420,6 +430,7 @@ def test_commit_settled_order_repeat_click_shows_friendly_warning(session_factor
 
 def test_commit_failure_shows_error_without_crashing(session_factory) -> None:
     app()
+    configure_special_odds(session_factory)
     order_service = OrderService(session_factory)
     draw_service = DrawService(session_factory)
     order = create_order(order_service, items=[OrderItemCreate(bet_type="特码", selection="01", amount="10.00")])

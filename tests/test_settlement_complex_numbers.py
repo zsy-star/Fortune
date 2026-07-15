@@ -520,7 +520,7 @@ def test_commit_is_blocked_when_complex_number_item_is_unsupported(session_facto
     assert SettlementService(session_factory).count_settlement_records() == 0
 
 
-def test_commit_is_allowed_without_unsupported_and_writes_zero_payout_when_odds_missing(session_factory) -> None:
+def test_commit_is_blocked_when_special_number_odds_are_missing(session_factory) -> None:
     order_service = OrderService(session_factory)
     order = create_order(
         order_service,
@@ -531,25 +531,13 @@ def test_commit_is_allowed_without_unsupported_and_writes_zero_payout_when_odds_
     )
     draw = create_draw(DrawService(session_factory))
 
-    result = SettlementService(session_factory).commit_order_settlement(order.id, draw.id)
+    settlement = SettlementService(session_factory)
+    preview = settlement.preview_order(order.id, draw.id)
 
-    assert result.win_count == 2
-    assert result.lose_count == 0
-    assert result.unsupported_items == 0
-    record = SettlementService(session_factory).get_settlement_record_by_order_id(order.id)
-    assert record is not None
-    assert record.hit_count == 2
-    assert record.miss_count == 0
-    assert record.unsupported_count == 0
-    snapshot = record.result_snapshot
-    assert snapshot["items"][0]["draw_regular_numbers"] == ["01", "02", "03", "04", "05", "06"]
-    assert snapshot["items"][1]["draw_numbers"] == ["01", "02", "03", "04", "05", "06", "07"]
-    assert snapshot["items"][1]["result"] == "hit"
-    assert snapshot["settlement"]["total_payout_amount"] == "0.00"
-    assert snapshot["items"][0]["payout_amount"] == "0.00"
-    assert snapshot["items"][1]["payout_amount"] == "0.00"
-    assert snapshot["settlement"]["total_rebate_amount"] == "0.00"
-    assert snapshot["settlement"]["statistic_net_amount"] == "-20.00"
-    assert snapshot["items"][0]["rebate_amount"] == "0.00"
-    assert snapshot["items"][1]["rebate_amount"] == "0.00"
-    assert "balance" not in str(snapshot).lower()
+    assert [item.is_winner for item in preview.results] == [True, True]
+    assert preview.results[1].missing_odds is True
+    assert preview.settlement_ready is False
+    with pytest.raises(SettlementDataError, match="特码号码赔率"):
+        settlement.commit_order_settlement(order.id, draw.id)
+    assert OrderService(session_factory).get_order(order.id).status == "active"
+    assert settlement.get_settlement_record_by_order_id(order.id) is None

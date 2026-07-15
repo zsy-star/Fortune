@@ -246,6 +246,9 @@ def test_non_v2_order_can_be_read_but_cannot_commit_settlement(
 
 
 def test_commit_losing_special_number_by_issue_updates_status(session_factory) -> None:
+    settings = SettingsService(session_factory)
+    plan = settings.ensure_default_plan()
+    settings.add_item(plan.id, "特码", "40", "1")
     order_service = OrderService(session_factory)
     order = create_order(order_service, items=[OrderItemCreate(bet_type="特码", selection="02", amount="10")])
     create_draw(DrawService(session_factory), issue_number="163", special_number="01")
@@ -260,6 +263,9 @@ def test_commit_losing_special_number_by_issue_updates_status(session_factory) -
 
 
 def test_commit_multi_item_order_counts_results(session_factory) -> None:
+    settings = SettingsService(session_factory)
+    plan = settings.ensure_default_plan()
+    settings.add_item(plan.id, "特码", "40", "1")
     order_service = OrderService(session_factory)
     order = create_order(
         order_service,
@@ -284,6 +290,9 @@ def test_commit_multi_item_order_counts_results(session_factory) -> None:
 
 
 def test_settled_order_cannot_commit_twice(session_factory) -> None:
+    settings = SettingsService(session_factory)
+    plan = settings.ensure_default_plan()
+    settings.add_item(plan.id, "特码", "40", "1")
     order_service = OrderService(session_factory)
     order = create_order(order_service)
     draw = create_draw(DrawService(session_factory))
@@ -299,6 +308,9 @@ def test_settled_order_cannot_commit_twice(session_factory) -> None:
 
 
 def test_batch_read_settlement_records_by_order_ids(session_factory) -> None:
+    settings = SettingsService(session_factory)
+    plan = settings.ensure_default_plan()
+    settings.add_item(plan.id, "特码", "40", "1")
     order_service = OrderService(session_factory)
     first = create_order(order_service)
     second = create_order(order_service)

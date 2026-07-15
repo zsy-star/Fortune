@@ -84,6 +84,12 @@ def create_typed_order(
 
 
 def create_settlement_draw(session_factory, *, region: str = "澳门", issue: str = "UI-162"):
+    settings = SettingsService(session_factory)
+    plan = settings.ensure_default_plan()
+    try:
+        settings.add_item(plan.id, "特码", "1", "0")
+    except ValueError as exc:
+        assert "已存在该投注类型" in str(exc)
     return DrawService(session_factory).create_draw(
         LotteryDrawCreate(
             region=region,
@@ -536,7 +542,7 @@ def test_order_detail_filter_and_combined_settlement_summary_are_readonly(sessio
     assert info.call_count == 2
     assert "订单数：2" in page._combined_result.toPlainText()
     assert "中奖金额/返水金额：读取已结算快照中的统计字段" in page._combined_result.toPlainText()
-    assert "赔付/中奖金额：0.00" in page._combined_result.toPlainText()
+    assert "赔付/中奖金额：10.00" in page._combined_result.toPlainText()
     assert "返水金额：" in page._combined_result.toPlainText()
     assert LogService(session_factory).count_logs() == log_count_before
 
@@ -603,11 +609,11 @@ def test_order_detail_selected_settlement_summary_uses_snapshot(session_factory)
     assert "特码号码=01" in macau_text
     assert "命中 / 未中说明：" in macau_text
     assert "当前展示基础中奖金额、返水金额和统计结算金额" in macau_text
-    assert "总中奖金额：0.00" in macau_text
+    assert "总中奖金额：10.00" in macau_text
     assert "返水金额：" in macau_text
     assert "统计结算金额：" in macau_text
     assert "赔率：" in macau_text
-    assert "中奖金额：0.00" in macau_text
+    assert "中奖金额：10.00" in macau_text
     assert "订单 ID" not in page._hong_kong_result.toPlainText()
     assert page._combined_result.toPlainText() == macau_text
 

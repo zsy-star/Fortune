@@ -14,6 +14,7 @@ from services.draw_service import DrawService
 from services.excel_export_service import ExcelExportError, ExcelExportService
 from services.log_service import LogService
 from services.order_service import OrderService
+from services.settings_service import SettingsService
 from services.settlement_service import SettlementService
 
 
@@ -61,6 +62,12 @@ def settle_order(session_factory, order_id: int, order_no: str, settled_at: date
             special_number="01",
         )
     )
+    settings = SettingsService(session_factory)
+    plan = settings.ensure_default_plan()
+    try:
+        settings.add_item(plan.id, "特码", "1", "0")
+    except ValueError as exc:
+        assert "已存在该投注类型" in str(exc)
     SettlementService(session_factory).commit_order_settlement(order_id, draw.id)
     with session_factory() as session:
         order = session.get(Order, order_id)
@@ -228,9 +235,9 @@ def test_settlement_ledger_exports_only_settled_and_not_voided(session_factory, 
     assert rows[1][1] == settled.id
     assert rows[1][5] == "settled"
     assert rows[0][7:10] == ("中奖金额", "返水金额", "统计结算金额")
-    assert rows[1][7] == 0
+    assert rows[1][7] == 10
     assert rows[1][8] == 0
-    assert rows[1][9] == -10
+    assert rows[1][9] == 0
     assert rows[1][11] != "-"
     assert rows[1][12] == 1
     assert rows[1][13] == 0

@@ -20,7 +20,10 @@ from domain.zodiac_config import get_default_zodiac_year
 
 
 def match_special_number(selection: str, special_number: str) -> tuple[bool, str | None, str]:
-    selected = {normalize_number(token) for token in selection.split(",") if token}
+    # One explicit special-number occurrence is persisted as one OrderItem.
+    # Keep the selection sequence here as well; a set would hide repeat
+    # occurrences before the engine has a chance to evaluate each item.
+    selected = [normalize_number(token) for token in selection.split(",") if token]
     special = normalize_number(special_number)
     matched = special in selected
     return matched, special if matched else None, f"特码 {special} {'命中' if matched else '未命中'}号码 {selection}"
