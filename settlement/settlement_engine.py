@@ -16,6 +16,7 @@ from settlement.bet_normalizer import (
     LIANMA_THREE_THREE,
     LIANMA_THREE_TWO,
     LIANMA_TWO_TWO,
+    LIANXIAO_ZODIAC,
     NON_HIT_NUMBER,
     NUMBER_FUXUAN,
     PACKAGE_HALF_WAVE,
@@ -45,6 +46,7 @@ from settlement.matchers import (
     match_half_color,
     match_head,
     match_linked_tail,
+    match_lianxiao_zodiac_v2,
     match_non_hit_number,
     match_number_fuxuan,
     match_package_half_wave,
@@ -84,6 +86,7 @@ MATCHERS: dict[str, Matcher] = {
     SPECIAL_SUM_SIZE: match_sum_size,
     SPECIAL_ELEMENT: match_element,
     SPECIAL_ZODIAC_GROUP: match_zodiac_group,
+    LIANXIAO_ZODIAC: match_lianxiao_zodiac_v2,
     PINGTE_ZODIAC: match_pingte_zodiac_v2,
     PINGTE_MAIN_ZODIAC: match_pingte_zodiac_v2,
     LINKED_TAIL: match_linked_tail,
@@ -176,6 +179,13 @@ class SettlementEngine:
                 draw_special_number,
                 year=self._zodiac_year,
             )
+        elif normalized.normalized_bet_type == LIANXIAO_ZODIAC:
+            is_winner, matched_number, reason = matcher(
+                normalized.selection,
+                list(draw_regular_numbers),
+                draw_special_number,
+                year=self._zodiac_year,
+            )
         elif normalized.normalized_bet_type in {
             LINKED_TAIL,
             PING_TAIL,
@@ -197,7 +207,13 @@ class SettlementEngine:
         selected_zodiacs = (
             tuple(token for token in normalized.selection.split(",") if token)
             if normalized.normalized_bet_type
-            in {SPECIAL_ZODIAC_GROUP, SIX_SPECIAL_ZODIAC, PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC}
+            in {
+                SPECIAL_ZODIAC_GROUP,
+                SIX_SPECIAL_ZODIAC,
+                LIANXIAO_ZODIAC,
+                PINGTE_ZODIAC,
+                PINGTE_MAIN_ZODIAC,
+            }
             else ()
         )
         matched_zodiac = (
@@ -358,6 +374,23 @@ class SettlementEngine:
                     number
                     for number in draw_numbers
                     if str(tail_number(number)) in selected_tail_set
+                ),
+            }
+        if normalized_type == LIANXIAO_ZODIAC:
+            selected_zodiacs = tuple(token for token in selection.split(",") if token)
+            drawn_zodiacs = tuple(
+                get_zodiac(number, year=self._zodiac_year) for number in draw_numbers
+            )
+            drawn_zodiac_set = set(drawn_zodiacs)
+            selected_zodiac_set = set(selected_zodiacs)
+            return {
+                "missing_zodiacs": tuple(
+                    zodiac for zodiac in selected_zodiacs if zodiac not in drawn_zodiac_set
+                ),
+                "matched_numbers": tuple(
+                    number
+                    for number, zodiac in zip(draw_numbers, drawn_zodiacs)
+                    if zodiac in selected_zodiac_set
                 ),
             }
         if normalized_type in {LIANMA_TWO_TWO, LIANMA_THREE_THREE, LIANMA_THREE_TWO}:

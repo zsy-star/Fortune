@@ -743,8 +743,6 @@ def convert_parse_result(
         return previews, order_items, warnings, errors
 
     if _is_lianxiao_category(result):
-        warning = "连肖按整组金额保存，当前结算仍为简化口径"
-        warnings.append(warning)
         selection = ",".join(name for name, _ in result.zodiac_groups)
         if not selection:
             selection = category
@@ -761,7 +759,6 @@ def convert_parse_result(
                     order_bet_type=None,
                     order_selection=None,
                     normalizer=normalizer,
-                    warning=warning,
                     error=message,
                 )
             )
@@ -777,7 +774,6 @@ def convert_parse_result(
             order_selection=selection,
             preview_bet_type=category,
             normalizer=normalizer,
-            warning=warning,
         )
         previews.append(preview)
         if preview.is_valid:

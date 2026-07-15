@@ -37,6 +37,7 @@ SPECIAL_SUM_PARITY = "special_sum_parity"
 SPECIAL_SUM_SIZE = "special_sum_size"
 SPECIAL_ELEMENT = "special_element"
 SPECIAL_ZODIAC_GROUP = "special_zodiac_group"
+LIANXIAO_ZODIAC = "lianxiao_zodiac"
 PINGTE_ZODIAC = "pingte_zodiac"
 PINGTE_MAIN_ZODIAC = "pingte_main_zodiac"
 LINKED_TAIL = "linked_tail"
@@ -63,6 +64,7 @@ SUPPORTED_NORMALIZED_TYPES = {
     SPECIAL_SUM_SIZE,
     SPECIAL_ELEMENT,
     SPECIAL_ZODIAC_GROUP,
+    LIANXIAO_ZODIAC,
     PINGTE_ZODIAC,
     PINGTE_MAIN_ZODIAC,
     LINKED_TAIL,
@@ -108,7 +110,7 @@ BET_TYPE_ALIASES = {
     SPECIAL_SUM_PARITY: {"特码合数单双", "合数单双"},
     SPECIAL_SUM_SIZE: {"特码合数大小", "合数大小"},
     SPECIAL_ELEMENT: {"特码五行", "五行"},
-    SPECIAL_ZODIAC_GROUP: {"连肖", "多生肖"},
+    LIANXIAO_ZODIAC: {"连肖", "多生肖"},
     PINGTE_ZODIAC: {"平特一肖"},
     PINGTE_MAIN_ZODIAC: {"平特一肖带主肖"},
     LINKED_TAIL: {"连尾"},
@@ -269,7 +271,7 @@ class BetTypeNormalizer:
             if selection not in FIVE_ELEMENT_NUMBERS:
                 raise InvalidSelectionError(f"无效五行：{selection}")
             return selection
-        if normalized_type == SPECIAL_ZODIAC_GROUP:
+        if normalized_type in {SPECIAL_ZODIAC_GROUP, LIANXIAO_ZODIAC}:
             return self._normalize_zodiac_group_selection(selection)
         if normalized_type in {PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC}:
             return self._normalize_pingte_zodiac_selection(selection, normalized_type)

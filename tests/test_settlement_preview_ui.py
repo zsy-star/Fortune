@@ -215,7 +215,7 @@ def test_preview_supported_winning_losing_and_unsupported(session_factory) -> No
 
     assert dialog._result_table.item(0, 4).text() == "中奖"
     assert dialog._result_table.item(1, 4).text() == "未中奖"
-    assert dialog._result_table.item(2, 4).text() == "中奖"
+    assert dialog._result_table.item(2, 4).text() == "中奖（缺赔率）"
     assert dialog._result_table.item(2, 3).text() == "是"
     assert dialog._result_table.item(0, 2).text() == "10.00"
     assert dialog._result_table.item(0, 5).text() == "01"

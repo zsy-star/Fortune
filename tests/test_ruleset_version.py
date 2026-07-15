@@ -117,6 +117,7 @@ def test_play_rule_metadata_describes_safe_and_blocked_v2_plays() -> None:
     pingte_main = get_play_rule("平特一肖带主肖")
     ping_tail = get_play_rule("平尾")
     zero_tail = get_play_rule("平特0尾")
+    lianxiao = get_play_rule("连肖")
     non_hit_alias = get_play_rule("十不中")
 
     assert special is not None
@@ -147,6 +148,14 @@ def test_play_rule_metadata_describes_safe_and_blocked_v2_plays() -> None:
     assert zero_tail.availability is SettlementAvailability.SUPPORTED
     assert zero_tail.normalized_type == "ping_tail"
     assert zero_tail.odds_keys == ("平特0尾", "平尾0尾", "0尾")
+    assert lianxiao is not None
+    assert lianxiao.availability is SettlementAvailability.SUPPORTED
+    assert lianxiao.normalized_type == "lianxiao_zodiac"
+    assert lianxiao.draw_scope is DrawScope.ALL_SEVEN
+    assert lianxiao.selection_unit is SelectionUnit.ZODIAC_GROUP
+    assert lianxiao.duplicate_policy is DuplicatePolicy.FORBID_WITHIN_GROUP
+    assert lianxiao.matcher_id == "lianxiao_zodiac_v2"
+    assert lianxiao.matcher_version == "2.0"
     assert non_hit_alias is get_play_rule("N不中")
     assert non_hit_alias is not None
     assert non_hit_alias.availability is SettlementAvailability.SUPPORTED
@@ -158,7 +167,6 @@ def test_play_rule_metadata_describes_safe_and_blocked_v2_plays() -> None:
 @pytest.mark.parametrize(
     "bet_type",
     [
-        "连肖",
         "连肖复选",
         "三中二",
         "几中几复选",

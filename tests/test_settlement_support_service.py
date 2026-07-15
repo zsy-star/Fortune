@@ -59,6 +59,13 @@ def test_pingte_zodiac_is_supported_as_an_independent_single_zodiac_item() -> No
     assert result.normalized_bet_type == "pingte_zodiac"
 
 
+def test_lianxiao_is_supported_as_an_independent_zodiac_group() -> None:
+    result = SettlementSupportService().check_item("连肖", "龙,羊", zodiac_year=2026)
+
+    assert result.is_supported
+    assert result.normalized_bet_type == "lianxiao_zodiac"
+
+
 def test_unknown_play_is_unsupported_and_needs_manual_review() -> None:
     result = SettlementSupportService().check_item("未知玩法", "X")
 
@@ -91,7 +98,6 @@ def test_order_item_summary_lists_unsupported_items() -> None:
 @pytest.mark.parametrize(
     "bet_type",
     [
-        "连肖",
         "连肖复选",
         "三中二",
         "几中几复选",
@@ -155,12 +161,11 @@ def test_v2_ruleset_continues_to_play_level_gate() -> None:
     assert results[0].is_supported
 
 
-def test_unsafe_normalized_alias_cannot_bypass_canonical_gate() -> None:
+def test_lianxiao_alias_uses_the_same_v2_group_rule() -> None:
     result = SettlementSupportService().check_item("多生肖", "马,蛇")
 
-    assert not result.is_supported
-    assert result.normalized_bet_type == "special_zodiac_group"
-    assert "连肖" in result.reason
+    assert result.is_supported
+    assert result.normalized_bet_type == "lianxiao_zodiac"
 
 
 def test_non_v2_multi_item_support_returns_one_blocked_result_per_item() -> None:

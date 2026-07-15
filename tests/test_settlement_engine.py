@@ -74,7 +74,7 @@ def test_bet_type_normalizer_aliases_and_unknown() -> None:
     with pytest.raises(UnsupportedBetTypeError):
         normalizer.normalize("未知玩法", "01")
 
-    assert normalizer.normalize("连肖", "马蛇").normalized_bet_type == "special_zodiac_group"
+    assert normalizer.normalize("连肖", "马蛇").normalized_bet_type == "lianxiao_zodiac"
     assert normalizer.normalize("连肖", "马蛇").selection == "蛇,马"
 
     assert normalizer.normalize("十不中", "6/18/31/43/22/10/03/15/01/13").selection == (

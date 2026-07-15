@@ -50,6 +50,7 @@ def create_multi_zodiac_order(session_factory, *, selection: str, amount: str = 
             source="test",
             raw_text=f"多生肖{selection}各{amount}",
             total_amount=Decimal(amount),
+            zodiac_year=2026,
             status="active",
             created_at=now,
             updated_at=now,
@@ -68,7 +69,7 @@ def create_multi_zodiac_order(session_factory, *, selection: str, amount: str = 
         return order.id
 
 
-def test_multi_zodiac_hits_when_special_zodiac_is_selected(session_factory) -> None:
+def test_multi_zodiac_alias_requires_every_selected_zodiac_across_all_seven(session_factory) -> None:
     order_id = create_multi_zodiac_order(session_factory, selection="马,蛇")
     draw = create_draw(DrawService(session_factory), special_number="01")
 
@@ -80,17 +81,14 @@ def test_multi_zodiac_hits_when_special_zodiac_is_selected(session_factory) -> N
     assert preview.unsupported_items == 0
     assert item.is_supported is True
     assert item.is_winner is True
-    assert item.draw_special_number == "01"
-    assert item.draw_special_zodiac == "马"
     assert item.selected_zodiacs == ("蛇", "马")
-    assert item.matched_zodiac == "马"
-    assert "开奖" not in item.reason or "特码 01" in item.reason
-    assert "投注生肖列表：蛇、马" in item.reason
-    assert "命中生肖：马" in item.reason
+    assert item.missing_zodiacs == ()
+    assert item.matched_numbers == ("02", "01")
+    assert "全部7个开奖号" in item.reason
 
 
-def test_multi_zodiac_misses_when_special_zodiac_is_not_selected(session_factory) -> None:
-    order_id = create_multi_zodiac_order(session_factory, selection="牛,蛇")
+def test_multi_zodiac_alias_loses_when_any_zodiac_is_missing(session_factory) -> None:
+    order_id = create_multi_zodiac_order(session_factory, selection="牛,猴")
     draw = create_draw(DrawService(session_factory), special_number="01")
 
     preview = SettlementService(session_factory).preview_order(order_id, draw.id)
@@ -101,10 +99,8 @@ def test_multi_zodiac_misses_when_special_zodiac_is_not_selected(session_factory
     assert preview.unsupported_items == 0
     assert item.is_supported is True
     assert item.is_winner is False
-    assert item.draw_special_zodiac == "马"
-    assert item.selected_zodiacs == ("牛", "蛇")
-    assert item.matched_zodiac is None
-    assert "投注生肖列表：牛、蛇" in item.reason
+    assert item.selected_zodiacs == ("牛", "猴")
+    assert item.missing_zodiacs == ("猴",)
 
 
 def test_multi_zodiac_invalid_selection_is_unsupported(session_factory) -> None:
@@ -135,11 +131,11 @@ def test_lianxiao_hits_when_special_zodiac_is_selected(session_factory) -> None:
     assert item.is_winner is True
     assert item.selection == "蛇,马"
     assert item.selected_zodiacs == ("蛇", "马")
-    assert item.matched_zodiac == "马"
+    assert item.missing_zodiacs == ()
 
 
 def test_lianxiao_misses_when_special_zodiac_is_not_selected(session_factory) -> None:
-    order = create_lianxiao_order(OrderService(session_factory), selection="牛,蛇")
+    order = create_lianxiao_order(OrderService(session_factory), selection="牛,猴")
     draw = create_draw(DrawService(session_factory), special_number="01")
 
     preview = SettlementService(session_factory).preview_order(order.id, draw.id)
@@ -149,10 +145,10 @@ def test_lianxiao_misses_when_special_zodiac_is_not_selected(session_factory) ->
     assert preview.losing_items == 1
     assert preview.unsupported_items == 0
     assert item.is_winner is False
-    assert item.draw_special_zodiac == "马"
+    assert item.missing_zodiacs == ("猴",)
 
 
-def test_lianxiao_group_amount_flows_to_preview_but_v2_commit_is_blocked(session_factory) -> None:
+def test_lianxiao_group_amount_with_missing_odds_blocks_v2_commit(session_factory) -> None:
     intake = OrderIntakeService(session_factory)
     save_result = intake.parse_and_save(
         "连肖 龙羊猴 各30",
@@ -174,8 +170,9 @@ def test_lianxiao_group_amount_flows_to_preview_but_v2_commit_is_blocked(session
     assert item.selection == "龙,羊,猴"
     assert item.amount == Decimal("30.00")
     assert preview.total_payout_amount == Decimal("0.00")
+    assert item.missing_odds is True
 
-    with pytest.raises(SettlementDataError, match="V2规则修复尚未完成"):
+    with pytest.raises(SettlementDataError, match="赔率配置不完整"):
         service.commit_order_settlement(save_result.order.id, draw.id)
     assert service.get_settlement_record_by_order_id(save_result.order.id) is None
 
@@ -192,11 +189,11 @@ def test_lianxiao_invalid_selection_is_unsupported(session_factory) -> None:
     assert "无法解析生肖列表" in preview.results[0].reason
 
 
-def test_legacy_multi_zodiac_alias_cannot_bypass_v2_lianxiao_gate(session_factory) -> None:
+def test_multi_zodiac_alias_without_lianxiao_odds_blocks_formal_settlement(session_factory) -> None:
     order_id = create_multi_zodiac_order(session_factory, selection="马,蛇", amount="15")
     draw = create_draw(DrawService(session_factory), special_number="01")
 
-    with pytest.raises(SettlementDataError, match="V2规则别名同样受门禁限制"):
+    with pytest.raises(SettlementDataError, match="赔率配置不完整"):
         SettlementService(session_factory).commit_order_settlement(order_id, draw.id)
 
     with session_factory() as session:

@@ -343,7 +343,7 @@ def test_explicit_lianxiao_intake_uses_group_amount() -> None:
     assert item.amount == Decimal("30.00")
     row = _first_valid_item(preview)
     assert row.original_bet_type == "连肖"
-    assert row.normalized_bet_type == "special_zodiac_group"
+    assert row.normalized_bet_type == "lianxiao_zodiac"
     assert row.normalized_selection == "龙,羊,猴"
 
 
@@ -764,7 +764,8 @@ def test_complex_play_warning_when_saveable() -> None:
     preview = _preview("连兔龙蛇各20", region="澳门")
     assert preview.can_save
     assert preview.order_items[0].bet_type == "连肖"
-    assert any("简化口径" in warning for warning in preview.warnings)
+    assert preview.items[0].settlement_support_status == "supported"
+    assert not any("简化口径" in warning for warning in preview.warnings)
 
 
 def test_convert_parse_result_integration_with_parser() -> None:

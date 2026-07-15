@@ -26,6 +26,7 @@ class ItemSettlementResult:
     draw_tails: tuple[str, ...] = ()
     draw_regular_numbers: tuple[str, ...] = ()
     selected_zodiacs: tuple[str, ...] = ()
+    missing_zodiacs: tuple[str, ...] = ()
     selected_zodiac: str | None = None
     matched_zodiac: str | None = None
     is_main_zodiac: bool | None = None

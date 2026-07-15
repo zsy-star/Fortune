@@ -41,6 +41,7 @@ from settlement.bet_normalizer import (
     SPECIAL_TAIL,
     SPECIAL_ZODIAC,
     SPECIAL_ZODIAC_GROUP,
+    LIANXIAO_ZODIAC,
     BetTypeNormalizer,
 )
 from services.adjustment_record_service import AdjustmentRecordService
@@ -78,6 +79,7 @@ SPECIAL_ODDS_CANDIDATES: dict[str, tuple[str, ...]] = {
     SPECIAL_SUM_SIZE: ("合数", "合数大小", "特码合数大小"),
     SPECIAL_ELEMENT: ("五行", "特码五行"),
     SPECIAL_ZODIAC_GROUP: ("连肖", "多生肖", "生肖"),
+    LIANXIAO_ZODIAC: ("连肖",),
 }
 LIANXIAO_ALIASES = {"连肖", "多生肖"}
 ZODIAC_ORDER = tuple(get_zodiac_number_map(get_default_zodiac_year()).keys())
@@ -225,19 +227,19 @@ class RiskAdjustmentService:
                         normalized = self._normalizer.normalize(item.bet_type, item.selection, note=item.note)
                     except Exception:
                         continue
-                    if normalized.normalized_bet_type != SPECIAL_ZODIAC_GROUP or item.bet_type not in LIANXIAO_ALIASES:
+                    if normalized.normalized_bet_type != LIANXIAO_ZODIAC or item.bet_type not in LIANXIAO_ALIASES:
                         continue
                     key = self._stable_zodiac_group(normalized.selection.split(","))
                     bucket = grouped[key]
                     amount = Decimal(item.amount)
                     bucket["raw"] += amount
                     bucket["order_ids"].add(order.id)
-                    odds_item = self._find_odds_item(SPECIAL_ZODIAC_GROUP, item.bet_type, plan_items)
+                    odds_item = self._find_odds_item(LIANXIAO_ZODIAC, item.bet_type, plan_items)
                     if odds_item is None:
                         bucket["notes"].add("未配置赔率")
                     else:
                         bucket["payout"] += amount * Decimal(odds_item.odds)
-                    rebate_item = self._find_rebate_item(item.bet_type, plan_items, SPECIAL_ZODIAC_GROUP)
+                    rebate_item = self._find_rebate_item(item.bet_type, plan_items, LIANXIAO_ZODIAC)
                     if rebate_item is not None:
                         bucket["rebate"] += amount * (Decimal(rebate_item.rebate) / Decimal("100"))
             thrown = self._active_lianxiao_thrown_amounts(session, region=region)

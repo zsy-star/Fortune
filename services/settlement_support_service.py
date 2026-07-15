@@ -56,8 +56,13 @@ class SettlementSupportService:
             return self._unsupported(play_type, raw_selection, "投注类型为空")
         if not raw_selection:
             return self._unsupported(play_type, raw_selection, "投注内容为空")
-        if require_zodiac_year and zodiac_year is None and play_type in {"平特一肖", "平特一肖带主肖"}:
-            return self._unsupported(play_type, raw_selection, "平特一肖正式结算需要订单保存的生肖年份")
+        if require_zodiac_year and zodiac_year is None and play_type in {
+            "平特一肖",
+            "平特一肖带主肖",
+            "连肖",
+            "多生肖",
+        }:
+            return self._unsupported(play_type, raw_selection, "生肖玩法正式结算需要订单保存的生肖年份")
 
         rule = get_play_rule(play_type)
         if rule is not None and rule.availability is not SettlementAvailability.SUPPORTED:

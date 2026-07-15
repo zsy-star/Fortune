@@ -93,6 +93,51 @@ def match_zodiac_group(
     )
 
 
+def match_lianxiao_zodiac_v2(
+    selection: str,
+    regular_numbers: list[str],
+    special_number: str,
+    *,
+    year: int | None = None,
+) -> tuple[bool, str | None, str]:
+    """Match a 连肖 group when every selected zodiac appears in all seven draws."""
+    selected_year = year or get_default_zodiac_year()
+    selected_zodiacs = [token for token in selection.split(",") if token]
+    draw_numbers = [
+        *(normalize_number(number) for number in regular_numbers),
+        normalize_number(special_number),
+    ]
+    drawn_zodiacs = [get_zodiac(number, year=selected_year) for number in draw_numbers]
+    drawn_zodiac_set = set(drawn_zodiacs)
+    missing_zodiacs = [zodiac for zodiac in selected_zodiacs if zodiac not in drawn_zodiac_set]
+    selected_zodiac_set = set(selected_zodiacs)
+    matched_numbers = [
+        number
+        for number, zodiac in zip(draw_numbers, drawn_zodiacs)
+        if zodiac in selected_zodiac_set
+    ]
+    draw_text = ",".join(draw_numbers)
+    zodiac_text = "、".join(drawn_zodiacs)
+    selected_text = "、".join(selected_zodiacs)
+    if not missing_zodiacs:
+        return (
+            True,
+            ",".join(matched_numbers),
+            (
+                f"连肖检查全部7个开奖号 {draw_text}（生肖：{zodiac_text}），"
+                f"所选{selected_text}均已出现；同一生肖多次出现只计整组一注"
+            ),
+        )
+    return (
+        False,
+        None,
+        (
+            f"连肖检查全部7个开奖号 {draw_text}（生肖：{zodiac_text}），"
+            f"所选{selected_text}缺少生肖：{'、'.join(missing_zodiacs)}"
+        ),
+    )
+
+
 def match_color(selection: str, special_number: str) -> tuple[bool, str | None, str]:
     special = normalize_number(special_number)
     actual = get_wave_color(special)

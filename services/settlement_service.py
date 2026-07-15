@@ -35,6 +35,7 @@ from settlement.bet_normalizer import (
     LIANMA_THREE_THREE,
     LIANMA_THREE_TWO,
     LIANMA_TWO_TWO,
+    LIANXIAO_ZODIAC,
     NON_HIT_NUMBER,
     NUMBER_FUXUAN,
     PACKAGE_HALF_WAVE,
@@ -63,7 +64,7 @@ from services.settlement_support_service import SettlementSupportResult, Settlem
 ORDER_STATUS_SETTLED = "settled"
 CENT = Decimal("0.01")
 PINGTE_ZODIAC_TYPES = frozenset({PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC})
-REQUIRED_ODDS_TYPES = PINGTE_ZODIAC_TYPES | frozenset({PING_TAIL})
+REQUIRED_ODDS_TYPES = PINGTE_ZODIAC_TYPES | frozenset({PING_TAIL, LIANXIAO_ZODIAC})
 
 ODDS_CANDIDATES: dict[str, tuple[str, ...]] = {
     SPECIAL_NUMBER: ("特码号码", "特码", "号码", "特号", "单号投注", "纯数字"),
@@ -77,6 +78,7 @@ ODDS_CANDIDATES: dict[str, tuple[str, ...]] = {
     SPECIAL_SUM_PARITY: ("合数", "合数单双", "特码合数单双"),
     SPECIAL_SUM_SIZE: ("合数", "合数大小", "特码合数大小"),
     SPECIAL_ELEMENT: ("五行", "特码五行"),
+    LIANXIAO_ZODIAC: ("连肖",),
     PINGTE_ZODIAC: ("平特一肖", "平肖", "生肖"),
     PINGTE_MAIN_ZODIAC: ("平特一肖带主肖", "平特一肖主肖", "平肖主肖"),
     LINKED_TAIL: ("连尾", "尾数"),
@@ -271,7 +273,7 @@ class SettlementService:
             )
 
         if order.zodiac_year is None and any(
-            item.bet_type in {"平特一肖", "平特一肖带主肖"}
+            item.bet_type in {"平特一肖", "平特一肖带主肖", "连肖", "多生肖"}
             for item in order.items
         ):
             raise SettlementDataError("平特一肖正式结算需要订单保存的生肖年份")
@@ -558,6 +560,8 @@ class SettlementService:
             return "普通生肖"
         if item.normalized_bet_type == PING_TAIL:
             return "0尾" if item.selection == "0" else "普通平尾"
+        if item.normalized_bet_type == LIANXIAO_ZODIAC:
+            return "连肖"
         return "受管控玩法"
 
     @staticmethod
@@ -568,6 +572,8 @@ class SettlementService:
             return "平特一肖赔率"
         if item.normalized_bet_type == PING_TAIL:
             return "0尾专用赔率" if item.selection == "0" else "平尾赔率"
+        if item.normalized_bet_type == LIANXIAO_ZODIAC:
+            return "连肖赔率"
         return "赔率"
 
     def _engine_for_order(self, order: Any) -> tuple[SettlementEngine, str | None]:
@@ -644,6 +650,7 @@ class SettlementService:
         if item.normalized_bet_type in {
             NON_HIT_NUMBER,
             SPECIAL_ZODIAC_GROUP,
+            LIANXIAO_ZODIAC,
             PINGTE_ZODIAC,
             PINGTE_MAIN_ZODIAC,
         }:
@@ -662,7 +669,12 @@ class SettlementService:
 
     def _find_rebate_item(self, item: ItemSettlementResult, plan_items: list[Any]):
         item_by_name = {str(config.bet_type).strip(): config for config in plan_items}
-        if item.normalized_bet_type in {PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC, PING_TAIL}:
+        if item.normalized_bet_type in {
+            PINGTE_ZODIAC,
+            PINGTE_MAIN_ZODIAC,
+            PING_TAIL,
+            LIANXIAO_ZODIAC,
+        }:
             for candidate in self._odds_candidates_for_item(item):
                 config = item_by_name.get(candidate)
                 if config is not None:
@@ -678,6 +690,8 @@ class SettlementService:
 
     def _odds_candidates_for_item(self, item: ItemSettlementResult) -> tuple[str, ...]:
         normalized_type = item.normalized_bet_type
+        if normalized_type == LIANXIAO_ZODIAC:
+            return ("连肖",)
         if normalized_type == SPECIAL_ZODIAC_GROUP:
             count = len(item.selected_zodiacs or ())
             specific = (
@@ -800,6 +814,42 @@ class SettlementService:
                     sum((Decimal(item["rebate_amount"]) for item in item_results), Decimal("0.00"))
                 ),
             }
+        lianxiao_items = [
+            item for item in item_snapshots if item["normalized_type"] == LIANXIAO_ZODIAC
+        ]
+        if lianxiao_items:
+            item_results = [item["item_results"][0] for item in lianxiao_items]
+            hit_items = [item for item in item_results if item["is_winner"] is True]
+            hit_stake_amount = sum(
+                (Decimal(item["stake_amount"]) for item in hit_items),
+                Decimal("0.00"),
+            )
+            total_winning_amount = sum(
+                (Decimal(item["winning_amount"]) for item in item_results),
+                Decimal("0.00"),
+            )
+            total_rebate_amount = sum(
+                (Decimal(item["rebate_amount"]) for item in item_results),
+                Decimal("0.00"),
+            )
+            total_stake_amount = sum(
+                (Decimal(item["stake_amount"]) for item in item_results),
+                Decimal("0.00"),
+            )
+            snapshot["lianxiao"] = {
+                "zodiac_year": zodiac_year,
+                "drawn_numbers": list(lianxiao_items[0]["drawn_numbers"]),
+                "drawn_zodiacs": list(lianxiao_items[0]["drawn_zodiacs"]),
+                "item_results": item_results,
+                "hit_group_count": len(hit_items),
+                "missed_group_count": len(item_results) - len(hit_items),
+                "hit_stake_amount": _decimal_money(hit_stake_amount),
+                "total_winning_amount": _decimal_money(total_winning_amount),
+                "total_rebate_amount": _decimal_money(total_rebate_amount),
+                "statistical_settlement_amount": _decimal_money(
+                    total_winning_amount + total_rebate_amount - total_stake_amount
+                ),
+            }
         ping_tail_items = [
             item for item in item_snapshots if item["normalized_type"] == PING_TAIL
         ]
@@ -866,6 +916,7 @@ class SettlementService:
             "draw_tails": list(item.draw_tails),
             "draw_regular_numbers": list(item.draw_regular_numbers),
             "selected_zodiacs": list(item.selected_zodiacs),
+            "missing_zodiacs": list(item.missing_zodiacs),
             "matched_zodiac": item.matched_zodiac,
             "selected_tails": list(item.selected_tails),
             "matched_tails": list(item.matched_tails),
@@ -937,6 +988,37 @@ class SettlementService:
                     "is_main_zodiac": item.is_main_zodiac,
                     "item_results": [item_result],
                     "hit_selection_count": 1 if item.is_winner is True else 0,
+                    "hit_stake_amount": _decimal_money(
+                        item.amount if item.is_winner is True else Decimal("0.00")
+                    ),
+                }
+            )
+        if item.normalized_bet_type == LIANXIAO_ZODIAC:
+            item_result = {
+                "selected_zodiacs": list(item.selected_zodiacs),
+                "drawn_zodiacs": list(item.drawn_zodiacs),
+                "missing_zodiacs": list(item.missing_zodiacs),
+                "matched_numbers": list(item.matched_numbers),
+                "is_winner": item.is_winner,
+                "stake_amount": _decimal_money(item.amount),
+                "odds": _decimal_odds(item.odds) if item.odds is not None else None,
+                "winning_amount": _decimal_money(item.payout_amount),
+                "odds_key_candidates": list(item.odds_key_candidates),
+                "odds_key_used": item.odds_key_used,
+                "rebate_key_used": item.rebate_key_used,
+                "rebate_amount": _decimal_money(item.rebate_amount),
+                "missing_odds": item.missing_odds,
+                "settlement_ready": item.settlement_ready,
+                "reason": item.reason,
+            }
+            snapshot.update(
+                {
+                    "drawn_numbers": list(item.draw_numbers),
+                    "drawn_zodiacs": list(item.drawn_zodiacs),
+                    "selected_zodiacs": list(item.selected_zodiacs),
+                    "missing_zodiacs": list(item.missing_zodiacs),
+                    "item_results": [item_result],
+                    "hit_group_count": 1 if item.is_winner is True else 0,
                     "hit_stake_amount": _decimal_money(
                         item.amount if item.is_winner is True else Decimal("0.00")
                     ),
