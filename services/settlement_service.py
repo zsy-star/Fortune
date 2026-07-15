@@ -65,7 +65,14 @@ ORDER_STATUS_SETTLED = "settled"
 CENT = Decimal("0.01")
 PINGTE_ZODIAC_TYPES = frozenset({PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC})
 REQUIRED_ODDS_TYPES = PINGTE_ZODIAC_TYPES | frozenset(
-    {SPECIAL_NUMBER, REGULAR_NUMBER, PING_TAIL, LIANXIAO_ZODIAC}
+    {
+        SPECIAL_NUMBER,
+        REGULAR_NUMBER,
+        PING_TAIL,
+        LIANXIAO_ZODIAC,
+        LIANMA_TWO_TWO,
+        LIANMA_THREE_THREE,
+    }
 )
 
 ODDS_CANDIDATES: dict[str, tuple[str, ...]] = {
@@ -560,6 +567,10 @@ class SettlementService:
             return "特码号码"
         if item.normalized_bet_type == REGULAR_NUMBER:
             return "平码号码"
+        if item.normalized_bet_type == LIANMA_TWO_TWO:
+            return "二中二组合"
+        if item.normalized_bet_type == LIANMA_THREE_THREE:
+            return "三中三组合"
         if item.normalized_bet_type == PINGTE_MAIN_ZODIAC:
             return "主肖"
         if item.normalized_bet_type == PINGTE_ZODIAC:
@@ -576,6 +587,10 @@ class SettlementService:
             return "特码号码赔率"
         if item.normalized_bet_type == REGULAR_NUMBER:
             return "平码号码赔率"
+        if item.normalized_bet_type == LIANMA_TWO_TWO:
+            return "二中二赔率"
+        if item.normalized_bet_type == LIANMA_THREE_THREE:
+            return "三中三赔率"
         if item.normalized_bet_type == PINGTE_MAIN_ZODIAC:
             return "主肖专用赔率"
         if item.normalized_bet_type == PINGTE_ZODIAC:
@@ -896,6 +911,52 @@ class SettlementService:
                     total_winning_amount + total_rebate_amount - total_stake_amount
                 ),
             }
+        lianma_items = [
+            item
+            for item in item_snapshots
+            if item["normalized_type"] in {LIANMA_TWO_TWO, LIANMA_THREE_THREE}
+        ]
+        if lianma_items:
+            item_results = [
+                {
+                    "order_item_id": item["order_item_id"],
+                    "combination_index": item["combination_index"],
+                    "selected_numbers": item["selected_numbers"],
+                    "matched_numbers": item["matched_numbers"],
+                    "is_winner": item["is_winner"],
+                    "stake_amount": item["amount"],
+                    "odds": item["odds"],
+                    "winning_amount": item["payout_amount"],
+                    "odds_key_used": item["odds_key_used"],
+                    "rebate_key_used": item["rebate_key_used"],
+                    "ruleset_version": item["ruleset_version"],
+                    "matcher_id": item["matcher_id"],
+                    "matcher_version": item["matcher_version"],
+                    "draw_scope": item["draw_scope"],
+                }
+                for item in lianma_items
+            ]
+            hit_items = [item for item in item_results if item["is_winner"] is True]
+            hit_stake_amount = sum(
+                (Decimal(item["stake_amount"]) for item in hit_items),
+                Decimal("0.00"),
+            )
+            total_winning_amount = sum(
+                (Decimal(item["winning_amount"]) for item in item_results),
+                Decimal("0.00"),
+            )
+            total_rebate_amount = sum(
+                (Decimal(item["rebate_amount"]) for item in lianma_items),
+                Decimal("0.00"),
+            )
+            snapshot["lianma_combinations"] = {
+                "combination_count": len(item_results),
+                "winning_combination_count": len(hit_items),
+                "hit_stake_amount": _decimal_money(hit_stake_amount),
+                "total_winning_amount": _decimal_money(total_winning_amount),
+                "total_rebate_amount": _decimal_money(total_rebate_amount),
+                "item_results": item_results,
+            }
         return snapshot
 
     def _snapshot_item(self, item: ItemSettlementResult) -> dict[str, Any]:
@@ -966,6 +1027,8 @@ class SettlementService:
             "selection_unit": item.selection_unit,
             "draw_scope": item.draw_scope,
             "duplicate_policy": item.duplicate_policy,
+            "combination_index": item.combination_index,
+            "combination_count": item.combination_count,
         }
         if item.normalized_bet_type == NON_HIT_NUMBER:
             snapshot.update(

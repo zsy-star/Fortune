@@ -47,6 +47,7 @@ _TAIL_PATTERN = re.compile(r"^尾[0-9]$")
 _HEAD_PATTERN = re.compile(r"^[0-4]头$")
 _UNSUPPORTED_SAVE_CATEGORIES = frozenset({"全包"})
 _LIANMA_CATEGORIES = frozenset({"二中二", "三中三", "三中二"})
+_MULTI_COMBINATION_LIANMA_CATEGORIES = frozenset({"二中二", "三中三"})
 _UNSUPPORTED_SETTLEMENT_GROUP_CATEGORIES = frozenset({"二中特", "特串"})
 
 
@@ -628,6 +629,96 @@ def convert_parse_result(
         warning = None
         groups = result.lianma_groups
         selection = _format_lianma_selection(groups) if groups else ",".join(f"{number:02d}" for number in result.numbers)
+
+        if category in _MULTI_COMBINATION_LIANMA_CATEGORIES:
+            if not groups:
+                message = f"{category}未生成有效组合"
+                previews.append(
+                    _build_item_preview(
+                        source_line=source_line,
+                        original_bet_type=category,
+                        original_selection=selection,
+                        amount=expected_total,
+                        order_bet_type=None,
+                        order_selection=None,
+                        normalizer=normalizer,
+                        error=message,
+                    )
+                )
+                errors.append(message)
+                return previews, order_items, warnings, errors
+
+            canonical_groups = tuple(tuple(sorted(group)) for group in groups)
+            if len(set(canonical_groups)) != len(canonical_groups):
+                message = f"{category}存在重复的无序组合，不能保存"
+                previews.append(
+                    _build_item_preview(
+                        source_line=source_line,
+                        original_bet_type=category,
+                        original_selection=selection,
+                        amount=expected_total,
+                        order_bet_type=None,
+                        order_selection=None,
+                        normalizer=normalizer,
+                        error=message,
+                    )
+                )
+                errors.append(message)
+                return previews, order_items, warnings, errors
+
+            computed_total = per_amount * len(canonical_groups)
+            if computed_total != expected_total:
+                message = (
+                    f"金额不一致：解析器 total={expected_total}，"
+                    f"按每组{per_amount} × {len(canonical_groups)}计算为{computed_total}"
+                )
+                previews.append(
+                    _build_item_preview(
+                        source_line=source_line,
+                        original_bet_type=category,
+                        original_selection=selection,
+                        amount=expected_total,
+                        order_bet_type=None,
+                        order_selection=None,
+                        normalizer=normalizer,
+                        error=message,
+                    )
+                )
+                errors.append(message)
+                return previews, order_items, warnings, errors
+
+            total_groups = len(canonical_groups)
+            for combination_index, group in enumerate(canonical_groups, start=1):
+                group_selection = _format_lianma_selection((group,))
+                combination_note = (
+                    f"连码组合序号={combination_index};"
+                    f"连码组合总数={total_groups};"
+                    f"连码组大小={len(group)}"
+                )
+                preview = _build_item_preview(
+                    source_line=source_line,
+                    original_bet_type=category,
+                    original_selection=group_selection,
+                    amount=per_amount,
+                    order_bet_type=category,
+                    order_selection=group_selection,
+                    normalizer=normalizer,
+                    warning=warning,
+                )
+                previews.append(preview)
+                if preview.is_valid:
+                    order_items.append(
+                        OrderItemCreate(
+                            bet_type=category,
+                            selection=group_selection,
+                            amount=per_amount,
+                            note=combination_note,
+                        )
+                    )
+                else:
+                    errors.append(preview.error or f"{category}组合{combination_index}映射失败")
+            return previews, order_items, warnings, errors
+
         group_size = len(groups[0]) if groups else 0
         is_drag_group = category == "二中二" and ("拖" in source_line or "/" in source_line)
         note_prefix = "拖式组合数" if is_drag_group else "连码组合数"

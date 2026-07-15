@@ -229,6 +229,10 @@ class SettlementEngine:
             draw_regular_numbers,
             draw_special_number,
         )
+        combination_audit_fields = self._lianma_combination_audit_fields(
+            normalized.normalized_bet_type,
+            getattr(order_item, "note", None),
+        )
 
         return ItemSettlementResult(
             order_item_id=getattr(order_item, "id", None),
@@ -268,6 +272,7 @@ class SettlementEngine:
             **rule_audit_fields,
             **common_draw_fields,
             **match_fields,
+            **combination_audit_fields,
         )
 
     def evaluate_order(self, order: Any, lottery_draw: Any) -> OrderSettlementPreview:
@@ -407,7 +412,13 @@ class SettlementEngine:
                 group_size=group_size,
                 required_hits=required_hits,
             )
+            selected_numbers = tuple(number for group in selected_groups for number in group)
+            regular_set = set(regular_numbers)
             return {
+                "selected_numbers": selected_numbers,
+                "matched_numbers": tuple(
+                    number for number in selected_numbers if number in regular_set
+                ),
                 "selected_groups": tuple(format_lianma_group(group) for group in selected_groups),
                 "matched_groups": tuple(format_lianma_group(group) for group in matched_groups),
             }
@@ -467,3 +478,33 @@ class SettlementEngine:
                 "matched_halfwave": matched_halfwave,
             }
         return {}
+
+    @staticmethod
+    def _lianma_combination_audit_fields(
+        normalized_type: str,
+        note: object,
+    ) -> dict[str, int]:
+        if normalized_type not in {LIANMA_TWO_TWO, LIANMA_THREE_THREE}:
+            return {}
+        values: dict[str, int] = {}
+        for segment in str(note or "").split(";"):
+            key, separator, raw_value = segment.partition("=")
+            if not separator:
+                continue
+            try:
+                values[key.strip()] = int(raw_value.strip())
+            except ValueError:
+                continue
+        combination_index = values.get("连码组合序号")
+        combination_count = values.get("连码组合总数")
+        if (
+            combination_index is None
+            or combination_count is None
+            or combination_count < 1
+            or not 1 <= combination_index <= combination_count
+        ):
+            return {}
+        return {
+            "combination_index": combination_index,
+            "combination_count": combination_count,
+        }

@@ -71,6 +71,8 @@ class ItemSettlementResult:
     selection_unit: str | None = None
     draw_scope: str | None = None
     duplicate_policy: str | None = None
+    combination_index: int | None = None
+    combination_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

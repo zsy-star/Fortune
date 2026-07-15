@@ -289,7 +289,11 @@ class BetTypeNormalizer:
             return self._normalize_ping_tail_selection(selection, original_bet_type)
         if normalized_type in {LIANMA_TWO_TWO, LIANMA_THREE_THREE, LIANMA_THREE_TWO}:
             group_size = 2 if normalized_type == LIANMA_TWO_TWO else 3
-            return self._normalize_lianma_groups(selection, group_size)
+            return self._normalize_lianma_groups(
+                selection,
+                group_size,
+                forbid_duplicate_groups=normalized_type in {LIANMA_TWO_TWO, LIANMA_THREE_THREE},
+            )
         if normalized_type == NUMBER_FUXUAN:
             return self._normalize_number_fuxuan_selection(selection, note=note)
         raise UnsupportedBetTypeError(f"未实现玩法：{normalized_type}")
@@ -507,7 +511,13 @@ class BetTypeNormalizer:
             raise InvalidSelectionError("包半波投注内容不能为空")
         return ",".join(unique_tokens)
 
-    def _normalize_lianma_groups(self, selection: str, group_size: int) -> str:
+    def _normalize_lianma_groups(
+        self,
+        selection: str,
+        group_size: int,
+        *,
+        forbid_duplicate_groups: bool = False,
+    ) -> str:
         text = selection.strip()
         bracket_matches = list(re.finditer(r"\(([^()]*)\)", text))
         if bracket_matches:
@@ -519,6 +529,11 @@ class BetTypeNormalizer:
             groups = [self._normalize_lianma_group(text, group_size)]
         if not groups:
             raise InvalidSelectionError("连码组合不能为空")
+        if forbid_duplicate_groups:
+            canonical_groups = [tuple(sorted(group)) for group in groups]
+            if len(set(canonical_groups)) != len(canonical_groups):
+                raise InvalidSelectionError("连码存在重复的无序组合")
+            groups = canonical_groups
         return "-".join("(" + "-".join(group) + ")" for group in groups)
 
     def _normalize_lianma_group(self, group_text: str, group_size: int) -> tuple[str, ...]:

@@ -1220,6 +1220,7 @@ def _parse_lianma_groups(
     group_size: int,
     *,
     fushi_mode: bool = False,
+    forbid_duplicate_groups: bool = False,
 ) -> tuple[tuple[int, ...], ...] | str:
     text = selection_text.strip()
     if not text:
@@ -1239,12 +1240,33 @@ def _parse_lianma_groups(
         if re.sub(r"[\-—,，、\s]+", "", leftover):
             return f"连码括号组合格式无效：{selection_text}"
         groups: list[tuple[int, ...]] = []
+        seen_groups: set[tuple[int, ...]] = set()
         for match in bracket_matches:
             parsed = _parse_lianma_group_text(match.group(1), group_size)
             if isinstance(parsed, str):
                 return parsed
+            if forbid_duplicate_groups and parsed in seen_groups:
+                return f"连码组合重复：{_format_lianma_selection((parsed,))}"
+            seen_groups.add(parsed)
             groups.append(parsed)
         return tuple(groups)
+
+    if forbid_duplicate_groups and (explicit_fushi or fushi_mode):
+        ordered_numbers = _parse_strict_number_list(text, preserve_duplicates=True)
+        if isinstance(ordered_numbers, str):
+            return ordered_numbers
+        if ordered_numbers is not None:
+            duplicates = sorted(
+                {number for number in ordered_numbers if ordered_numbers.count(number) > 1}
+            )
+            if duplicates:
+                return "、".join(f"连码组合号码{number:02d}重复" for number in duplicates)
+            if len(ordered_numbers) < group_size:
+                return f"连码复式号码数量不能少于 {group_size} 个：{selection_text}"
+            return tuple(
+                tuple(sorted(group))
+                for group in itertools.combinations(ordered_numbers, group_size)
+            )
 
     numbers = _parse_number_list(text)
     if numbers is not None and (explicit_fushi or fushi_mode):
@@ -1284,7 +1306,12 @@ def _parse_lianma_category(
         return None
 
     group_size = _LIANMA_TYPES[bet_type]
-    groups = _parse_lianma_groups(selection_text, group_size, fushi_mode=fushi_mode)
+    groups = _parse_lianma_groups(
+        selection_text,
+        group_size,
+        fushi_mode=fushi_mode,
+        forbid_duplicate_groups=bet_type in {"二中二", "三中三"},
+    )
     if isinstance(groups, str):
         return ParseResult(region=region, success=False, error=groups)
 

@@ -609,68 +609,76 @@ def test_lianma_intake_saves_stable_selection_and_note() -> None:
     preview = _preview("二中二 (01-02)-(03-04) 各10", region="澳门")
     assert preview.can_save
     assert preview.total_amount == Decimal("20.00")
-    assert len(preview.order_items) == 1
-    item = preview.order_items[0]
-    assert item.bet_type == "二中二"
-    assert item.selection == "(01-02)-(03-04)"
-    assert item.amount == Decimal("20.00")
-    assert item.note == "连码组合数=2;连码组大小=2"
+    assert [
+        (item.bet_type, item.selection, item.amount, item.note)
+        for item in preview.order_items
+    ] == [
+        ("二中二", "(01-02)", Decimal("10.00"), "连码组合序号=1;连码组合总数=2;连码组大小=2"),
+        ("二中二", "(03-04)", Decimal("10.00"), "连码组合序号=2;连码组合总数=2;连码组大小=2"),
+    ]
     assert not any("连码类玩法" in warning for warning in preview.warnings)
     row = _first_valid_item(preview)
     assert row.original_bet_type == "二中二"
-    assert row.order_selection == "(01-02)-(03-04)"
+    assert row.order_selection == "(01-02)"
     assert row.normalized_bet_type == "lianma_two_two"
 
 
-def test_lianma_drag_intake_saves_one_summary_item() -> None:
+def test_lianma_drag_intake_preserves_existing_cartesian_groups_as_independent_items() -> None:
     preview = _preview("二中二 01,02,03,04,05 拖 06,07,08,09,10 各5", region="澳门")
     assert preview.can_save
     assert preview.total_amount == Decimal("125.00")
-    assert len(preview.order_items) == 1
-    item = preview.order_items[0]
-    assert item.bet_type == "二中二"
-    assert item.selection.startswith("(01-06)-(01-07)-(01-08)")
-    assert item.selection.endswith("(05-10)")
-    assert item.amount == Decimal("125.00")
-    assert item.note == "拖式组合数=25;连码组大小=2"
+    assert len(preview.order_items) == 25
+    assert preview.order_items[0].selection == "(01-06)"
+    assert preview.order_items[-1].selection == "(05-10)"
+    assert all(item.bet_type == "二中二" for item in preview.order_items)
+    assert all(item.amount == Decimal("5.00") for item in preview.order_items)
+    assert preview.order_items[0].note == "连码组合序号=1;连码组合总数=25;连码组大小=2"
+    assert preview.order_items[-1].note == "连码组合序号=25;连码组合总数=25;连码组大小=2"
 
 
 @pytest.mark.parametrize(
-    ("text", "bet_type", "selection", "amount", "note"),
+    ("text", "bet_type", "expected_items", "total_amount"),
     [
-        ("三中三 01,02,03 各10", "三中三", "(01-02-03)", Decimal("10.00"), "连码组合数=1;连码组大小=3"),
+        (
+            "三中三 01,02,03 各10",
+            "三中三",
+            [("(01-02-03)", Decimal("10.00"), "连码组合序号=1;连码组合总数=1;连码组大小=3")],
+            Decimal("10.00"),
+        ),
         (
             "三中三 (01-02-03)-(04-05-06) 各10",
             "三中三",
-            "(01-02-03)-(04-05-06)",
+            [
+                ("(01-02-03)", Decimal("10.00"), "连码组合序号=1;连码组合总数=2;连码组大小=3"),
+                ("(04-05-06)", Decimal("10.00"), "连码组合序号=2;连码组合总数=2;连码组大小=3"),
+            ],
             Decimal("20.00"),
-            "连码组合数=2;连码组大小=3",
         ),
-        ("三中二 01,02,03 各10", "三中二", "(01-02-03)", Decimal("10.00"), "连码组合数=1;连码组大小=3"),
+        (
+            "三中二 01,02,03 各10",
+            "三中二",
+            [("(01-02-03)", Decimal("10.00"), "连码组合数=1;连码组大小=3")],
+            Decimal("10.00"),
+        ),
         (
             "三中二 (01-02-03)-(04-05-06) 各10",
             "三中二",
-            "(01-02-03)-(04-05-06)",
+            [("(01-02-03)-(04-05-06)", Decimal("20.00"), "连码组合数=2;连码组大小=3")],
             Decimal("20.00"),
-            "连码组合数=2;连码组大小=3",
         ),
     ],
 )
 def test_lianma_intake_amount_preview(
     text: str,
     bet_type: str,
-    selection: str,
-    amount: Decimal,
-    note: str,
+    expected_items: list[tuple[str, Decimal, str]],
+    total_amount: Decimal,
 ) -> None:
     preview = _preview(text, region="澳门")
     assert preview.can_save
-    assert preview.total_amount == amount
-    assert len(preview.order_items) == 1
-    assert preview.order_items[0].bet_type == bet_type
-    assert preview.order_items[0].selection == selection
-    assert preview.order_items[0].amount == amount
-    assert preview.order_items[0].note == note
+    assert preview.total_amount == total_amount
+    assert all(item.bet_type == bet_type for item in preview.order_items)
+    assert [(item.selection, item.amount, item.note) for item in preview.order_items] == expected_items
 
 
 def test_lianma_intake_save_and_read_preserves_note(session_factory) -> None:
@@ -685,15 +693,14 @@ def test_lianma_intake_save_and_read_preserves_note(session_factory) -> None:
     assert save_result.success
     assert save_result.order is not None
     assert save_result.order.total_amount == Decimal("20.00")
-    assert save_result.order.item_count == 1
+    assert save_result.order.item_count == 2
 
     detail = service._order_service.get_order(save_result.order.id)
     assert detail is not None
-    assert len(detail.items) == 1
-    assert detail.items[0].bet_type == "二中二"
-    assert detail.items[0].selection == "(01-02)-(03-04)"
-    assert detail.items[0].amount == Decimal("20.00")
-    assert detail.items[0].note == "连码组合数=2;连码组大小=2"
+    assert [(item.bet_type, item.selection, item.amount, item.note) for item in detail.items] == [
+        ("二中二", "(01-02)", Decimal("10.00"), "连码组合序号=1;连码组合总数=2;连码组大小=2"),
+        ("二中二", "(03-04)", Decimal("10.00"), "连码组合序号=2;连码组合总数=2;连码组大小=2"),
+    ]
 
 
 def test_pingwei_intake_saves_independent_tail_items() -> None:
