@@ -21,11 +21,14 @@ class ItemSettlementResult:
     reason: str
     draw_special_number: str | None = None
     draw_special_zodiac: str | None = None
+    drawn_zodiacs: tuple[str, ...] = ()
     draw_numbers: tuple[str, ...] = ()
     draw_tails: tuple[str, ...] = ()
     draw_regular_numbers: tuple[str, ...] = ()
     selected_zodiacs: tuple[str, ...] = ()
+    selected_zodiac: str | None = None
     matched_zodiac: str | None = None
+    is_main_zodiac: bool | None = None
     selected_tails: tuple[str, ...] = ()
     matched_tails: tuple[str, ...] = ()
     selected_numbers: tuple[str, ...] = ()
@@ -52,13 +55,19 @@ class ItemSettlementResult:
     rebate_amount: Decimal = Decimal("0.00")
     rebate_note: str | None = None
     ruleset_version: str | None = None
+    zodiac_year: int | None = None
     matcher_id: str | None = None
     matcher_version: str | None = None
     odds_key_used: str | None = None
+    odds_key_candidates: tuple[str, ...] = ()
+    missing_odds: bool = False
+    settlement_ready: bool = True
+    blocking_reason: str | None = None
     rebate_key_used: str | None = None
     payout_tier: str | None = None
     selection_unit: str | None = None
     draw_scope: str | None = None
+    duplicate_policy: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +97,8 @@ class OrderSettlementPreview:
     total_rebate_amount: Decimal = Decimal("0.00")
     statistic_net_amount: Decimal = Decimal("0.00")
     ruleset_version: str | None = None
+    settlement_ready: bool = True
+    blocking_reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

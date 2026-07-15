@@ -851,6 +851,17 @@ def _build_special_zodiac_result(
     groups: list[tuple[str, tuple[int, ...]]],
     amount: float,
 ) -> ParseResult:
+    names = [name for name, _ in groups]
+    duplicates = sorted(
+        {name for name in names if names.count(name) > 1},
+        key=ZODIAC_SEQUENCE.index,
+    )
+    if duplicates:
+        return ParseResult(
+            region=region,
+            success=False,
+            error=f"平特一肖生肖重复：{','.join(duplicates)}",
+        )
     all_nums = tuple(sorted({n for _, ns in groups for n in ns}))
     return ParseResult(
         region=region,

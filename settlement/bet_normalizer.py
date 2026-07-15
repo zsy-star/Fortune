@@ -18,7 +18,9 @@ from domain.number_rules import normalize_number
 from domain.zodiac_config import (
     ZODIAC_SEQUENCE,
     get_default_zodiac_year,
+    get_main_zodiac,
     get_zodiac_number_map,
+    is_main_zodiac,
     validate_zodiac_year,
 )
 from settlement.exceptions import InvalidSelectionError, UnsupportedBetTypeError
@@ -35,6 +37,8 @@ SPECIAL_SUM_PARITY = "special_sum_parity"
 SPECIAL_SUM_SIZE = "special_sum_size"
 SPECIAL_ELEMENT = "special_element"
 SPECIAL_ZODIAC_GROUP = "special_zodiac_group"
+PINGTE_ZODIAC = "pingte_zodiac"
+PINGTE_MAIN_ZODIAC = "pingte_main_zodiac"
 LINKED_TAIL = "linked_tail"
 NON_HIT_NUMBER = "non_hit_number"
 SIX_SPECIAL_ZODIAC = "six_special_zodiac"
@@ -59,6 +63,8 @@ SUPPORTED_NORMALIZED_TYPES = {
     SPECIAL_SUM_SIZE,
     SPECIAL_ELEMENT,
     SPECIAL_ZODIAC_GROUP,
+    PINGTE_ZODIAC,
+    PINGTE_MAIN_ZODIAC,
     LINKED_TAIL,
     NON_HIT_NUMBER,
     SIX_SPECIAL_ZODIAC,
@@ -103,6 +109,8 @@ BET_TYPE_ALIASES = {
     SPECIAL_SUM_SIZE: {"特码合数大小", "合数大小"},
     SPECIAL_ELEMENT: {"特码五行", "五行"},
     SPECIAL_ZODIAC_GROUP: {"连肖", "多生肖"},
+    PINGTE_ZODIAC: {"平特一肖"},
+    PINGTE_MAIN_ZODIAC: {"平特一肖带主肖"},
     LINKED_TAIL: {"连尾"},
     NON_HIT_NUMBER: {"不中", "N不中"},
     SIX_SPECIAL_ZODIAC: {"六肖中特"},
@@ -149,6 +157,10 @@ class BetTypeNormalizer:
     def __init__(self, *, zodiac_year: int | None = None):
         self._zodiac_year = validate_zodiac_year(zodiac_year or get_default_zodiac_year())
 
+    @property
+    def zodiac_year(self) -> int:
+        return self._zodiac_year
+
     def normalize(self, bet_type: str, selection: str, note: str | None = None) -> NormalizedBet:
         original_bet_type = (bet_type or "").strip()
         raw_selection = (selection or "").strip()
@@ -178,8 +190,6 @@ class BetTypeNormalizer:
     def _normalize_type(self, bet_type: str, selection: str) -> str:
         if re.fullmatch(r"(?:[Nn]|\d+|[零〇一二两三四五六七八九十]+)?不中", bet_type):
             return NON_HIT_NUMBER
-        if bet_type == "平特一肖" and self._is_zodiac(selection):
-            return SPECIAL_ZODIAC
         for normalized_type, aliases in BET_TYPE_ALIASES.items():
             if bet_type in aliases:
                 return self._infer_special_type(selection) if normalized_type == SPECIAL_NUMBER else normalized_type
@@ -261,6 +271,8 @@ class BetTypeNormalizer:
             return selection
         if normalized_type == SPECIAL_ZODIAC_GROUP:
             return self._normalize_zodiac_group_selection(selection)
+        if normalized_type in {PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC}:
+            return self._normalize_pingte_zodiac_selection(selection, normalized_type)
         if normalized_type == LINKED_TAIL:
             return self._normalize_tail_group_selection(selection)
         if normalized_type == NON_HIT_NUMBER:
@@ -385,6 +397,36 @@ class BetTypeNormalizer:
         if len(unique_tokens) < 2:
             raise InvalidSelectionError(f"生肖列表至少需要 2 个不同生肖：{selection}")
         return ",".join(sorted(unique_tokens, key=ZODIAC_SEQUENCE.index))
+
+    def _normalize_pingte_zodiac_selection(self, selection: str, normalized_type: str) -> str:
+        zodiacs = set(get_zodiac_number_map(self._zodiac_year))
+        tokens = [token for token in re.split(r"[\s,，、/|+-]+", selection.strip()) if token]
+        if len(tokens) <= 1:
+            compact = "".join(tokens) if tokens else selection.strip()
+            tokens = list(compact)
+        invalid = [token for token in tokens if token not in zodiacs]
+        if invalid or not tokens:
+            raise InvalidSelectionError(f"无法解析平特一肖生肖：{selection}")
+        duplicates = sorted(
+            {token for token in tokens if tokens.count(token) > 1},
+            key=ZODIAC_SEQUENCE.index,
+        )
+        if duplicates:
+            raise InvalidSelectionError(f"平特一肖生肖重复：{','.join(duplicates)}")
+        if len(tokens) != 1:
+            raise InvalidSelectionError("平特一肖每条明细必须恰好一个生肖")
+        zodiac = tokens[0]
+        main = is_main_zodiac(self._zodiac_year, zodiac)
+        if normalized_type == PINGTE_MAIN_ZODIAC and not main:
+            raise InvalidSelectionError(
+                f"{self._zodiac_year}年主肖为{get_main_zodiac(self._zodiac_year)}，"
+                f"不能按主肖结算：{zodiac}"
+            )
+        if normalized_type == PINGTE_ZODIAC and main:
+            raise InvalidSelectionError(
+                f"{self._zodiac_year}年主肖为{zodiac}，必须使用「平特一肖带主肖」独立赔率"
+            )
+        return zodiac
 
     def _normalize_six_special_zodiac_selection(self, selection: str) -> str:
         zodiacs = set(get_zodiac_number_map(self._zodiac_year))

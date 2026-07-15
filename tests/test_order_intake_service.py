@@ -393,10 +393,10 @@ def test_special_zodiac_parse_options_save_as_pingte_zodiac() -> None:
     preview = _preview("马蛇10", region="澳门", parse_options=ParseOptions(special_zodiac_mode=True))
     assert preview.can_save
     assert preview.total_amount == Decimal("20.00")
-    assert len(preview.order_items) == 1
-    assert preview.order_items[0].bet_type == "平特一肖"
-    assert preview.order_items[0].selection == "马,蛇"
-    assert preview.order_items[0].amount == Decimal("20.00")
+    assert [(item.bet_type, item.selection, item.amount) for item in preview.order_items] == [
+        ("平特一肖带主肖", "马", Decimal("10.00")),
+        ("平特一肖", "蛇", Decimal("10.00")),
+    ]
 
 
 def test_default_multi_zodiac_intake_counts_zodiac_items() -> None:
@@ -405,7 +405,7 @@ def test_default_multi_zodiac_intake_counts_zodiac_items() -> None:
     assert preview.total_amount == Decimal("20.00")
     assert [(item.bet_type, item.selection, item.amount) for item in preview.order_items] == [
         ("平特一肖", "羊", Decimal("10")),
-        ("平特一肖", "马", Decimal("10")),
+        ("平特一肖带主肖", "马", Decimal("10")),
     ]
 
 
@@ -413,8 +413,10 @@ def test_zodiac_each_parse_options_count_zodiac_groups() -> None:
     preview = _preview("羊马各10", region="澳门", parse_options=ParseOptions(zodiac_each_mode=True))
     assert preview.can_save
     assert preview.total_amount == Decimal("20.00")
-    assert preview.order_items[0].bet_type == "平特一肖"
-    assert preview.order_items[0].selection == "羊,马"
+    assert [(item.bet_type, item.selection) for item in preview.order_items] == [
+        ("平特一肖", "羊"),
+        ("平特一肖带主肖", "马"),
+    ]
 
 
 def test_age_writing_parse_options_are_opt_in_for_intake() -> None:
@@ -447,10 +449,10 @@ def test_each_package_multi_zodiac_matches_existing_each_output() -> None:
     assert [(item.bet_type, item.selection, item.amount) for item in packaged.order_items] == [
         ("平特一肖", "牛", Decimal("10")),
         ("平特一肖", "兔", Decimal("10")),
-        ("平特一肖", "马", Decimal("10")),
+        ("平特一肖带主肖", "马", Decimal("10")),
         ("平特一肖", "猪", Decimal("10")),
     ]
-    assert all(row.settlement_support_status == "unsupported" for row in packaged.items)
+    assert all(row.settlement_support_status == "supported" for row in packaged.items)
 
 
 def test_each_package_normalization_does_not_change_package_bet_names() -> None:
@@ -1000,8 +1002,12 @@ def test_real_sample_spoken_zodiacs_and_block_region_intake() -> None:
     assert preview.region == "澳门"
     assert preview.total_amount == Decimal("30")
     assert [(item.bet_type, item.selection, item.amount) for item in preview.order_items] == [
-        ("平特一肖", zodiac, Decimal("5"))
-        for zodiac in ("蛇", "马", "羊", "猴", "鸡", "鼠")
+        ("平特一肖", "蛇", Decimal("5")),
+        ("平特一肖带主肖", "马", Decimal("5")),
+        ("平特一肖", "羊", Decimal("5")),
+        ("平特一肖", "猴", Decimal("5")),
+        ("平特一肖", "鸡", Decimal("5")),
+        ("平特一肖", "鼠", Decimal("5")),
     ]
 
 

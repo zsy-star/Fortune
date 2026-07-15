@@ -52,11 +52,11 @@ def test_unsupported_saveable_play_returns_user_readable_message() -> None:
     assert "可保存为记账订单" in result.suggestion
 
 
-def test_saveable_pingte_zodiac_order_type_is_unsupported_until_normalized() -> None:
-    result = SettlementSupportService().check_item("平特一肖", "马,蛇")
+def test_pingte_zodiac_is_supported_as_an_independent_single_zodiac_item() -> None:
+    result = SettlementSupportService().check_item("平特一肖", "龙", zodiac_year=2026)
 
-    assert not result.is_supported
-    assert "暂不支持正式结算" in result.message
+    assert result.is_supported
+    assert result.normalized_bet_type == "pingte_zodiac"
 
 
 def test_unknown_play_is_unsupported_and_needs_manual_review() -> None:
@@ -91,8 +91,6 @@ def test_order_item_summary_lists_unsupported_items() -> None:
 @pytest.mark.parametrize(
     "bet_type",
     [
-        "平特一肖",
-        "平特一肖带主肖",
         "平尾",
         "连肖",
         "连肖复选",

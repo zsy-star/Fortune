@@ -50,6 +50,20 @@ def get_number_zodiac_map(year: int) -> dict[str, str]:
     return {number: zodiac for zodiac, numbers in zodiac_map.items() for number in numbers}
 
 
+def get_main_zodiac(year: int) -> str:
+    """Return the year-specific zodiac that owns the fifth number in 01-49."""
+    zodiac_map = get_zodiac_number_map(year)
+    main_zodiacs = [zodiac for zodiac, numbers in zodiac_map.items() if len(numbers) == 5]
+    if len(main_zodiacs) != 1:
+        raise UnsupportedYearError(f"Zodiac mapping for {year} must have exactly one main zodiac")
+    return main_zodiacs[0]
+
+
+def is_main_zodiac(year: int, zodiac: str) -> bool:
+    """Whether *zodiac* is the dynamically calculated main zodiac for *year*."""
+    return str(zodiac).strip() == get_main_zodiac(year)
+
+
 def _validate_mapping(mapping: dict[str, list[str]], year: int) -> None:
     if set(mapping) != set(ZODIAC_SEQUENCE):
         raise UnsupportedYearError(f"Zodiac mapping for {year} must contain all 12 zodiacs")
@@ -57,4 +71,3 @@ def _validate_mapping(mapping: dict[str, list[str]], year: int) -> None:
     expected = [f"{number:02d}" for number in range(1, 50)]
     if sorted(numbers) != expected or len(numbers) != len(set(numbers)):
         raise UnsupportedYearError(f"Zodiac mapping for {year} must contain each number 01-49 exactly once")
-

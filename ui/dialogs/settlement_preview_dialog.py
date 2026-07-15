@@ -371,10 +371,10 @@ class SettlementPreviewDialog(QDialog):
               outcome = "暂不支持"
           elif item.is_winner:
               supported_text = "是"
-              outcome = "中奖"
+              outcome = "中奖（缺赔率）" if item.missing_odds else "中奖"
           else:
               supported_text = "是"
-              outcome = "未中奖"
+              outcome = "未中奖（缺赔率）" if item.missing_odds else "未中奖"
 
           values = [
               item.bet_type,
@@ -383,8 +383,8 @@ class SettlementPreviewDialog(QDialog):
               supported_text,
               outcome,
               _dash(item.matched_number),
-              _dash(item.odds),
-              _money(item.payout_amount),
+              "未配置" if item.missing_odds else _dash(item.odds),
+              "—" if item.missing_odds else _money(item.payout_amount),
               self._payout_hint(item),
               item.reason,
               self._rebate_rate_text(item.rebate_rate),
@@ -434,6 +434,7 @@ class SettlementPreviewDialog(QDialog):
           self._preview_done
           and self._current_preview is not None
           and self._current_preview.unsupported_items == 0
+          and self._current_preview.settlement_ready
           and getattr(self, "_order_detail", None) is not None
           and self._order_detail.status != "settled"
       )
@@ -459,6 +460,10 @@ class SettlementPreviewDialog(QDialog):
           return
       if self._current_preview.unsupported_items:
           QMessageBox.warning(self, "结算确认", self._preview_unsupported_message(self._current_preview))
+          self._btn_commit.setEnabled(False)
+          return
+      if not self._current_preview.settlement_ready:
+          QMessageBox.warning(self, "结算确认", self._preview_blocking_message(self._current_preview))
           self._btn_commit.setEnabled(False)
           return
 
@@ -536,6 +541,10 @@ class SettlementPreviewDialog(QDialog):
           if not item.is_supported
       ]
       return "存在暂不支持玩法，暂不能正式结算：\n" + "\n".join(lines)
+
+  def _preview_blocking_message(self, preview: OrderSettlementPreview) -> str:
+      reasons = preview.blocking_reasons or ("存在缺少赔率配置的明细",)
+      return "当前预览仅供核对，不能正式结算：\n" + "\n".join(reasons)
 
   def _apply_stylesheet(self) -> None:
       self.setStyleSheet(

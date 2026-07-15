@@ -34,6 +34,40 @@ def match_zodiac(selection: str, special_number: str, *, year: int | None = None
     return matched, special if matched else None, f"特码 {special} 生肖为{actual}，投注{selection}"
 
 
+def match_pingte_zodiac_v2(
+    selection: str,
+    regular_numbers: list[str],
+    special_number: str,
+    *,
+    year: int | None = None,
+) -> tuple[bool, str | None, str]:
+    """Match one 平特一肖 selection against all six regular numbers plus special."""
+    selected_year = year or get_default_zodiac_year()
+    draw_numbers = [
+        *(normalize_number(number) for number in regular_numbers),
+        normalize_number(special_number),
+    ]
+    drawn_zodiacs = [get_zodiac(number, year=selected_year) for number in draw_numbers]
+    matched_numbers = [
+        number for number, zodiac in zip(draw_numbers, drawn_zodiacs) if zodiac == selection
+    ]
+    draw_text = ",".join(draw_numbers)
+    zodiac_text = "、".join(drawn_zodiacs)
+    if matched_numbers:
+        return (
+            True,
+            matched_numbers[0],
+            f"平特一肖检查全部7个开奖号 {draw_text}（生肖：{zodiac_text}），"
+            f"投注{selection}命中号码 {','.join(matched_numbers)}；同一生肖只计一注",
+        )
+    return (
+        False,
+        None,
+        f"平特一肖检查全部7个开奖号 {draw_text}（生肖：{zodiac_text}），"
+        f"投注{selection}未命中",
+    )
+
+
 def match_zodiac_group(
     selection: str,
     special_number: str,

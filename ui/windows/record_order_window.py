@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from domain.zodiac_config import MAX_ZODIAC_YEAR, MIN_ZODIAC_YEAR, get_default_zodiac_year
+from domain.zodiac_config import MAX_ZODIAC_YEAR, MIN_ZODIAC_YEAR, get_default_zodiac_year, is_main_zodiac
 from schemas.order_intake_schema import IntakeMetadata, IntakeTableRow
 from services.order_intake_display_formatter import (
     format_issue_hint,
@@ -571,24 +571,24 @@ class RecordOrderWindow(QMainWindow):
         self._table_loading = True
         try:
             for r in self._parsed_results:
-                if r.category == "多生肖" and r.zodiac_groups and not r.zodiac_number_mode:
+                if (
+                    r.category == "多生肖" and r.zodiac_groups and not r.zodiac_number_mode
+                ) or (r.category == "平特一肖" and r.zodiac_groups):
                     table_entries = [
-                        ("平特一肖", name, r.amount, r.amount)
+                        (
+                            "平特一肖带主肖"
+                            if is_main_zodiac(self._selected_zodiac_year(), name)
+                            else "平特一肖",
+                            name,
+                            r.amount,
+                            r.amount,
+                        )
                         for name, _ in r.zodiac_groups
                     ]
                 elif r.category == "特码生肖" and r.zodiac_groups:
                     table_entries = [
                         (
                             "特码生肖",
-                            ",".join(name for name, _ in r.zodiac_groups),
-                            r.amount,
-                            r.total,
-                        )
-                    ]
-                elif r.category == "平特一肖" and r.zodiac_groups:
-                    table_entries = [
-                        (
-                            "平特一肖",
                             ",".join(name for name, _ in r.zodiac_groups),
                             r.amount,
                             r.total,
@@ -680,7 +680,12 @@ class RecordOrderWindow(QMainWindow):
         selection: str,
         note: str | None = None,
     ) -> QTableWidgetItem:
-        result = self._settlement_support_service.check_item(bet_type, selection, note=note)
+        result = self._settlement_support_service.check_item(
+            bet_type,
+            selection,
+            note=note,
+            zodiac_year=self._selected_zodiac_year(),
+        )
         text = "支持" if result.is_supported else "暂不支持"
         item = QTableWidgetItem(text)
         item.setToolTip(f"{result.message}\n{result.suggestion}")

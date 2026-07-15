@@ -9,7 +9,7 @@ from domain.color_rules import get_wave_color
 from domain.number_rules import normalize_number, odd_even_label, size_label, tail_number
 from domain.play_rules import FORTUNE_RULESET_2026_V2, get_play_rule
 from domain.zodiac_rules import get_zodiac
-from domain.zodiac_config import get_default_zodiac_year, validate_zodiac_year
+from domain.zodiac_config import get_default_zodiac_year, is_main_zodiac, validate_zodiac_year
 from schemas.settlement_schema import ItemSettlementResult, OrderSettlementPreview
 from settlement.bet_normalizer import (
     LINKED_TAIL,
@@ -19,6 +19,8 @@ from settlement.bet_normalizer import (
     NON_HIT_NUMBER,
     NUMBER_FUXUAN,
     PACKAGE_HALF_WAVE,
+    PINGTE_MAIN_ZODIAC,
+    PINGTE_ZODIAC,
     PING_TAIL,
     REGULAR_NUMBER,
     SPECIAL_COLOR,
@@ -47,6 +49,7 @@ from settlement.matchers import (
     match_number_fuxuan,
     match_package_half_wave,
     match_parity,
+    match_pingte_zodiac_v2,
     match_ping_tail,
     match_regular_number,
     match_six_special_zodiac,
@@ -81,6 +84,8 @@ MATCHERS: dict[str, Matcher] = {
     SPECIAL_SUM_SIZE: match_sum_size,
     SPECIAL_ELEMENT: match_element,
     SPECIAL_ZODIAC_GROUP: match_zodiac_group,
+    PINGTE_ZODIAC: match_pingte_zodiac_v2,
+    PINGTE_MAIN_ZODIAC: match_pingte_zodiac_v2,
     LINKED_TAIL: match_linked_tail,
     PING_TAIL: match_ping_tail,
     LIANMA_TWO_TWO: match_two_in_two,
@@ -126,9 +131,11 @@ class SettlementEngine:
         play_rule = get_play_rule(getattr(order_item, "bet_type", ""))
         rule_audit_fields = {
             "ruleset_version": self._ruleset_version,
+            "zodiac_year": self._zodiac_year,
             "matcher_version": play_rule.matcher_version if play_rule else None,
             "selection_unit": play_rule.selection_unit.value if play_rule else None,
             "draw_scope": play_rule.draw_scope.value if play_rule else None,
+            "duplicate_policy": play_rule.duplicate_policy.value if play_rule else None,
         }
         try:
             normalized = self._normalizer.normalize(
@@ -162,6 +169,13 @@ class SettlementEngine:
                 draw_special_number,
                 year=self._zodiac_year,
             )
+        elif normalized.normalized_bet_type in {PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC}:
+            is_winner, matched_number, reason = matcher(
+                normalized.selection,
+                list(draw_regular_numbers),
+                draw_special_number,
+                year=self._zodiac_year,
+            )
         elif normalized.normalized_bet_type in {
             LINKED_TAIL,
             PING_TAIL,
@@ -182,12 +196,15 @@ class SettlementEngine:
 
         selected_zodiacs = (
             tuple(token for token in normalized.selection.split(",") if token)
-            if normalized.normalized_bet_type in {SPECIAL_ZODIAC_GROUP, SIX_SPECIAL_ZODIAC}
+            if normalized.normalized_bet_type
+            in {SPECIAL_ZODIAC_GROUP, SIX_SPECIAL_ZODIAC, PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC}
             else ()
         )
         matched_zodiac = (
             draw_special_zodiac
             if normalized.normalized_bet_type in {SPECIAL_ZODIAC_GROUP, SIX_SPECIAL_ZODIAC} and is_winner
+            else normalized.selection
+            if normalized.normalized_bet_type in {PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC} and is_winner
             else None
         )
         match_fields = self._match_reference_fields(
@@ -210,7 +227,17 @@ class SettlementEngine:
             draw_special_number=draw_special_number,
             draw_special_zodiac=draw_special_zodiac,
             selected_zodiacs=selected_zodiacs,
+            selected_zodiac=(
+                normalized.selection
+                if normalized.normalized_bet_type in {PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC}
+                else None
+            ),
             matched_zodiac=matched_zodiac,
+            is_main_zodiac=(
+                is_main_zodiac(self._zodiac_year, normalized.selection)
+                if normalized.normalized_bet_type in {PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC}
+                else None
+            ),
             matcher_id=(
                 play_rule.matcher_id
                 if play_rule and play_rule.matcher_id
@@ -292,6 +319,7 @@ class SettlementEngine:
         draw_numbers = (*regular_numbers, special_number)
         return {
             "draw_numbers": draw_numbers,
+            "drawn_zodiacs": tuple(get_zodiac(number, year=self._zodiac_year) for number in draw_numbers),
             "draw_tails": tuple(str(tail_number(number)) for number in draw_numbers),
             "draw_regular_numbers": regular_numbers,
             "draw_special_wave": get_wave_color(special_number),
@@ -363,6 +391,17 @@ class SettlementEngine:
                 "regular_numbers": regular_numbers,
                 "special_number": special_number,
                 "hit_regular_numbers": hit_regular_numbers,
+            }
+        if normalized_type in {PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC}:
+            selected_zodiac = selection
+            drawn_zodiacs = tuple(get_zodiac(number, year=self._zodiac_year) for number in draw_numbers)
+            matched_numbers = tuple(
+                number
+                for number, zodiac in zip(draw_numbers, drawn_zodiacs)
+                if zodiac == selected_zodiac
+            )
+            return {
+                "matched_numbers": matched_numbers,
             }
         if normalized_type == REGULAR_NUMBER:
             selected_numbers = tuple(token for token in selection.split(",") if token)

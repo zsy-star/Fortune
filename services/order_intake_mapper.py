@@ -6,6 +6,8 @@ import re
 from decimal import Decimal, InvalidOperation
 
 from domain.bet_types import (
+    BET_TYPE_PINGTE_MAIN_ZODIAC,
+    BET_TYPE_PINGTE_ZODIAC,
     BET_TYPE_SPECIAL_ZODIAC,
     REGION_MACAU,
     normalize_bet_type,
@@ -13,7 +15,7 @@ from domain.bet_types import (
 )
 from domain.exceptions import InvalidBetTypeError, InvalidNumberError, InvalidRegionError
 from domain.number_rules import normalize_number
-from domain.zodiac_config import get_default_zodiac_year, get_zodiac_number_map
+from domain.zodiac_config import ZODIAC_SEQUENCE, get_default_zodiac_year, get_zodiac_number_map, is_main_zodiac
 from schemas.order_intake_schema import IntakeItemPreview
 from schemas.order_schema import OrderItemCreate
 from services.order_parser import ParseResult
@@ -424,47 +426,11 @@ def convert_parse_result(
             errors.append(preview.error or "特码生肖映射失败")
         return previews, order_items, warnings, errors
 
-    if category == "平特一肖" and result.zodiac_groups:
-        selection = ",".join(name for name, _ in result.zodiac_groups)
-        try:
-            normalize_bet_type("平特一肖")
-        except InvalidBetTypeError as exc:
-            message = str(exc)
-            previews.append(
-                _build_item_preview(
-                    source_line=source_line,
-                    original_bet_type=category,
-                    original_selection=selection,
-                    amount=expected_total,
-                    order_bet_type=None,
-                    order_selection=None,
-                    normalizer=normalizer,
-                    error=message,
-                )
-            )
-            errors.append(message)
-            return previews, order_items, warnings, errors
-
-        preview = _build_item_preview(
-            source_line=source_line,
-            original_bet_type=category,
-            original_selection=selection,
-            amount=expected_total,
-            order_bet_type="平特一肖",
-            order_selection=selection,
-            preview_bet_type=category,
-            normalizer=normalizer,
-        )
-        previews.append(preview)
-        if preview.is_valid:
-            order_items.append(
-                OrderItemCreate(bet_type="平特一肖", selection=selection, amount=expected_total)
-            )
-        else:
-            errors.append(preview.error or "平特一肖映射失败")
-        return previews, order_items, warnings, errors
-
-    if category == "多生肖" and result.zodiac_groups and not result.zodiac_number_mode:
+    if (
+        category == "平特一肖" and result.zodiac_groups
+    ) or (
+        category == "多生肖" and result.zodiac_groups and not result.zodiac_number_mode
+    ):
         computed_total = per_amount * len(result.zodiac_groups)
         if computed_total != expected_total:
             message = (
@@ -486,29 +452,49 @@ def convert_parse_result(
             errors.append(message)
             return previews, order_items, warnings, errors
 
-        try:
-            normalize_bet_type("平特一肖")
-        except InvalidBetTypeError as exc:
-            message = str(exc)
+        names = [zodiac for zodiac, _ in result.zodiac_groups]
+        duplicates = sorted(
+            {zodiac for zodiac in names if names.count(zodiac) > 1},
+            key=ZODIAC_SEQUENCE.index,
+        )
+        if duplicates:
+            message = f"平特一肖生肖重复：{','.join(duplicates)}"
+            previews.append(
+                IntakeItemPreview(
+                    source_line=source_line,
+                    original_bet_type=category,
+                    normalized_bet_type=None,
+                    original_selection=",".join(names),
+                    normalized_selection=None,
+                    amount=expected_total,
+                    is_valid=False,
+                    error=message,
+                )
+            )
             errors.append(message)
             return previews, order_items, warnings, errors
 
         for zodiac, _ in result.zodiac_groups:
+            order_bet_type = (
+                BET_TYPE_PINGTE_MAIN_ZODIAC
+                if is_main_zodiac(normalizer.zodiac_year, zodiac)
+                else BET_TYPE_PINGTE_ZODIAC
+            )
             preview = _build_item_preview(
                 source_line=source_line,
                 original_bet_type=category,
                 original_selection=zodiac,
                 amount=per_amount,
-                order_bet_type="平特一肖",
+                order_bet_type=order_bet_type,
                 order_selection=zodiac,
-                preview_bet_type="平特一肖",
+                preview_bet_type=order_bet_type,
                 preview_selection=zodiac,
                 normalizer=normalizer,
             )
             previews.append(preview)
             if preview.is_valid:
                 order_items.append(
-                    OrderItemCreate(bet_type="平特一肖", selection=zodiac, amount=per_amount)
+                    OrderItemCreate(bet_type=order_bet_type, selection=zodiac, amount=per_amount)
                 )
             else:
                 errors.append(preview.error or f"生肖 {zodiac} 映射失败")

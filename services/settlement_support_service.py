@@ -47,6 +47,8 @@ class SettlementSupportService:
         selection: str,
         *,
         note: str | None = None,
+        zodiac_year: int | None = None,
+        require_zodiac_year: bool = False,
     ) -> SettlementSupportResult:
         play_type = (bet_type or "").strip()
         raw_selection = (selection or "").strip()
@@ -54,6 +56,8 @@ class SettlementSupportService:
             return self._unsupported(play_type, raw_selection, "投注类型为空")
         if not raw_selection:
             return self._unsupported(play_type, raw_selection, "投注内容为空")
+        if require_zodiac_year and zodiac_year is None and play_type in {"平特一肖", "平特一肖带主肖"}:
+            return self._unsupported(play_type, raw_selection, "平特一肖正式结算需要订单保存的生肖年份")
 
         rule = get_play_rule(play_type)
         if rule is not None and rule.availability is not SettlementAvailability.SUPPORTED:
@@ -66,7 +70,8 @@ class SettlementSupportService:
             return self._unsupported(play_type, raw_selection, reason)
 
         try:
-            normalized = self._normalizer.normalize(play_type, raw_selection, note=note)
+            normalizer = self._normalizer if zodiac_year is None else BetTypeNormalizer(zodiac_year=zodiac_year)
+            normalized = normalizer.normalize(play_type, raw_selection, note=note)
         except UnsupportedBetTypeError as exc:
             return self._unsupported(play_type, raw_selection, str(exc))
         except InvalidSelectionError as exc:
@@ -136,6 +141,8 @@ class SettlementSupportService:
         items: list[Any] | tuple[Any, ...],
         *,
         ruleset_version: object = FORTUNE_RULESET_2026_V2,
+        zodiac_year: int | None = None,
+        require_zodiac_year: bool = False,
     ) -> list[SettlementSupportResult]:
         order_items = list(items)
         ruleset_result = self.check_ruleset_version(ruleset_version)
@@ -155,6 +162,8 @@ class SettlementSupportService:
                 str(getattr(item, "bet_type", "") or ""),
                 str(getattr(item, "selection", "") or ""),
                 note=getattr(item, "note", None),
+                zodiac_year=zodiac_year,
+                require_zodiac_year=require_zodiac_year,
             )
             for item in order_items
         ]
@@ -164,10 +173,17 @@ class SettlementSupportService:
         items: list[Any] | tuple[Any, ...],
         *,
         ruleset_version: object = FORTUNE_RULESET_2026_V2,
+        zodiac_year: int | None = None,
+        require_zodiac_year: bool = False,
     ) -> list[SettlementSupportResult]:
         return [
             result
-            for result in self.check_order_items(items, ruleset_version=ruleset_version)
+            for result in self.check_order_items(
+                items,
+                ruleset_version=ruleset_version,
+                zodiac_year=zodiac_year,
+                require_zodiac_year=require_zodiac_year,
+            )
             if not result.is_supported
         ]
 

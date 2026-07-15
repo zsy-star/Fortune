@@ -315,17 +315,22 @@ class TestInputParsing:
         assert window._order_table.item(0, _TableColumn.AMOUNT).text() == "70"
         assert window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).text() == "70"
 
-    def test_each_package_multi_zodiac_enters_four_v2_blocked_rows(self, window):
+    def test_each_package_multi_zodiac_enters_four_v2_supported_rows(self, window):
         window._input_text.setPlainText("牛兔马猪各包10")
         window._do_parse()
         window._on_add_result()
 
         assert window._order_table.rowCount() == 4
-        assert [window._order_table.item(row, 1).text() for row in range(4)] == ["平特一肖"] * 4
+        assert [window._order_table.item(row, 1).text() for row in range(4)] == [
+            "平特一肖",
+            "平特一肖",
+            "平特一肖带主肖",
+            "平特一肖",
+        ]
         assert [window._order_table.item(row, 2).text() for row in range(4)] == ["牛", "兔", "马", "猪"]
         assert [window._order_table.item(row, _TableColumn.AMOUNT).text() for row in range(4)] == ["10"] * 4
         assert [window._order_table.item(row, _TableColumn.TOTAL_AMOUNT).text() for row in range(4)] == ["10"] * 4
-        assert [window._order_table.item(row, _TableColumn.SETTLEMENT_SUPPORT).text() for row in range(4)] == ["暂不支持"] * 4
+        assert [window._order_table.item(row, _TableColumn.SETTLEMENT_SUPPORT).text() for row in range(4)] == ["支持"] * 4
 
     def test_ten_non_hit_enters_table_as_one_v2_supported_group(self, window):
         window._input_text.setPlainText("6/18/31/43/22/10/03/15/01/13十不中各4000")
@@ -1775,8 +1780,8 @@ class TestSaveOrder:
 
         assert event_counts["orders"] == 0
 
-    def test_special_zodiac_mode_save_uses_order_intake_service_chain(self, save_window, session_factory):
-        """特肖模式保存仍走 OrderIntakeService，并保存为平特一肖。"""
+    def test_special_zodiac_mode_save_uses_independent_pingte_items(self, save_window, session_factory):
+        """特肖模式保存仍走 OrderIntakeService，并按生肖独立保存。"""
         from sqlalchemy import select
 
         from models import Order, OrderItem
@@ -1797,11 +1802,12 @@ class TestSaveOrder:
 
         with session_factory() as session:
             order = session.scalars(select(Order)).one()
-            item = session.scalars(select(OrderItem)).one()
+            items = session.scalars(select(OrderItem).order_by(OrderItem.id)).all()
             assert order.total_amount == 20
-            assert item.bet_type == "平特一肖"
-            assert item.selection == "马,蛇"
-            assert item.amount == 20
+            assert [(item.bet_type, item.selection, item.amount) for item in items] == [
+                ("平特一肖带主肖", "马", 10),
+                ("平特一肖", "蛇", 10),
+            ]
 
     def test_advanced_adjusted_table_save_preserves_amount_region_channel_declarer_and_events(
         self,
@@ -1863,15 +1869,16 @@ class TestSaveOrder:
 
         with session_factory() as session:
             order = session.scalars(select(Order)).one()
-            item = session.scalars(select(OrderItem)).one()
+            items = session.scalars(select(OrderItem).order_by(OrderItem.id)).all()
             assert order.region == "香港"
             assert order.channel == "现金"
             assert order.customer_name == "验收申报人"
             assert order.source == "record_window_adjusted"
-            assert order.total_amount == 30
-            assert item.bet_type == "平特一肖"
-            assert item.selection == "马,蛇"
-            assert item.amount == 30
+            assert order.total_amount == 40
+            assert [(item.bet_type, item.selection, item.amount) for item in items] == [
+                ("平特一肖带主肖", "马", 30),
+                ("平特一肖", "蛇", 10),
+            ]
         assert event_counts == {"orders": 1, "logs": 1}
 
     def test_save_multi_numbers_keeps_per_number_amount_semantics(self, save_window, session_factory):
@@ -2233,19 +2240,22 @@ class TestAmountTotalSemanticsInTable:
         assert window._order_table.item(1, _TableColumn.TOTAL_AMOUNT).text() == "25"
         assert "65" in window._lbl_total.text()
 
-    def test_special_zodiac_result_keeps_pingte_bet_type_in_table(self, window):
-        """特肖模式添加到表格时不误转成特码号码。"""
+    def test_special_zodiac_result_keeps_independent_pingte_types_in_table(self, window):
+        """特肖模式添加到表格时不误转为特码号码或合并生肖。"""
         checkboxes = {checkbox.text(): checkbox for checkbox in window.findChildren(QCheckBox)}
         checkboxes["特肖模式"].setChecked(True)
         window._input_text.setPlainText("马蛇10")
         window._do_parse()
         window._on_add_result()
 
-        assert window._order_table.rowCount() == 1
-        assert window._order_table.item(0, 1).text() == "平特一肖"
-        assert window._order_table.item(0, 2).text() == "马,蛇"
-        assert window._order_table.item(0, _TableColumn.AMOUNT).text() == "10"
-        assert window._order_table.item(0, _TableColumn.TOTAL_AMOUNT).text() == "20"
+        assert window._order_table.rowCount() == 2
+        assert [window._order_table.item(row, 1).text() for row in range(2)] == [
+            "平特一肖带主肖",
+            "平特一肖",
+        ]
+        assert [window._order_table.item(row, 2).text() for row in range(2)] == ["马", "蛇"]
+        assert [window._order_table.item(row, _TableColumn.AMOUNT).text() for row in range(2)] == ["10", "10"]
+        assert [window._order_table.item(row, _TableColumn.TOTAL_AMOUNT).text() for row in range(2)] == ["10", "10"]
 
 
 # ══════════════════════════════════════════════════════════════════════

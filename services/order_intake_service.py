@@ -9,10 +9,10 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy.orm import Session
 
 from core.database import SessionLocal
-from domain.bet_types import normalize_bet_type, normalize_region
+from domain.bet_types import BET_TYPE_PINGTE_MAIN_ZODIAC, BET_TYPE_PINGTE_ZODIAC, normalize_bet_type, normalize_region
 from domain.exceptions import DomainError
 from domain.number_rules import normalize_number
-from domain.zodiac_config import get_default_zodiac_year
+from domain.zodiac_config import get_default_zodiac_year, is_main_zodiac
 from schemas.order_intake_schema import IntakeMetadata, IntakeTableRow, OrderIntakePreview, OrderIntakeSaveResult
 from schemas.order_intake_schema import IntakeItemPreview
 from schemas.order_schema import OrderCreate, OrderItemCreate, OrderResult
@@ -273,6 +273,7 @@ class OrderIntakeService:
                 original_bet_type,
                 original_selection,
                 row.row_number,
+                zodiac_year=metadata.zodiac_year,
             )
             order_items = self._build_table_order_items(
                 row=row,
@@ -316,16 +317,26 @@ class OrderIntakeService:
         bet_type: str,
         selection: str,
         row_number: int,
+        *,
+        zodiac_year: int | None,
     ) -> tuple[str, str, str | None, str | None]:
         if not bet_type:
             raise ValueError(f"第 {row_number} 行投注类型不能为空")
         if not selection:
             raise ValueError(f"第 {row_number} 行投注内容不能为空")
 
+        normalizer = BetTypeNormalizer(zodiac_year=zodiac_year)
+        effective_bet_type = bet_type
+        if (
+            bet_type == BET_TYPE_PINGTE_ZODIAC
+            and len(selection.strip()) == 1
+            and is_main_zodiac(normalizer.zodiac_year, selection.strip())
+        ):
+            effective_bet_type = BET_TYPE_PINGTE_MAIN_ZODIAC
         try:
-            normalized = self._normalizer.normalize(bet_type, selection)
+            normalized = normalizer.normalize(effective_bet_type, selection)
         except UnsupportedBetTypeError:
-            order_bet_type = normalize_bet_type(bet_type)
+            order_bet_type = normalize_bet_type(effective_bet_type)
             warning = f"第 {row_number} 行玩法「{order_bet_type}」可保存，但当前结算预览暂不支持"
             return order_bet_type, selection.strip(), None, warning
 
@@ -334,7 +345,7 @@ class OrderIntakeService:
 
         order_bet_type = _NORMALIZED_TO_ORDER_BET_TYPE.get(normalized.normalized_bet_type)
         if order_bet_type is None:
-            order_bet_type = normalize_bet_type(bet_type)
+            order_bet_type = normalize_bet_type(effective_bet_type)
         return order_bet_type, normalized.selection, normalized.normalized_bet_type, None
 
     def _build_table_order_items(
@@ -471,7 +482,7 @@ class OrderIntakeService:
             item_previews, order_items, warnings, errors = convert_parse_result(
                 result,
                 source_line,
-                normalizer=self._normalizer,
+                normalizer=BetTypeNormalizer(zodiac_year=metadata.zodiac_year),
             )
             all_previews.extend(item_previews)
             preview.warnings.extend(warnings)
@@ -543,6 +554,7 @@ class OrderIntakeService:
                 bet_type,
                 selection,
                 note=getattr(order_item, "note", None),
+                zodiac_year=preview.zodiac_year,
             )
             item_preview.settlement_support_status = result.status
             item_preview.settlement_support_message = result.message
