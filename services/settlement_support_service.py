@@ -102,7 +102,7 @@ class SettlementSupportService:
                 normalized_bet_type=normalized.normalized_bet_type,
             )
 
-        if play_type in {"二中二", "三中三"}:
+        if play_type in {"二中二", "三中三", "三中二"}:
             groups = parse_lianma_groups(normalized.selection)
             if len(groups) != 1:
                 return self._unsupported(

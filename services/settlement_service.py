@@ -72,8 +72,10 @@ REQUIRED_ODDS_TYPES = PINGTE_ZODIAC_TYPES | frozenset(
         LIANXIAO_ZODIAC,
         LIANMA_TWO_TWO,
         LIANMA_THREE_THREE,
+        LIANMA_THREE_TWO,
     }
 )
+THREE_IN_TWO_REQUIRED_ODDS_KEYS = ("三中二中2", "三中二中3")
 
 ODDS_CANDIDATES: dict[str, tuple[str, ...]] = {
     SPECIAL_NUMBER: ("特码号码", "特码", "号码", "特号", "单号投注", "纯数字"),
@@ -450,7 +452,8 @@ class SettlementService:
                 odds_source="未配置",
                 payout_note="不支持玩法，不计算中奖金额",
             )
-        if item.normalized_bet_type in REQUIRED_ODDS_TYPES:
+        requires_odds = item.normalized_bet_type in REQUIRED_ODDS_TYPES
+        if requires_odds:
             item = self._mark_required_odds_readiness(
                 item,
                 plan_items,
@@ -502,6 +505,13 @@ class SettlementService:
         plan_name: str | None,
         odds_source: str,
     ) -> ItemSettlementResult:
+        if item.normalized_bet_type == LIANMA_THREE_TWO:
+            return self._mark_three_in_two_odds_readiness(
+                item,
+                plan_items,
+                plan_name,
+                odds_source,
+            )
         candidates = self._odds_candidates_for_item(item)
         odds_item = self._find_odds_item(item, plan_items) if plan_items else None
         invalid_odds_key: str | None = None
@@ -546,6 +556,59 @@ class SettlementService:
         )
 
     @staticmethod
+    def _mark_three_in_two_odds_readiness(
+        item: ItemSettlementResult,
+        plan_items: list[Any],
+        plan_name: str | None,
+        odds_source: str,
+    ) -> ItemSettlementResult:
+        item_by_name = {str(config.bet_type).strip(): config for config in plan_items}
+        missing_keys: list[str] = []
+        invalid_keys: list[str] = []
+        for key in THREE_IN_TWO_REQUIRED_ODDS_KEYS:
+            config = item_by_name.get(key)
+            if config is None:
+                missing_keys.append(key)
+                continue
+            try:
+                configured_odds = Decimal(config.odds)
+            except (InvalidOperation, TypeError, ValueError):
+                configured_odds = None
+            if configured_odds is None or not configured_odds.is_finite() or configured_odds <= 0:
+                invalid_keys.append(key)
+
+        if not missing_keys and not invalid_keys:
+            return replace(item, odds_key_candidates=THREE_IN_TWO_REQUIRED_ODDS_KEYS)
+
+        problems: list[str] = []
+        if missing_keys:
+            problems.append(f"缺少赔率键：{'、'.join(missing_keys)}")
+        if invalid_keys:
+            problems.append(f"赔率值无效：{'、'.join(invalid_keys)}")
+        blocking_reason = (
+            "三中二双奖级赔率配置不完整（"
+            + "；".join(problems)
+            + "）；必须同时配置有效的三中二中2和三中二中3赔率，"
+            "请到设置中心补齐后再正式结算"
+        )
+        outcome = "命中" if item.is_winner is True else "未命中"
+        preview_note = f"{outcome}，{blocking_reason}；当前结果仅供核对，不能正式结算"
+        return replace(
+            item,
+            odds=None,
+            payout_amount=Decimal("0.00"),
+            odds_plan_name=plan_name,
+            odds_source=odds_source if plan_items else "未配置",
+            odds_key_used=None,
+            odds_key_candidates=THREE_IN_TWO_REQUIRED_ODDS_KEYS,
+            missing_odds=True,
+            settlement_ready=False,
+            blocking_reason=blocking_reason,
+            payout_note=preview_note,
+            reason=f"{item.reason}；{preview_note}",
+        )
+
+    @staticmethod
     def _missing_required_odds_error(order: Order, items: list[ItemSettlementResult]) -> str:
         details = "; ".join(
             (
@@ -571,6 +634,8 @@ class SettlementService:
             return "二中二组合"
         if item.normalized_bet_type == LIANMA_THREE_THREE:
             return "三中三组合"
+        if item.normalized_bet_type == LIANMA_THREE_TWO:
+            return f"三中二{item.payout_tier or '奖级'}组合"
         if item.normalized_bet_type == PINGTE_MAIN_ZODIAC:
             return "主肖"
         if item.normalized_bet_type == PINGTE_ZODIAC:
@@ -591,6 +656,8 @@ class SettlementService:
             return "二中二赔率"
         if item.normalized_bet_type == LIANMA_THREE_THREE:
             return "三中三赔率"
+        if item.normalized_bet_type == LIANMA_THREE_TWO:
+            return f"三中二{item.payout_tier or '奖级'}赔率"
         if item.normalized_bet_type == PINGTE_MAIN_ZODIAC:
             return "主肖专用赔率"
         if item.normalized_bet_type == PINGTE_ZODIAC:
@@ -672,6 +739,12 @@ class SettlementService:
                 if config is not None:
                     return config
             return None
+        if item.normalized_bet_type == LIANMA_THREE_TWO:
+            for candidate in candidates:
+                config = item_by_name.get(candidate)
+                if config is not None:
+                    return config
+            return None
         if item.normalized_bet_type in {
             NON_HIT_NUMBER,
             SPECIAL_ZODIAC_GROUP,
@@ -736,6 +809,12 @@ class SettlementService:
             if item.fuxuan_type == "复3":
                 return ("几中几复选", "三中三")
             return ("几中几复选",)
+        if normalized_type == LIANMA_THREE_TWO:
+            if item.payout_tier == "中2":
+                return ("三中二中2",)
+            if item.payout_tier == "中3":
+                return ("三中二中3",)
+            return ()
         if normalized_type == NON_HIT_NUMBER:
             count = len(item.selected_numbers or ())
             if count:
@@ -914,7 +993,8 @@ class SettlementService:
         lianma_items = [
             item
             for item in item_snapshots
-            if item["normalized_type"] in {LIANMA_TWO_TWO, LIANMA_THREE_THREE}
+            if item["normalized_type"]
+            in {LIANMA_TWO_TWO, LIANMA_THREE_THREE, LIANMA_THREE_TWO}
         ]
         if lianma_items:
             item_results = [
@@ -923,11 +1003,14 @@ class SettlementService:
                     "combination_index": item["combination_index"],
                     "selected_numbers": item["selected_numbers"],
                     "matched_numbers": item["matched_numbers"],
+                    "hit_count": item["hit_count"],
+                    "payout_tier": item["payout_tier"],
                     "is_winner": item["is_winner"],
                     "stake_amount": item["amount"],
                     "odds": item["odds"],
                     "winning_amount": item["payout_amount"],
                     "odds_key_used": item["odds_key_used"],
+                    "odds_key_candidates": item["odds_key_candidates"],
                     "rebate_key_used": item["rebate_key_used"],
                     "ruleset_version": item["ruleset_version"],
                     "matcher_id": item["matcher_id"],
@@ -1029,6 +1112,7 @@ class SettlementService:
             "duplicate_policy": item.duplicate_policy,
             "combination_index": item.combination_index,
             "combination_count": item.combination_count,
+            "hit_count": item.hit_count,
         }
         if item.normalized_bet_type == NON_HIT_NUMBER:
             snapshot.update(

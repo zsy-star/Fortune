@@ -320,8 +320,61 @@ def match_three_in_three(selection: str, regular_numbers: list[str], special_num
     return match_lianma(selection, regular_numbers, special_number, group_size=3, required_hits=3, label="三中三")
 
 
-def match_three_in_two(selection: str, regular_numbers: list[str], special_number: str) -> tuple[bool, str | None, str]:
-    return match_lianma(selection, regular_numbers, special_number, group_size=3, required_hits=2, label="三中二")
+def match_three_in_two_v2(
+    selection: str,
+    regular_numbers: list[str],
+    special_number: str,
+) -> tuple[bool, str | None, str, int, str | None]:
+    normalized_regular = [normalize_number(number) for number in regular_numbers]
+    special = normalize_number(special_number)
+    groups = parse_lianma_groups(selection)
+    if len(groups) != 1 or len(groups[0]) != 3 or len(set(groups[0])) != 3:
+        return False, None, "三中二每条明细必须恰好包含一个3号码组合", 0, None
+
+    selected_group = groups[0]
+    regular_set = set(normalized_regular)
+    matched_numbers = tuple(number for number in selected_group if number in regular_set)
+    hit_count = len(matched_numbers)
+    payout_tier = "中3" if hit_count == 3 else "中2" if hit_count == 2 else None
+    is_winner = payout_tier is not None
+    selected_text = format_lianma_group(selected_group)
+    matched_text = ",".join(matched_numbers) or "无"
+    regular_text = ",".join(normalized_regular)
+    if is_winner:
+        return (
+            True,
+            ",".join(matched_numbers),
+            (
+                f"三中二只使用6个正码 {regular_text}，组合 {selected_text} 命中 "
+                f"{matched_text} 共{hit_count}个，奖级{payout_tier}；特码 {special} 不参与"
+            ),
+            hit_count,
+            payout_tier,
+        )
+    return (
+        False,
+        None,
+        (
+            f"三中二只使用6个正码 {regular_text}，组合 {selected_text} 仅命中 "
+            f"{matched_text} 共{hit_count}个；特码 {special} 不参与"
+        ),
+        hit_count,
+        None,
+    )
+
+
+def match_three_in_two(
+    selection: str,
+    regular_numbers: list[str],
+    special_number: str,
+) -> tuple[bool, str | None, str]:
+    """Compatibility wrapper for callers that still consume the legacy tuple."""
+    is_winner, matched_number, reason, _hit_count, _payout_tier = match_three_in_two_v2(
+        selection,
+        regular_numbers,
+        special_number,
+    )
+    return is_winner, matched_number, reason
 
 
 def parse_number_fuxuan_selection(selection: str) -> tuple[int, tuple[str, ...]]:

@@ -61,7 +61,7 @@ from settlement.matchers import (
     match_sum_size,
     match_tail,
     match_three_in_three,
-    match_three_in_two,
+    match_three_in_two_v2,
     match_two_in_two,
     match_zodiac,
     match_zodiac_group,
@@ -93,7 +93,7 @@ MATCHERS: dict[str, Matcher] = {
     PING_TAIL: match_flat_tail_v2,
     LIANMA_TWO_TWO: match_two_in_two,
     LIANMA_THREE_THREE: match_three_in_three,
-    LIANMA_THREE_TWO: match_three_in_two,
+    LIANMA_THREE_TWO: match_three_in_two_v2,
     NUMBER_FUXUAN: match_number_fuxuan,
     NON_HIT_NUMBER: match_non_hit_number,
     SIX_SPECIAL_ZODIAC: match_six_special_zodiac,
@@ -166,6 +166,8 @@ class SettlementEngine:
             )
 
         matcher = MATCHERS[normalized.normalized_bet_type]
+        hit_count: int | None = None
+        payout_tier: str | None = None
         if normalized.normalized_bet_type in {SPECIAL_ZODIAC, SPECIAL_ZODIAC_GROUP, SIX_SPECIAL_ZODIAC}:
             is_winner, matched_number, reason = matcher(
                 normalized.selection,
@@ -186,6 +188,12 @@ class SettlementEngine:
                 draw_special_number,
                 year=self._zodiac_year,
             )
+        elif normalized.normalized_bet_type == LIANMA_THREE_TWO:
+            is_winner, matched_number, reason, hit_count, payout_tier = matcher(
+                normalized.selection,
+                list(draw_regular_numbers),
+                draw_special_number,
+            )
         elif normalized.normalized_bet_type in {
             LINKED_TAIL,
             PING_TAIL,
@@ -193,7 +201,6 @@ class SettlementEngine:
             REGULAR_NUMBER,
             LIANMA_TWO_TWO,
             LIANMA_THREE_THREE,
-            LIANMA_THREE_TWO,
             NUMBER_FUXUAN,
         }:
             is_winner, matched_number, reason = matcher(
@@ -269,6 +276,8 @@ class SettlementEngine:
                 if play_rule and play_rule.matcher_id
                 else getattr(matcher, "__name__", None)
             ),
+            hit_count=hit_count,
+            payout_tier=payout_tier,
             **rule_audit_fields,
             **common_draw_fields,
             **match_fields,
@@ -484,7 +493,7 @@ class SettlementEngine:
         normalized_type: str,
         note: object,
     ) -> dict[str, int]:
-        if normalized_type not in {LIANMA_TWO_TWO, LIANMA_THREE_THREE}:
+        if normalized_type not in {LIANMA_TWO_TWO, LIANMA_THREE_THREE, LIANMA_THREE_TWO}:
             return {}
         values: dict[str, int] = {}
         for segment in str(note or "").split(";"):

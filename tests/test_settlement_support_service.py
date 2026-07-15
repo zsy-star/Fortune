@@ -99,7 +99,6 @@ def test_order_item_summary_lists_unsupported_items() -> None:
     "bet_type",
     [
         "连肖复选",
-        "三中二",
         "几中几复选",
         "包半波",
         "连尾",
@@ -123,6 +122,7 @@ def test_v2_unsafe_plays_are_all_blocked_from_formal_settlement(bet_type: str) -
     [
         ("二中二", "(01-02)", "(01-02)-(03-04)"),
         ("三中三", "(01-02-03)", "(01-02-03)-(04-05-06)"),
+        ("三中二", "(01-02-03)", "(01-02-03)-(04-05-06)"),
     ],
 )
 def test_lianma_allows_only_one_explicit_group(

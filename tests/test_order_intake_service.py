@@ -657,13 +657,16 @@ def test_lianma_drag_intake_preserves_existing_cartesian_groups_as_independent_i
         (
             "三中二 01,02,03 各10",
             "三中二",
-            [("(01-02-03)", Decimal("10.00"), "连码组合数=1;连码组大小=3")],
+            [("(01-02-03)", Decimal("10.00"), "连码组合序号=1;连码组合总数=1;连码组大小=3")],
             Decimal("10.00"),
         ),
         (
             "三中二 (01-02-03)-(04-05-06) 各10",
             "三中二",
-            [("(01-02-03)-(04-05-06)", Decimal("20.00"), "连码组合数=2;连码组大小=3")],
+            [
+                ("(01-02-03)", Decimal("10.00"), "连码组合序号=1;连码组合总数=2;连码组大小=3"),
+                ("(04-05-06)", Decimal("10.00"), "连码组合序号=2;连码组合总数=2;连码组大小=3"),
+            ],
             Decimal("20.00"),
         ),
     ],
@@ -955,16 +958,19 @@ def test_saved_order_can_be_settlement_previewed(session_factory) -> None:
     assert preview.winning_items == 1
 
 
-def test_real_sample_fushi_three_in_two_intake_summary() -> None:
+def test_real_sample_fushi_three_in_two_intake_saves_each_combination() -> None:
     preview = _preview("10 11 24 38复式三中二一组20", region="澳门")
     assert preview.can_save
     assert preview.total_amount == Decimal("80")
-    assert len(preview.order_items) == 1
-    item = preview.order_items[0]
-    assert item.bet_type == "三中二"
-    assert item.selection == "(10-11-24)-(10-11-38)-(10-24-38)-(11-24-38)"
-    assert item.amount == Decimal("80")
-    assert item.note == "连码组合数=4;连码组大小=3"
+    assert [
+        (item.bet_type, item.selection, item.amount, item.note)
+        for item in preview.order_items
+    ] == [
+        ("三中二", "(10-11-24)", Decimal("20"), "连码组合序号=1;连码组合总数=4;连码组大小=3"),
+        ("三中二", "(10-11-38)", Decimal("20"), "连码组合序号=2;连码组合总数=4;连码组大小=3"),
+        ("三中二", "(10-24-38)", Decimal("20"), "连码组合序号=3;连码组合总数=4;连码组大小=3"),
+        ("三中二", "(11-24-38)", Decimal("20"), "连码组合序号=4;连码组合总数=4;连码组大小=3"),
+    ]
 
 
 def test_real_sample_pingte_six_tail_intake_is_supported_by_v2() -> None:

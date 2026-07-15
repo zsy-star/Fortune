@@ -1310,7 +1310,7 @@ def _parse_lianma_category(
         selection_text,
         group_size,
         fushi_mode=fushi_mode,
-        forbid_duplicate_groups=bet_type in {"二中二", "三中三"},
+        forbid_duplicate_groups=bet_type in {"二中二", "三中三", "三中二"},
     )
     if isinstance(groups, str):
         return ParseResult(region=region, success=False, error=groups)

@@ -47,7 +47,7 @@ _TAIL_PATTERN = re.compile(r"^尾[0-9]$")
 _HEAD_PATTERN = re.compile(r"^[0-4]头$")
 _UNSUPPORTED_SAVE_CATEGORIES = frozenset({"全包"})
 _LIANMA_CATEGORIES = frozenset({"二中二", "三中三", "三中二"})
-_MULTI_COMBINATION_LIANMA_CATEGORIES = frozenset({"二中二", "三中三"})
+_MULTI_COMBINATION_LIANMA_CATEGORIES = frozenset({"二中二", "三中三", "三中二"})
 _UNSUPPORTED_SETTLEMENT_GROUP_CATEGORIES = frozenset({"二中特", "特串"})
 
 

@@ -292,7 +292,8 @@ class BetTypeNormalizer:
             return self._normalize_lianma_groups(
                 selection,
                 group_size,
-                forbid_duplicate_groups=normalized_type in {LIANMA_TWO_TWO, LIANMA_THREE_THREE},
+                forbid_duplicate_groups=normalized_type
+                in {LIANMA_TWO_TWO, LIANMA_THREE_THREE, LIANMA_THREE_TWO},
             )
         if normalized_type == NUMBER_FUXUAN:
             return self._normalize_number_fuxuan_selection(selection, note=note)

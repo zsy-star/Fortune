@@ -273,5 +273,5 @@ def test_lianma_v2_metadata_and_pending_rules_stay_separate() -> None:
         ],
         ruleset_version=FORTUNE_RULESET_2026_V2,
     )
-    assert three_in_two.is_supported is False
+    assert three_in_two.is_supported is True
     assert number_fuxuan.is_supported is False
