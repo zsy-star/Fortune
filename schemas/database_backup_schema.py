@@ -24,3 +24,15 @@ class DatabaseRestoreResult:
     restored_at: datetime
     size_bytes: int
     message: str
+
+
+@dataclass(frozen=True, slots=True)
+class DatabaseValidationResult:
+    """Read-only validation evidence for one SQLite database file."""
+
+    sha256: str
+    size_bytes: int
+    integrity_check: str
+    revision: str
+    table_counts: dict[str, int]
+    json_value_count: int

@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from sqlalchemy import text
 
 from schemas.order_schema import OrderCreate, OrderItemCreate
 from services.database_backup_service import DatabaseBackupError, DatabaseBackupService
@@ -27,10 +28,23 @@ def create_order(order_service: OrderService, raw_text: str):
 
 
 def make_service(session_factory, tmp_path) -> DatabaseBackupService:
+    with session_factory.kw["bind"].begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS alembic_version "
+                "(version_num VARCHAR(32) NOT NULL PRIMARY KEY)"
+            )
+        )
+        connection.execute(text("DELETE FROM alembic_version"))
+        connection.execute(
+            text("INSERT INTO alembic_version (version_num) VALUES ('20260715_0010')")
+        )
     return DatabaseBackupService(
         database_path=db_path_from_factory(session_factory),
         backup_dir=tmp_path / "backups",
         log_service=LogService(session_factory),
+        connection_engine=session_factory.kw["bind"],
+        expected_revision="20260715_0010",
     )
 
 
@@ -39,11 +53,17 @@ def order_count(session_factory) -> int:
 
 
 def backup_log_count(session_factory) -> int:
-    return LogService(session_factory).count_logs(module="database", action="backup")
+    return sum(
+        log.action == "backup"
+        for log in LogService(session_factory).list_logs(module="database", limit=500)
+    )
 
 
 def restore_log_count(session_factory) -> int:
-    return LogService(session_factory).count_logs(module="database", action="restore")
+    return sum(
+        log.action == "restore"
+        for log in LogService(session_factory).list_logs(module="database", limit=500)
+    )
 
 
 def test_create_backup_missing_database_fails(tmp_path, session_factory) -> None:
@@ -146,8 +166,10 @@ def test_restore_success_writes_log(tmp_path, session_factory) -> None:
 
     assert restore_log_count(session_factory) == 1
     logs = LogService(session_factory).list_logs(module="database", action="restore")
-    assert str(result.restored_from) in logs[0].description
-    assert str(result.pre_restore_backup_path) in logs[0].description
+    assert result.restored_from.name in logs[0].description
+    assert result.pre_restore_backup_path.name in logs[0].description
+    assert str(result.restored_from.parent) not in logs[0].description
+    assert str(result.database_path) not in logs[0].description
 
 
 def test_restore_copy_failure_keeps_database_and_pre_restore_backup(tmp_path, session_factory) -> None:
@@ -158,23 +180,23 @@ def test_restore_copy_failure_keeps_database_and_pre_restore_backup(tmp_path, se
     create_order(order_service, "safe mutation")
     database_path = db_path_from_factory(session_factory)
     original_bytes = database_path.read_bytes()
-    real_copy2 = __import__("shutil").copy2
-    copied_pre_restore_paths: list[Path] = []
+    real_replace = __import__("os").replace
 
-    def fail_restore_copy(src, dst, *args, **kwargs):
+    def fail_restore_replace(src, dst, *args, **kwargs):
         dst_path = Path(dst)
-        if dst_path == database_path:
-            raise OSError("copy failed")
-        copied_pre_restore_paths.append(dst_path)
-        return real_copy2(src, dst, *args, **kwargs)
+        if dst_path.resolve() == database_path.resolve():
+            raise OSError("replace failed")
+        return real_replace(src, dst, *args, **kwargs)
 
-    with patch("services.database_backup_service.shutil.copy2", side_effect=fail_restore_copy):
-        with pytest.raises(DatabaseBackupError, match="恢复失败"):
+    with patch("services.database_backup_service.os.replace", side_effect=fail_restore_replace):
+        with pytest.raises(DatabaseBackupError, match="原子替换失败"):
             service.restore_backup(backup.backup_name, confirm=True)
 
     assert database_path.read_bytes() == original_bytes
-    assert copied_pre_restore_paths
-    assert copied_pre_restore_paths[0].exists()
+    assert any(
+        path.name.startswith("fortune_before_restore_")
+        for path in service.backup_dir.glob("*.db")
+    )
     assert order_count(session_factory) == 2
     assert restore_log_count(session_factory) == 0
 
