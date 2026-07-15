@@ -202,6 +202,33 @@ class TestInputParsing:
         r = window._parsed_results[0]
         assert r.region == "香港"
 
+    def test_domestic_wild_size_expansion_shows_summary_and_adds_one_row_per_number(self, window):
+        window._input_text.setPlainText("家肖的大数各100\n野肖的小数各50")
+        window._do_parse()
+
+        output = window._output_text.toPlainText()
+        assert "来源：家肖 ∩ 大数" in output
+        assert "来源：野肖 ∩ 小数" in output
+        assert "总注数：25" in output
+        assert "订单总额：1900" in output
+
+        window._on_add_result()
+
+        assert window._order_table.rowCount() == 25
+        assert [window._order_table.item(row, 1).text() for row in range(25)] == ["特码"] * 25
+        assert [window._order_table.item(row, 2).text() for row in range(25)] == [
+            *[f"{number:02d}" for number in (25, 30, 32, 33, 34, 36, 37, 42, 44, 45, 46, 48, 49)],
+            *[f"{number:02d}" for number in (2, 3, 4, 5, 7, 11, 14, 15, 16, 17, 19, 23)],
+        ]
+        assert [window._order_table.item(row, 5).text() for row in range(25)] == [
+            *(["100"] * 13),
+            *(["50"] * 12),
+        ]
+        assert [window._order_table.item(row, 6).text() for row in range(25)] == [
+            *(["100"] * 13),
+            *(["50"] * 12),
+        ]
+
     def test_hong_kong_blue_alias_has_canonical_success_preview(self, window):
         window._input_text.setPlainText("香港兰波各数280")
         window._do_parse()

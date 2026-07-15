@@ -57,6 +57,8 @@ _ZODIAC_ALIASES: tuple[tuple[str, ...], ...] = (
     ("未羊", "未", "羊"),
 )
 _ZODIAC_ALIAS_BY_NAME = {aliases[-1]: aliases for aliases in _ZODIAC_ALIASES}
+_DOMESTIC_ZODIACS: tuple[str, ...] = ("牛", "马", "羊", "鸡", "狗", "猪")
+_WILD_ZODIACS: tuple[str, ...] = ("鼠", "虎", "兔", "龙", "蛇", "猴")
 _ZODIAC_ENTRIES: tuple[tuple[tuple[str, ...], tuple[int, ...]], ...] = ()
 _active_zodiac_year = 0
 
@@ -393,6 +395,10 @@ class ParseResult:
     normalized_text: str = ""
     # “生肖各数”口径：按生肖下号码展开，而不是按连肖整组保存。
     zodiac_number_mode: bool = False
+    # 家肖/野肖与大数/小数交集的本次识别展示元数据；mapper 仍按普通特码号码保存。
+    number_expansion_group: str = ""
+    number_expansion_size: str = ""
+    number_expansion_zodiac_year: int | None = None
     # 仅用于本次多行解析和右侧预览；mapper 和持久化 DTO 不读取这两个字段。
     nickname: str = ""
     nickname_context_changed: bool = False
@@ -587,7 +593,11 @@ def _normalize_pingte_zodiac_colloquial(text: str) -> str:
 def _normalize_smart_text(text: str) -> str:
     """第一阶段智能录单归一化：只处理输入形态，不改变玩法/结算口径。"""
     t = text.strip().translate(_FULLWIDTH_DIGITS)
-    t = _normalize_chinese_amounts(t)
+    domestic_wild_size_phrase = bool(
+        ("家肖" in t or "野肖" in t) and ("大数" in t or "小数" in t)
+    )
+    if not domestic_wild_size_phrase:
+        t = _normalize_chinese_amounts(t)
 
     # 平特尾是现有“平尾”的口语别名；只匹配完整的尾数金额结构。
     numeric_amount = r"(\d+(?:\.\d+)?)(?:块钱|元|块|米|斤|蚊)?"
@@ -604,11 +614,12 @@ def _normalize_smart_text(text: str) -> str:
     t = _normalize_pingte_zodiac_colloquial(t)
 
     # 只归一金额尾部的“各包/每个包”，避免影响包半波、全包等玩法名。
-    t = re.sub(
-        r"(?:各|每个)\s*(?:买|包)?\s*(\d+(?:\.\d+)?)\s*(?=(?:块钱|元|块|米|斤|蚊)?$)",
-        r"各\1",
-        t,
-    )
+    if not domestic_wild_size_phrase:
+        t = re.sub(
+            r"(?:各|每个)\s*(?:买|包)?\s*(\d+(?:\.\d+)?)\s*(?=(?:块钱|元|块|米|斤|蚊)?$)",
+            r"各\1",
+            t,
+        )
 
     # 01号一10元 / 26号1 0块 这类口语里，“一/1”是“各”的近音。
     t = re.sub(r"一\s*(\d+(?:\.\d+)?)\s*(块钱|元|块|米|斤|蚊)", r"各\1", t)
@@ -1331,6 +1342,110 @@ def _parse_lianma_category(
 _AMOUNT_TOKEN_TEXT = rf"(?:\d+(?:\.\d+)?|[{_CN_AMOUNT_CHARS}]+)\s*(?:块钱|元|块|米|斤|蚊)?"
 
 
+def parse_domestic_wild_size_number_expansion(
+    text: str,
+    *,
+    region: str = "",
+    zodiac_year: int | None = None,
+) -> ParseResult | None:
+    """Expand 家肖/野肖 intersected with 大数/小数 into special numbers."""
+    source_body, explicit_region = _strip_region_marker(text)
+    effective_region = explicit_region or region
+    compact = re.sub(r"[\s,，、:：。；;]+", "", source_body.translate(_FULLWIDTH_DIGITS))
+    compact = compact.replace("的", "")
+
+    group_hits = [label for label in ("家肖", "野肖") if label in compact]
+    size_hits = [label for label in ("大数", "小数") if label in compact]
+    if not group_hits:
+        # 大数/小数本身是项目已有玩法；没有生肖分组时必须继续走原规则。
+        return None
+    if len(group_hits) != 1:
+        return ParseResult(
+            region=effective_region,
+            success=False,
+            error="家肖/野肖不能同时出现，请只选择一个生肖分组",
+        )
+    if not size_hits:
+        return ParseResult(
+            region=effective_region,
+            success=False,
+            error="家肖/野肖必须同时指定大数或小数",
+        )
+    if len(size_hits) != 1:
+        return ParseResult(
+            region=effective_region,
+            success=False,
+            error="大数/小数不能同时出现，请只选择一个数字范围",
+        )
+
+    group_label = group_hits[0]
+    size_label = size_hits[0]
+    prefix = f"{group_label}{size_label}"
+    if not compact.startswith(prefix):
+        return ParseResult(
+            region=effective_region,
+            success=False,
+            error=f"格式无效：请使用「{prefix}各金额」",
+        )
+    amount_suffix = compact[len(prefix):]
+    if not amount_suffix:
+        return ParseResult(
+            region=effective_region,
+            success=False,
+            error="缺少金额：必须使用「各金额」",
+        )
+    if not amount_suffix.startswith("各"):
+        return ParseResult(
+            region=effective_region,
+            success=False,
+            error="金额语法无效：本格式只支持「各金额」",
+        )
+    amount_token = amount_suffix[1:]
+    if not amount_token:
+        return ParseResult(region=effective_region, success=False, error="金额不能为空")
+    if amount_token.startswith("-"):
+        return ParseResult(region=effective_region, success=False, error="金额必须大于 0")
+    try:
+        amount = parse_amount_token(amount_token)
+    except ValueError as exc:
+        return ParseResult(region=effective_region, success=False, error=str(exc))
+
+    selected_year = zodiac_year or _active_zodiac_year
+    if not selected_year:
+        return ParseResult(region=effective_region, success=False, error="生肖年份无法确定")
+    try:
+        selected_year = validate_zodiac_year(selected_year)
+        zodiac_map = get_zodiac_number_map(selected_year)
+    except ValueError as exc:
+        return ParseResult(region=effective_region, success=False, error=f"生肖年份无法确定：{exc}")
+
+    selected_zodiacs = _DOMESTIC_ZODIACS if group_label == "家肖" else _WILD_ZODIACS
+    minimum, maximum = (25, 49) if size_label == "大数" else (1, 24)
+    numbers = tuple(
+        sorted(
+            int(number)
+            for zodiac in selected_zodiacs
+            for number in zodiac_map[zodiac]
+            if minimum <= int(number) <= maximum
+        )
+    )
+    if not numbers:
+        return ParseResult(region=effective_region, success=False, error="生肖分组与数字范围的交集为空")
+
+    return ParseResult(
+        region=effective_region,
+        success=True,
+        category="特码",
+        numbers=numbers,
+        amount=amount,
+        total=amount * len(numbers),
+        zodiac_number_mode=True,
+        number_expansion_group=group_label,
+        number_expansion_size=size_label,
+        number_expansion_zodiac_year=selected_year,
+    )
+
+
 def parse_explicit_combination(text: str, *, region: str = "") -> ParseResult | None:
     """Parse explicit fushi lianma syntax before generic category fallback."""
     normalized = _normalize_smart_text(text).strip()
@@ -1615,6 +1730,14 @@ def parse_order(
     # ── 提取受位置约束的地域标记，再归一安全的多字玩法别名 ──
     text, region = _strip_region_marker(text)
     text = normalize_supported_bet_aliases(text)
+
+    domestic_wild_size = parse_domestic_wild_size_number_expansion(
+        text,
+        region=region,
+        zodiac_year=_active_zodiac_year,
+    )
+    if domestic_wild_size is not None:
+        return domestic_wild_size
 
     explicit_combination = parse_explicit_combination(text, region=region)
     if explicit_combination is not None:
@@ -2082,7 +2205,11 @@ def _normalize_line(text: str) -> str | None:
         return None
 
     # 去掉开头的「人名，」/「人名、」（2-3个中文字 + 中文逗号）
-    t = re.sub(r'^[^\d\s澳门香港澳奥港各每打买连复试]{2,4}[，,]\s*', '', t)
+    t = re.sub(
+        r'^(?!(?:家肖|野肖)[，,])[^\d\s澳门香港澳奥港各每打买连复试]{2,4}[，,]\s*',
+        '',
+        t,
+    )
 
     # 地区口语：澳门码 / 香港码 → 澳门 / 香港
     t = re.sub(r'(澳门|香港)码', r'\1', t)
@@ -3085,6 +3212,13 @@ def parse_lines(
         zodiac_year=zodiac_year,
     )
     selected_year = _configure_zodiac_year(options.zodiac_year)
+    # 句号/分号通常会拆分独立订单；仅在这条明确的新语法中把它们视为可选分隔标点。
+    text = re.sub(
+        r"(家肖|野肖)\s*[。；;]+\s*(的?\s*(?:大数|小数))",
+        r"\1\2",
+        text,
+    )
+    text = re.sub(r"(大数|小数)\s*[。；;]+\s*(各)", r"\1\2", text)
     text, declared_total = _extract_declared_total(text)
     results: list[ParseResult] = []
     context = OrderParseContext(zodiac_year=selected_year)

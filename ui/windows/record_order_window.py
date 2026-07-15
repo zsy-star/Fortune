@@ -477,6 +477,20 @@ class RecordOrderWindow(QMainWindow):
                 blocks.append(
                     f"<span style='color:{color};'>{html.escape(total_validation)}</span>"
                 )
+        number_expansions = [
+            result
+            for result in results
+            if result.success and getattr(result, "number_expansion_group", "")
+        ]
+        if len(number_expansions) > 1:
+            total_stakes = sum(len(result.numbers) for result in number_expansions)
+            total_amount = sum(
+                (Decimal(str(result.total)) for result in number_expansions),
+                Decimal("0"),
+            )
+            blocks.append(
+                html.escape(f"总注数：{total_stakes}\n订单总额：{float(total_amount):g}")
+            )
         nickname_titles = extract_nickname_titles(raw)
         if not results and nickname_titles:
             for nickname in nickname_titles:
@@ -621,6 +635,11 @@ class RecordOrderWindow(QMainWindow):
                 elif r.category in {"连肖", "拖肖", "托肖", "有肖", "友肖", "胆肖"} and r.zodiac_groups:
                     table_entries = [
                         ("连肖", ",".join(name for name, _ in r.zodiac_groups), r.amount, r.total)
+                    ]
+                elif getattr(r, "number_expansion_group", ""):
+                    table_entries = [
+                        ("特码", f"{number:02d}", r.amount, r.amount)
+                        for number in r.numbers
                     ]
                 else:
                     table_entries = [

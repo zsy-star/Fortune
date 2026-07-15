@@ -261,7 +261,24 @@ def format_parse_result(result: Any, default_region: str | None = None) -> str:
     amount = format_display_amount(getattr(result, "amount", None))
     total = format_display_amount(getattr(result, "total", None))
     lianma_groups = tuple(getattr(result, "lianma_groups", ()) or ())
-    if lianma_groups:
+    expansion_group = str(getattr(result, "number_expansion_group", "") or "")
+    expansion_size = str(getattr(result, "number_expansion_size", "") or "")
+    expansion_year = getattr(result, "number_expansion_zodiac_year", None)
+    if expansion_group and expansion_size:
+        numbers = tuple(getattr(result, "numbers", ()) or ())
+        number_selection = "、".join(f"{int(number):02d}" for number in numbers)
+        line = "\n".join(
+            (
+                f"{region}: 类别：特码号码",
+                f"来源：{expansion_group} ∩ {expansion_size}",
+                f"展开号码：{number_selection}",
+                f"每号金额：{amount}",
+                f"注数：{len(numbers)}",
+                f"小计：{total}",
+                f"生肖年份：{expansion_year}",
+            )
+        )
+    elif lianma_groups:
         line = (
             f"{region}: {category}: {selection} "
             f"每组 {amount}，组合数 {len(lianma_groups)}，合计 {total}"
