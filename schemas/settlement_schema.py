@@ -31,6 +31,8 @@ class ItemSettlementResult:
     is_main_zodiac: bool | None = None
     selected_tails: tuple[str, ...] = ()
     matched_tails: tuple[str, ...] = ()
+    selected_tail: str | None = None
+    is_zero_tail: bool | None = None
     selected_numbers: tuple[str, ...] = ()
     hit_numbers: tuple[str, ...] = ()
     regular_numbers: tuple[str, ...] = ()

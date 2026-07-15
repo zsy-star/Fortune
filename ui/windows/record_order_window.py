@@ -600,7 +600,13 @@ class RecordOrderWindow(QMainWindow):
                     ]
                 elif r.category == "平尾":
                     table_entries = [
-                        ("平尾", ",".join(str(tail) for tail in r.pingwei_tails), r.amount, r.total)
+                        (
+                            "平特0尾" if tail == 0 else "平尾",
+                            str(tail),
+                            r.amount,
+                            r.amount,
+                        )
+                        for tail in r.pingwei_tails
                     ]
                 elif r.category in {"二中二", "三中三", "三中二"} and r.lianma_groups:
                     selection = "-".join(

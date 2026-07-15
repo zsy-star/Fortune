@@ -50,7 +50,7 @@ from settlement.matchers import (
     match_package_half_wave,
     match_parity,
     match_pingte_zodiac_v2,
-    match_ping_tail,
+    match_flat_tail_v2,
     match_regular_number,
     match_six_special_zodiac,
     match_size,
@@ -87,7 +87,7 @@ MATCHERS: dict[str, Matcher] = {
     PINGTE_ZODIAC: match_pingte_zodiac_v2,
     PINGTE_MAIN_ZODIAC: match_pingte_zodiac_v2,
     LINKED_TAIL: match_linked_tail,
-    PING_TAIL: match_ping_tail,
+    PING_TAIL: match_flat_tail_v2,
     LIANMA_TWO_TWO: match_two_in_two,
     LIANMA_THREE_THREE: match_three_in_three,
     LIANMA_THREE_TWO: match_three_in_two,
@@ -233,6 +233,12 @@ class SettlementEngine:
                 else None
             ),
             matched_zodiac=matched_zodiac,
+            selected_tail=(
+                normalized.selection if normalized.normalized_bet_type == PING_TAIL else None
+            ),
+            is_zero_tail=(
+                normalized.selection == "0" if normalized.normalized_bet_type == PING_TAIL else None
+            ),
             is_main_zodiac=(
                 is_main_zodiac(self._zodiac_year, normalized.selection)
                 if normalized.normalized_bet_type in {PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC}
@@ -344,10 +350,15 @@ class SettlementEngine:
             }
         if normalized_type == PING_TAIL:
             selected_tails = tuple(token for token in selection.split(",") if token)
-            regular_tails = {str(tail_number(number)) for number in regular_numbers}
+            selected_tail_set = set(selected_tails)
             return {
                 "selected_tails": selected_tails,
-                "matched_tails": tuple(tail for tail in selected_tails if tail in regular_tails),
+                "matched_tails": tuple(tail for tail in selected_tails if tail in draw_tails),
+                "matched_numbers": tuple(
+                    number
+                    for number in draw_numbers
+                    if str(tail_number(number)) in selected_tail_set
+                ),
             }
         if normalized_type in {LIANMA_TWO_TWO, LIANMA_THREE_THREE, LIANMA_THREE_TWO}:
             if normalized_type == LIANMA_TWO_TWO:

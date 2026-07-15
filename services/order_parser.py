@@ -1082,13 +1082,18 @@ def _parse_tail_digit_list(text: str) -> tuple[int, ...] | str:
         return "平尾尾数不能为空"
     tails: list[int] = []
     for token in tokens:
-        if not token.isdigit():
+        matched = re.fullmatch(r"尾?(\d+)尾?", token)
+        if matched is None:
             return f"平尾尾数格式无效：{text}"
-        tail = int(token)
+        raw_tail = matched.group(1)
+        tail = int(raw_tail)
         if tail < 0 or tail > 9:
-            return f"平尾尾数 {token} 超出范围 (0-9)"
+            return f"平尾尾数 {raw_tail} 超出范围 (0-9)"
         tails.append(tail)
-    return tuple(sorted(set(tails)))
+    duplicates = [tail for tail in dict.fromkeys(tails) if tails.count(tail) > 1]
+    if duplicates:
+        return f"平尾尾数重复：{','.join(str(tail) for tail in duplicates)}"
+    return tuple(tails)
 
 
 def _parse_pingwei_category(

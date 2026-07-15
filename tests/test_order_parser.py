@@ -1791,10 +1791,15 @@ class TestPingWeiParser:
         assert not r.success
         assert "无效" in r.error
 
-    def test_pingwei_deduplicates_and_sorts_tails(self) -> None:
+    def test_pingwei_rejects_duplicate_tails(self) -> None:
         r = parse_order("平尾 4,1,4,3 各100")
+        assert not r.success
+        assert "重复" in r.error
+
+    def test_pingwei_accepts_tail_suffixes_and_zero_tail(self) -> None:
+        r = parse_order("平尾 0尾、4尾、6尾 各100")
         assert r.success
-        assert r.pingwei_tails == (1, 3, 4)
+        assert r.pingwei_tails == (0, 4, 6)
         assert r.total == Decimal("300")
 
     def test_lianwei_is_not_parsed_as_pingwei(self) -> None:

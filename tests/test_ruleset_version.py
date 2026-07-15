@@ -115,6 +115,8 @@ def test_play_rule_metadata_describes_safe_and_blocked_v2_plays() -> None:
     special = get_play_rule("特码")
     pingte = get_play_rule("平特一肖")
     pingte_main = get_play_rule("平特一肖带主肖")
+    ping_tail = get_play_rule("平尾")
+    zero_tail = get_play_rule("平特0尾")
     non_hit_alias = get_play_rule("十不中")
 
     assert special is not None
@@ -134,6 +136,17 @@ def test_play_rule_metadata_describes_safe_and_blocked_v2_plays() -> None:
     assert pingte_main.availability is SettlementAvailability.SUPPORTED
     assert pingte_main.matcher_id == "pingte_zodiac_v2"
     assert pingte_main.matcher_version == "2.0"
+    assert ping_tail is not None
+    assert ping_tail.availability is SettlementAvailability.SUPPORTED
+    assert ping_tail.draw_scope is DrawScope.ALL_SEVEN
+    assert ping_tail.selection_unit is SelectionUnit.TAIL
+    assert ping_tail.duplicate_policy is DuplicatePolicy.FORBID_WITHIN_GROUP
+    assert ping_tail.matcher_id == "flat_tail_v2"
+    assert ping_tail.matcher_version == "2.0"
+    assert zero_tail is not None
+    assert zero_tail.availability is SettlementAvailability.SUPPORTED
+    assert zero_tail.normalized_type == "ping_tail"
+    assert zero_tail.odds_keys == ("平特0尾", "平尾0尾", "0尾")
     assert non_hit_alias is get_play_rule("N不中")
     assert non_hit_alias is not None
     assert non_hit_alias.availability is SettlementAvailability.SUPPORTED
@@ -145,7 +158,6 @@ def test_play_rule_metadata_describes_safe_and_blocked_v2_plays() -> None:
 @pytest.mark.parametrize(
     "bet_type",
     [
-        "平尾",
         "连肖",
         "连肖复选",
         "三中二",
@@ -157,7 +169,6 @@ def test_play_rule_metadata_describes_safe_and_blocked_v2_plays() -> None:
         "特串",
         "四肖",
         "正码特",
-        "平特0尾",
     ],
 )
 def test_unsafe_v2_plays_remain_saveable_for_accounting(session_factory, bet_type: str) -> None:

@@ -153,24 +153,27 @@ def test_non_hit_unparseable_selection_is_unsupported(session_factory) -> None:
     assert preview.results[0].unsupported_reason
 
 
-def test_pingwei_hits_when_selected_tail_is_in_regular_numbers(session_factory) -> None:
+def test_pingwei_tail_items_hit_independently_across_all_seven_numbers(session_factory) -> None:
     order = create_order(
         OrderService(session_factory),
-        items=[OrderItemCreate(bet_type="平尾", selection="1,3,4,6", amount="4000")],
+        items=[
+            OrderItemCreate(bet_type="平尾", selection="1", amount="1000"),
+            OrderItemCreate(bet_type="平尾", selection="3", amount="1000"),
+            OrderItemCreate(bet_type="平尾", selection="4", amount="1000"),
+            OrderItemCreate(bet_type="平尾", selection="6", amount="1000"),
+        ],
     )
     draw = create_draw(DrawService(session_factory))
 
     preview = SettlementService(session_factory).preview_order(order.id, draw.id)
-    item = preview.results[0]
-
     assert preview.unsupported_items == 0
-    assert item.is_winner is True
-    assert item.normalized_bet_type == "ping_tail"
-    assert item.selected_tails == ("1", "3", "4", "6")
-    assert item.matched_tails == ("1", "3", "4", "6")
+    assert preview.winning_items == 4
+    assert all(item.is_winner is True for item in preview.results)
+    assert [item.normalized_bet_type for item in preview.results] == ["ping_tail"] * 4
+    assert [item.selected_tail for item in preview.results] == ["1", "3", "4", "6"]
 
 
-def test_pingwei_misses_when_tail_only_appears_as_special_number(session_factory) -> None:
+def test_pingwei_hits_when_tail_only_appears_as_special_number(session_factory) -> None:
     order = create_order(
         OrderService(session_factory),
         items=[OrderItemCreate(bet_type="平尾", selection="7", amount="100")],
@@ -180,10 +183,10 @@ def test_pingwei_misses_when_tail_only_appears_as_special_number(session_factory
     preview = SettlementService(session_factory).preview_order(order.id, draw.id)
     item = preview.results[0]
 
-    assert preview.losing_items == 1
-    assert item.is_winner is False
-    assert item.matched_tails == ()
-    assert "特码 17 不参与" in item.reason
+    assert preview.winning_items == 1
+    assert item.is_winner is True
+    assert item.matched_tails == ("7",)
+    assert item.matched_numbers == ("17",)
 
 
 def test_two_in_two_hits_when_group_is_fully_in_regular_numbers(session_factory) -> None:
@@ -366,7 +369,8 @@ def test_commit_blocks_v2_multi_group_and_pending_complex_number_rules(session_f
         order_service,
         items=[
             OrderItemCreate(bet_type="二中二", selection="(01-02)-(08-09)", amount="20"),
-            OrderItemCreate(bet_type="平尾", selection="1,9", amount="200"),
+            OrderItemCreate(bet_type="平尾", selection="1", amount="100"),
+            OrderItemCreate(bet_type="平尾", selection="9", amount="100"),
             OrderItemCreate(
                 bet_type="几中几复选",
                 selection="01,02,03,08",

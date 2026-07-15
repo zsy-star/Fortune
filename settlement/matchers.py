@@ -208,28 +208,35 @@ def matched_lianma_groups(
     return tuple(matched_groups)
 
 
-def match_ping_tail(
+def match_flat_tail_v2(
     selection: str,
     regular_numbers: list[str],
     special_number: str,
 ) -> tuple[bool, str | None, str]:
     normalized_regular = [normalize_number(number) for number in regular_numbers]
-    regular_tails = {str(tail_number(number)) for number in normalized_regular}
-    selected_tails = [token for token in selection.split(",") if token]
-    matched_tails = [tail for tail in selected_tails if tail in regular_tails]
-    regular_text = ",".join(normalized_regular)
-    selected_text = ",".join(f"{tail}尾" for tail in selected_tails)
     special = normalize_number(special_number)
+    draw_numbers = [*normalized_regular, special]
+    draw_tails = {str(tail_number(number)) for number in draw_numbers}
+    selected_tails = [token for token in selection.split(",") if token]
+    matched_tails = [tail for tail in selected_tails if tail in draw_tails]
+    matched_numbers = [
+        number for number in draw_numbers if str(tail_number(number)) in set(matched_tails)
+    ]
+    selected_text = ",".join(f"{tail}尾" for tail in selected_tails)
+    draw_text = ",".join(draw_numbers)
     if matched_tails:
         return (
             True,
-            ",".join(matched_tails),
-            f"平尾只使用 6 个正码 {regular_text}，投注{selected_text} 命中 {','.join(matched_tails)}尾",
+            ",".join(matched_numbers),
+            (
+                f"平尾检查全部7个开奖号 {draw_text}，投注{selected_text} 命中 "
+                f"{','.join(matched_tails)}尾；同尾多号只计一注"
+            ),
         )
     return (
         False,
         None,
-        f"平尾只使用 6 个正码 {regular_text}，特码 {special} 不参与，投注{selected_text} 未命中",
+        f"平尾检查全部7个开奖号 {draw_text}，投注{selected_text} 未命中",
     )
 
 

@@ -116,7 +116,7 @@ BET_TYPE_ALIASES = {
     SIX_SPECIAL_ZODIAC: {"六肖中特"},
     REGULAR_NUMBER: {"平码"},
     PACKAGE_HALF_WAVE: {"包半波"},
-    PING_TAIL: {"平尾"},
+    PING_TAIL: {"平尾", "平特0尾"},
     LIANMA_TWO_TWO: {"二中二"},
     LIANMA_THREE_THREE: {"三中三"},
     LIANMA_THREE_TWO: {"三中二"},
@@ -284,7 +284,7 @@ class BetTypeNormalizer:
         if normalized_type == PACKAGE_HALF_WAVE:
             return self._normalize_package_half_wave_selection(selection)
         if normalized_type == PING_TAIL:
-            return self._normalize_tail_group_selection(selection)
+            return self._normalize_ping_tail_selection(selection, original_bet_type)
         if normalized_type in {LIANMA_TWO_TWO, LIANMA_THREE_THREE, LIANMA_THREE_TWO}:
             group_size = 2 if normalized_type == LIANMA_TWO_TWO else 3
             return self._normalize_lianma_groups(selection, group_size)
@@ -454,6 +454,25 @@ class BetTypeNormalizer:
         if not unique_tails:
             raise InvalidSelectionError("连尾投注内容不能为空")
         return ",".join(unique_tails)
+
+    def _normalize_ping_tail_selection(self, selection: str, original_bet_type: str) -> str:
+        tokens = self._split_tail_tokens(selection)
+        tails: list[str] = []
+        for token in tokens:
+            tail = token.replace("尾", "")
+            if not re.fullmatch(r"[0-9]", tail):
+                raise InvalidSelectionError(f"无效平尾尾数：{selection}")
+            tails.append(tail)
+        if not tails:
+            raise InvalidSelectionError("平尾投注内容不能为空")
+        duplicates = [tail for tail in dict.fromkeys(tails) if tails.count(tail) > 1]
+        if duplicates:
+            raise InvalidSelectionError(f"平尾尾数重复：{','.join(duplicates)}")
+        if len(tails) != 1:
+            raise InvalidSelectionError("平尾每条明细必须恰好一个尾数")
+        if original_bet_type == "平特0尾" and tails[0] != "0":
+            raise InvalidSelectionError("平特0尾的投注内容必须为0")
+        return tails[0]
 
     def _split_tail_tokens(self, selection: str) -> list[str]:
         text = selection.strip()

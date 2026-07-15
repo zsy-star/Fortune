@@ -91,7 +91,6 @@ def test_order_item_summary_lists_unsupported_items() -> None:
 @pytest.mark.parametrize(
     "bet_type",
     [
-        "平尾",
         "连肖",
         "连肖复选",
         "三中二",
@@ -103,7 +102,6 @@ def test_order_item_summary_lists_unsupported_items() -> None:
         "特串",
         "四肖",
         "正码特",
-        "平特0尾",
     ],
 )
 def test_v2_unsafe_plays_are_all_blocked_from_formal_settlement(bet_type: str) -> None:

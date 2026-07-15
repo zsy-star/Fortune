@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from domain.bet_types import (
     BET_TYPE_PINGTE_MAIN_ZODIAC,
     BET_TYPE_PINGTE_ZODIAC,
+    BET_TYPE_PINGTE_ZERO_TAIL,
     BET_TYPE_SPECIAL_ZODIAC,
     REGION_MACAU,
     normalize_bet_type,
@@ -540,10 +541,44 @@ def convert_parse_result(
         return previews, order_items, warnings, errors
 
     if category == "平尾":
-        warning = None
         tails = result.pingwei_tails or result.numbers
-        selection = ",".join(str(tail) for tail in tails)
-        note = f"平尾尾数个数={len(tails)}" if tails else None
+        duplicate_tails = sorted({tail for tail in tails if tails.count(tail) > 1})
+        if duplicate_tails:
+            message = f"平尾尾数重复：{'、'.join(str(tail) for tail in duplicate_tails)}"
+            previews.append(
+                IntakeItemPreview(
+                    source_line=source_line,
+                    original_bet_type=category,
+                    normalized_bet_type=None,
+                    original_selection=",".join(str(tail) for tail in tails),
+                    normalized_selection=None,
+                    amount=expected_total,
+                    is_valid=False,
+                    error=message,
+                )
+            )
+            errors.append(message)
+            return previews, order_items, warnings, errors
+        computed_total = per_amount * len(tails)
+        if computed_total != expected_total:
+            message = (
+                f"金额不一致：解析器 total={expected_total}，"
+                f"按每尾 {per_amount} × {len(tails)} 计算为 {computed_total}"
+            )
+            previews.append(
+                IntakeItemPreview(
+                    source_line=source_line,
+                    original_bet_type=category,
+                    normalized_bet_type=None,
+                    original_selection=",".join(str(tail) for tail in tails),
+                    normalized_selection=None,
+                    amount=expected_total,
+                    is_valid=False,
+                    error=message,
+                )
+            )
+            errors.append(message)
+            return previews, order_items, warnings, errors
         try:
             normalize_bet_type("平尾")
         except InvalidBetTypeError as exc:
@@ -552,40 +587,41 @@ def convert_parse_result(
                 _build_item_preview(
                     source_line=source_line,
                     original_bet_type=category,
-                    original_selection=selection,
+                    original_selection=",".join(str(tail) for tail in tails),
                     amount=expected_total,
                     order_bet_type=None,
                     order_selection=None,
                     normalizer=normalizer,
-                    warning=warning,
                     error=message,
                 )
             )
             errors.append(message)
             return previews, order_items, warnings, errors
 
-        preview = _build_item_preview(
-            source_line=source_line,
-            original_bet_type=category,
-            original_selection=selection,
-            amount=expected_total,
-            order_bet_type="平尾",
-            order_selection=selection,
-            normalizer=normalizer,
-            warning=warning,
-        )
-        previews.append(preview)
-        if preview.is_valid:
-            order_items.append(
-                OrderItemCreate(
-                    bet_type="平尾",
-                    selection=selection,
-                    amount=expected_total,
-                    note=note,
-                )
+        for tail in tails:
+            selection = str(tail)
+            order_bet_type = BET_TYPE_PINGTE_ZERO_TAIL if tail == 0 else "平尾"
+            preview = _build_item_preview(
+                source_line=source_line,
+                original_bet_type=category,
+                original_selection=selection,
+                amount=per_amount,
+                order_bet_type=order_bet_type,
+                order_selection=selection,
+                normalizer=normalizer,
             )
-        else:
-            errors.append(preview.error or "平尾映射失败")
+            previews.append(preview)
+            if preview.is_valid:
+                order_items.append(
+                    OrderItemCreate(
+                        bet_type=order_bet_type,
+                        selection=selection,
+                        amount=per_amount,
+                        note=f"平尾尾数={selection}",
+                    )
+                )
+            else:
+                errors.append(preview.error or f"平尾 {selection} 映射失败")
         return previews, order_items, warnings, errors
 
     if category in _LIANMA_CATEGORIES:

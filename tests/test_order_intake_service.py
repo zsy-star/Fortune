@@ -696,21 +696,18 @@ def test_lianma_intake_save_and_read_preserves_note(session_factory) -> None:
     assert detail.items[0].note == "连码组合数=2;连码组大小=2"
 
 
-def test_pingwei_intake_saves_one_summary_item() -> None:
+def test_pingwei_intake_saves_independent_tail_items() -> None:
     preview = _preview("平尾 1,3,4,6 各1000", region="澳门")
     assert preview.can_save
     assert preview.total_amount == Decimal("4000.00")
-    assert len(preview.order_items) == 1
-    item = preview.order_items[0]
-    assert item.bet_type == "平尾"
-    assert item.selection == "1,3,4,6"
-    assert item.amount == Decimal("4000.00")
-    assert item.note == "平尾尾数个数=4"
-    assert any("平尾" in warning and "暂不支持正式结算" in warning for warning in preview.warnings)
-    row = _first_valid_item(preview)
-    assert row.original_bet_type == "平尾"
-    assert row.order_selection == "1,3,4,6"
-    assert row.normalized_bet_type == "ping_tail"
+    assert [(item.bet_type, item.selection, item.amount) for item in preview.order_items] == [
+        ("平尾", "1", Decimal("1000.00")),
+        ("平尾", "3", Decimal("1000.00")),
+        ("平尾", "4", Decimal("1000.00")),
+        ("平尾", "6", Decimal("1000.00")),
+    ]
+    assert all(row.normalized_bet_type == "ping_tail" for row in preview.items)
+    assert all(row.settlement_support_status == "supported" for row in preview.items)
 
 
 @pytest.mark.parametrize(
@@ -725,20 +722,21 @@ def test_pingwei_intake_supported_formats(text: str) -> None:
     preview = _preview(text, region="澳门")
     assert preview.can_save
     assert preview.total_amount == Decimal("4000.00")
-    assert len(preview.order_items) == 1
-    assert preview.order_items[0].bet_type == "平尾"
-    assert preview.order_items[0].selection == "1,3,4,6"
+    assert [(item.bet_type, item.selection, item.amount) for item in preview.order_items] == [
+        ("平尾", "1", Decimal("1000.00")),
+        ("平尾", "3", Decimal("1000.00")),
+        ("平尾", "4", Decimal("1000.00")),
+        ("平尾", "6", Decimal("1000.00")),
+    ]
 
 
-def test_pingwei_intake_deduplicates_tails() -> None:
+def test_pingwei_intake_rejects_duplicate_tails() -> None:
     preview = _preview("平尾 4,1,4,3 各100", region="澳门")
-    assert preview.can_save
-    assert preview.total_amount == Decimal("300.00")
-    assert preview.order_items[0].selection == "1,3,4"
-    assert preview.order_items[0].note == "平尾尾数个数=3"
+    assert not preview.can_save
+    assert any("重复" in error for error in preview.errors)
 
 
-def test_pingwei_intake_save_and_read_preserves_summary_item(session_factory) -> None:
+def test_pingwei_intake_save_and_read_preserves_independent_tail_items(session_factory) -> None:
     service = OrderIntakeService(session_factory)
     save_result = service.parse_and_save(
         "平尾 1,3,4,6 各1000",
@@ -750,15 +748,16 @@ def test_pingwei_intake_save_and_read_preserves_summary_item(session_factory) ->
     assert save_result.success
     assert save_result.order is not None
     assert save_result.order.total_amount == Decimal("4000.00")
-    assert save_result.order.item_count == 1
+    assert save_result.order.item_count == 4
 
     detail = service._order_service.get_order(save_result.order.id)
     assert detail is not None
-    assert len(detail.items) == 1
-    assert detail.items[0].bet_type == "平尾"
-    assert detail.items[0].selection == "1,3,4,6"
-    assert detail.items[0].amount == Decimal("4000.00")
-    assert detail.items[0].note == "平尾尾数个数=4"
+    assert [(item.bet_type, item.selection, item.amount) for item in detail.items] == [
+        ("平尾", "1", Decimal("1000.00")),
+        ("平尾", "3", Decimal("1000.00")),
+        ("平尾", "4", Decimal("1000.00")),
+        ("平尾", "6", Decimal("1000.00")),
+    ]
 
 
 def test_complex_play_warning_when_saveable() -> None:
@@ -960,14 +959,14 @@ def test_real_sample_fushi_three_in_two_intake_summary() -> None:
     assert item.note == "连码组合数=4;连码组大小=3"
 
 
-def test_real_sample_pingte_six_tail_intake_is_blocked_pending_v2_rule_fix() -> None:
+def test_real_sample_pingte_six_tail_intake_is_supported_by_v2() -> None:
     preview = _preview("平特6尾1000", region="澳门")
     assert preview.can_save
     assert preview.total_amount == Decimal("1000")
     assert len(preview.order_items) == 1
     assert preview.order_items[0].bet_type == "平尾"
     assert preview.order_items[0].selection == "6"
-    assert _first_valid_item(preview).settlement_support_status == "unsupported"
+    assert _first_valid_item(preview).settlement_support_status == "supported"
 
 
 def test_real_sample_partial_success_preview_keeps_error_and_four_zodiacs() -> None:

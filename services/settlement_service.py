@@ -63,6 +63,7 @@ from services.settlement_support_service import SettlementSupportResult, Settlem
 ORDER_STATUS_SETTLED = "settled"
 CENT = Decimal("0.01")
 PINGTE_ZODIAC_TYPES = frozenset({PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC})
+REQUIRED_ODDS_TYPES = PINGTE_ZODIAC_TYPES | frozenset({PING_TAIL})
 
 ODDS_CANDIDATES: dict[str, tuple[str, ...]] = {
     SPECIAL_NUMBER: ("特码号码", "特码", "号码", "特号", "单号投注", "纯数字"),
@@ -79,7 +80,7 @@ ODDS_CANDIDATES: dict[str, tuple[str, ...]] = {
     PINGTE_ZODIAC: ("平特一肖", "平肖", "生肖"),
     PINGTE_MAIN_ZODIAC: ("平特一肖带主肖", "平特一肖主肖", "平肖主肖"),
     LINKED_TAIL: ("连尾", "尾数"),
-    PING_TAIL: ("平尾", "尾数"),
+    PING_TAIL: ("平尾",),
     LIANMA_TWO_TWO: ("二中二",),
     LIANMA_THREE_THREE: ("三中三",),
     LIANMA_THREE_TWO: ("三中二",),
@@ -301,9 +302,9 @@ class SettlementService:
             raise SettlementDataError(
                 "存在暂不支持玩法，暂不能正式结算：" + "; ".join(unsupported)
             )
-        missing_pingte_odds = [item for item in preview.results if item.missing_odds]
-        if missing_pingte_odds:
-            raise SettlementDataError(self._missing_pingte_odds_error(order, missing_pingte_odds))
+        missing_required_odds = [item for item in preview.results if item.missing_odds]
+        if missing_required_odds:
+            raise SettlementDataError(self._missing_required_odds_error(order, missing_required_odds))
 
         status_before = order.status
         settled_at = datetime.now()
@@ -438,8 +439,8 @@ class SettlementService:
                 odds_source="未配置",
                 payout_note="不支持玩法，不计算中奖金额",
             )
-        if item.normalized_bet_type in PINGTE_ZODIAC_TYPES:
-            item = self._mark_pingte_odds_readiness(
+        if item.normalized_bet_type in REQUIRED_ODDS_TYPES:
+            item = self._mark_required_odds_readiness(
                 item,
                 plan_items,
                 plan_name,
@@ -483,7 +484,7 @@ class SettlementService:
             payout_note=f"中奖金额 = 投注金额 {_decimal_money(item.amount)} x 赔率 {_decimal_odds(odds)}",
         )
 
-    def _mark_pingte_odds_readiness(
+    def _mark_required_odds_readiness(
         self,
         item: ItemSettlementResult,
         plan_items: list[Any],
@@ -505,7 +506,7 @@ class SettlementService:
             return replace(item, odds_key_candidates=candidates)
 
         attempted_keys = "、".join(candidates) or "无"
-        odds_label = "主肖专用赔率" if item.normalized_bet_type == PINGTE_MAIN_ZODIAC else "平特一肖赔率"
+        odds_label = self._required_odds_label(item)
         if invalid_odds_key is not None:
             blocking_reason = (
                 f"{odds_label}键「{invalid_odds_key}」赔率值无效"
@@ -534,20 +535,40 @@ class SettlementService:
         )
 
     @staticmethod
-    def _missing_pingte_odds_error(order: Order, items: list[ItemSettlementResult]) -> str:
+    def _missing_required_odds_error(order: Order, items: list[ItemSettlementResult]) -> str:
         details = "; ".join(
             (
                 f"{item.bet_type}/{item.selection}"
-                f"（{'主肖' if item.is_main_zodiac else '普通生肖'}；"
+                f"（{SettlementService._required_item_kind(item)}；"
                 f"已尝试赔率键：{'、'.join(item.odds_key_candidates) or '无'}；"
                 f"{item.blocking_reason or '缺少适用赔率'}）"
             )
             for item in items
         )
         return (
-            f"订单 {order.order_no} 存在赔率配置不完整的平特一肖明细，不能正式结算：{details}。"
+            f"订单 {order.order_no} 存在赔率配置不完整的受管控明细，不能正式结算：{details}。"
             "请到设置中心补齐赔率后重新预览并结算"
         )
+
+    @staticmethod
+    def _required_item_kind(item: ItemSettlementResult) -> str:
+        if item.normalized_bet_type == PINGTE_MAIN_ZODIAC:
+            return "主肖"
+        if item.normalized_bet_type == PINGTE_ZODIAC:
+            return "普通生肖"
+        if item.normalized_bet_type == PING_TAIL:
+            return "0尾" if item.selection == "0" else "普通平尾"
+        return "受管控玩法"
+
+    @staticmethod
+    def _required_odds_label(item: ItemSettlementResult) -> str:
+        if item.normalized_bet_type == PINGTE_MAIN_ZODIAC:
+            return "主肖专用赔率"
+        if item.normalized_bet_type == PINGTE_ZODIAC:
+            return "平特一肖赔率"
+        if item.normalized_bet_type == PING_TAIL:
+            return "0尾专用赔率" if item.selection == "0" else "平尾赔率"
+        return "赔率"
 
     def _engine_for_order(self, order: Any) -> tuple[SettlementEngine, str | None]:
         raw_ruleset = getattr(order, "ruleset_version", FORTUNE_RULESET_2026_V2)
@@ -614,6 +635,12 @@ class SettlementService:
     def _find_odds_item(self, item: ItemSettlementResult, plan_items: list[Any]):
         candidates = self._odds_candidates_for_item(item)
         item_by_name = {str(config.bet_type).strip(): config for config in plan_items}
+        if item.normalized_bet_type == PING_TAIL and item.selection == "0":
+            for candidate in candidates:
+                config = item_by_name.get(candidate)
+                if config is not None:
+                    return config
+            return None
         if item.normalized_bet_type in {
             NON_HIT_NUMBER,
             SPECIAL_ZODIAC_GROUP,
@@ -635,7 +662,7 @@ class SettlementService:
 
     def _find_rebate_item(self, item: ItemSettlementResult, plan_items: list[Any]):
         item_by_name = {str(config.bet_type).strip(): config for config in plan_items}
-        if item.normalized_bet_type in {PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC}:
+        if item.normalized_bet_type in {PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC, PING_TAIL}:
             for candidate in self._odds_candidates_for_item(item):
                 config = item_by_name.get(candidate)
                 if config is not None:
@@ -674,6 +701,8 @@ class SettlementService:
             count = len(item.selected_numbers or ())
             if count:
                 return non_hit_odds_bet_type_candidates(count)
+        if normalized_type == PING_TAIL and item.selection == "0":
+            return ("平特0尾", "平尾0尾", "0尾")
         return ODDS_CANDIDATES.get(normalized_type or "", ())
 
     def _validate_limit_offset(self, limit: int, offset: int) -> tuple[int, int]:
@@ -771,6 +800,42 @@ class SettlementService:
                     sum((Decimal(item["rebate_amount"]) for item in item_results), Decimal("0.00"))
                 ),
             }
+        ping_tail_items = [
+            item for item in item_snapshots if item["normalized_type"] == PING_TAIL
+        ]
+        if ping_tail_items:
+            item_results = [item["item_results"][0] for item in ping_tail_items]
+            hit_items = [item for item in item_results if item["is_winner"] is True]
+            hit_stake_amount = sum(
+                (Decimal(item["stake_amount"]) for item in hit_items),
+                Decimal("0.00"),
+            )
+            total_winning_amount = sum(
+                (Decimal(item["winning_amount"]) for item in item_results),
+                Decimal("0.00"),
+            )
+            total_rebate_amount = sum(
+                (Decimal(item["rebate_amount"]) for item in item_results),
+                Decimal("0.00"),
+            )
+            total_stake_amount = sum(
+                (Decimal(item["stake_amount"]) for item in item_results),
+                Decimal("0.00"),
+            )
+            snapshot["ping_tail"] = {
+                "selected_tails": [item["selected_tail"] for item in item_results],
+                "drawn_numbers": list(ping_tail_items[0]["drawn_numbers"]),
+                "drawn_tails": list(ping_tail_items[0]["drawn_tails"]),
+                "item_results": item_results,
+                "hit_tail_count": len(hit_items),
+                "missed_tail_count": len(item_results) - len(hit_items),
+                "hit_stake_amount": _decimal_money(hit_stake_amount),
+                "total_winning_amount": _decimal_money(total_winning_amount),
+                "total_rebate_amount": _decimal_money(total_rebate_amount),
+                "statistical_settlement_amount": _decimal_money(
+                    total_winning_amount + total_rebate_amount - total_stake_amount
+                ),
+            }
         return snapshot
 
     def _snapshot_item(self, item: ItemSettlementResult) -> dict[str, Any]:
@@ -804,6 +869,8 @@ class SettlementService:
             "matched_zodiac": item.matched_zodiac,
             "selected_tails": list(item.selected_tails),
             "matched_tails": list(item.matched_tails),
+            "selected_tail": item.selected_tail,
+            "is_zero_tail": item.is_zero_tail,
             "selected_numbers": list(item.selected_numbers),
             "hit_numbers": list(item.hit_numbers),
             "matched_numbers": list(item.matched_numbers),
@@ -870,6 +937,36 @@ class SettlementService:
                     "is_main_zodiac": item.is_main_zodiac,
                     "item_results": [item_result],
                     "hit_selection_count": 1 if item.is_winner is True else 0,
+                    "hit_stake_amount": _decimal_money(
+                        item.amount if item.is_winner is True else Decimal("0.00")
+                    ),
+                }
+            )
+        if item.normalized_bet_type == PING_TAIL:
+            item_result = {
+                "selected_tail": item.selected_tail,
+                "matched_numbers": list(item.matched_numbers),
+                "is_winner": item.is_winner,
+                "stake_amount": _decimal_money(item.amount),
+                "odds": _decimal_odds(item.odds) if item.odds is not None else None,
+                "winning_amount": _decimal_money(item.payout_amount),
+                "is_zero_tail": item.is_zero_tail,
+                "odds_key_candidates": list(item.odds_key_candidates),
+                "odds_key_used": item.odds_key_used,
+                "rebate_key_used": item.rebate_key_used,
+                "rebate_amount": _decimal_money(item.rebate_amount),
+                "missing_odds": item.missing_odds,
+                "settlement_ready": item.settlement_ready,
+                "reason": item.reason,
+            }
+            snapshot.update(
+                {
+                    "drawn_numbers": list(item.draw_numbers),
+                    "drawn_tails": list(item.draw_tails),
+                    "selected_tail": item.selected_tail,
+                    "is_zero_tail": item.is_zero_tail,
+                    "item_results": [item_result],
+                    "hit_tail_count": 1 if item.is_winner is True else 0,
                     "hit_stake_amount": _decimal_money(
                         item.amount if item.is_winner is True else Decimal("0.00")
                     ),
