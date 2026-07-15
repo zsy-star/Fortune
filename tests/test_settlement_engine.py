@@ -12,6 +12,7 @@ from schemas.order_schema import OrderCreate, OrderItemCreate
 from services.draw_service import DrawService
 from services.order_intake_service import OrderIntakeService
 from services.order_service import OrderService
+from services.settings_service import SettingsService
 from services.settlement_service import SettlementService
 from settlement.bet_normalizer import BetTypeNormalizer
 from settlement.exceptions import InvalidDrawError, InvalidSelectionError, SettlementDataError, UnsupportedBetTypeError
@@ -327,6 +328,9 @@ def test_settlement_service_uses_order_zodiac_year(session_factory) -> None:
 
 
 def test_settlement_service_falls_back_for_legacy_order_without_zodiac_year(session_factory) -> None:
+    settings = SettingsService(session_factory)
+    plan = settings.ensure_default_plan()
+    settings.add_item(plan.id, "特码生肖", "2", "0")
     order_service = OrderService(session_factory)
     draw_service = DrawService(session_factory)
     order = order_service.create_order(

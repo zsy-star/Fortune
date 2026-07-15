@@ -273,7 +273,9 @@ class SettlementEngine:
             ),
             matcher_id=(
                 play_rule.matcher_id
-                if play_rule and play_rule.matcher_id
+                if play_rule
+                and play_rule.normalized_type == normalized.normalized_bet_type
+                and play_rule.matcher_id
                 else getattr(matcher, "__name__", None)
             ),
             hit_count=hit_count,

@@ -67,28 +67,53 @@ PINGTE_ZODIAC_TYPES = frozenset({PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC})
 REQUIRED_ODDS_TYPES = PINGTE_ZODIAC_TYPES | frozenset(
     {
         SPECIAL_NUMBER,
+        SPECIAL_ZODIAC,
+        SPECIAL_COLOR,
+        SPECIAL_HALF_WAVE,
+        SPECIAL_SIZE,
+        SPECIAL_PARITY,
+        SPECIAL_TAIL,
+        SPECIAL_HEAD,
+        SPECIAL_SUM_PARITY,
+        SPECIAL_SUM_SIZE,
+        SPECIAL_ELEMENT,
         REGULAR_NUMBER,
         PING_TAIL,
         LIANXIAO_ZODIAC,
+        NON_HIT_NUMBER,
         LIANMA_TWO_TWO,
         LIANMA_THREE_THREE,
         LIANMA_THREE_TWO,
+    }
+)
+STRICT_SPECIAL_ODDS_TYPES = frozenset(
+    {
+        SPECIAL_ZODIAC,
+        SPECIAL_COLOR,
+        SPECIAL_HALF_WAVE,
+        SPECIAL_SIZE,
+        SPECIAL_PARITY,
+        SPECIAL_TAIL,
+        SPECIAL_HEAD,
+        SPECIAL_SUM_PARITY,
+        SPECIAL_SUM_SIZE,
+        SPECIAL_ELEMENT,
     }
 )
 THREE_IN_TWO_REQUIRED_ODDS_KEYS = ("三中二中2", "三中二中3")
 
 ODDS_CANDIDATES: dict[str, tuple[str, ...]] = {
     SPECIAL_NUMBER: ("特码号码", "特码", "号码", "特号", "单号投注", "纯数字"),
-    SPECIAL_ZODIAC: ("特码生肖", "生肖", "平特一肖", "一肖"),
-    SPECIAL_COLOR: ("波色", "特码波色", "色波"),
-    SPECIAL_HALF_WAVE: ("半波", "包半波", "特码半波"),
-    SPECIAL_SIZE: ("大小", "特码大小", "特码两面"),
-    SPECIAL_PARITY: ("单双", "特码单双", "特码两面"),
-    SPECIAL_TAIL: ("尾数", "特码尾数"),
-    SPECIAL_HEAD: ("头数", "特码头数"),
-    SPECIAL_SUM_PARITY: ("合数", "合数单双", "特码合数单双"),
-    SPECIAL_SUM_SIZE: ("合数", "合数大小", "特码合数大小"),
-    SPECIAL_ELEMENT: ("五行", "特码五行"),
+    SPECIAL_ZODIAC: ("特码生肖", "生肖", "一肖"),
+    SPECIAL_COLOR: ("特码波色", "波色", "色波"),
+    SPECIAL_HALF_WAVE: ("特码半波", "半波"),
+    SPECIAL_SIZE: ("特码大小", "大小", "特码两面"),
+    SPECIAL_PARITY: ("特码单双", "单双", "特码两面"),
+    SPECIAL_TAIL: ("特码尾数", "尾数"),
+    SPECIAL_HEAD: ("特码头数", "头数"),
+    SPECIAL_SUM_PARITY: ("特码合数单双", "合数单双", "合数"),
+    SPECIAL_SUM_SIZE: ("特码合数大小", "合数大小", "合数"),
+    SPECIAL_ELEMENT: ("特码五行", "五行"),
     LIANXIAO_ZODIAC: ("连肖",),
     PINGTE_ZODIAC: ("平特一肖", "平肖", "生肖"),
     PINGTE_MAIN_ZODIAC: ("平特一肖带主肖", "平特一肖主肖", "平肖主肖"),
@@ -745,6 +770,12 @@ class SettlementService:
                 if config is not None:
                     return config
             return None
+        if item.normalized_bet_type in STRICT_SPECIAL_ODDS_TYPES:
+            for candidate in candidates:
+                config = item_by_name.get(candidate)
+                if config is not None:
+                    return config
+            return None
         if item.normalized_bet_type in {
             NON_HIT_NUMBER,
             SPECIAL_ZODIAC_GROUP,
@@ -767,6 +798,16 @@ class SettlementService:
 
     def _find_rebate_item(self, item: ItemSettlementResult, plan_items: list[Any]):
         item_by_name = {str(config.bet_type).strip(): config for config in plan_items}
+        if item.normalized_bet_type in STRICT_SPECIAL_ODDS_TYPES:
+            for candidate in self._odds_candidates_for_item(item):
+                config = item_by_name.get(candidate)
+                if config is not None:
+                    return config
+            for generic in ("全部", "统一返水", "默认返水"):
+                config = item_by_name.get(generic)
+                if config is not None:
+                    return config
+            return None
         if item.normalized_bet_type in {
             PINGTE_ZODIAC,
             PINGTE_MAIN_ZODIAC,

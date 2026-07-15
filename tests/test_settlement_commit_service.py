@@ -266,6 +266,7 @@ def test_commit_multi_item_order_counts_results(session_factory) -> None:
     settings = SettingsService(session_factory)
     plan = settings.ensure_default_plan()
     settings.add_item(plan.id, "特码", "40", "1")
+    settings.add_item(plan.id, "特码波色", "2", "1")
     order_service = OrderService(session_factory)
     order = create_order(
         order_service,
