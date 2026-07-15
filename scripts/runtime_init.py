@@ -9,6 +9,7 @@ RUNTIME_DIRECTORIES = (
     "data",
     "data/backups",
     "exports",
+    "logs",
 )
 
 
@@ -43,9 +44,15 @@ def apply_frozen_config_patch() -> Path:
     import core.config as cfg
 
     cfg.BASE_DIR = root
+    cfg.RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", root)).resolve()
     cfg.DATA_DIR = root / "data"
     cfg.DATABASE_PATH = cfg.DATA_DIR / "fortune.db"
     cfg.DATABASE_URL = f"sqlite:///{cfg.DATABASE_PATH.as_posix()}"
+    cfg.BACKUP_DIR = cfg.DATA_DIR / "backups"
+    cfg.EXPORT_DIR = root / "exports"
+    cfg.LOG_DIR = root / "logs"
+    cfg.ALEMBIC_INI_PATH = cfg.RESOURCE_DIR / "alembic.ini"
+    cfg.ALEMBIC_SCRIPT_DIR = cfg.RESOURCE_DIR / "alembic"
     return root
 
 

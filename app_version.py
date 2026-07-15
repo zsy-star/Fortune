@@ -1,0 +1,11 @@
+"""Single source of truth for FORTUNE release identity."""
+
+from domain.play_rules import FORTUNE_RULESET_2026_V2
+
+
+PRODUCT_NAME = "FORTUNE"
+VERSION = "1.0.0-rc1"
+RULESET_VERSION = FORTUNE_RULESET_2026_V2
+DATABASE_REVISION = "20260715_0010"
+DISPLAY_VERSION = f"{PRODUCT_NAME} {VERSION}"
+

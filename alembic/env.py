@@ -20,7 +20,11 @@ target_metadata = Base.metadata
 
 
 def _database_url() -> str:
-    return os.environ.get("FORTUNE_DATABASE_URL", DATABASE_URL)
+    return (
+        os.environ.get("FORTUNE_DATABASE_URL")
+        or config.get_main_option("sqlalchemy.url")
+        or DATABASE_URL
+    )
 
 
 def run_migrations_offline() -> None:

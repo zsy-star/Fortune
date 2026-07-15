@@ -45,6 +45,10 @@ def _write_minimal_project(root: Path) -> None:
         "# test spec\n# data/fortune.db must not be bundled\n",
         encoding="utf-8",
     )
+    (packaging / "fortune_release.spec").write_text(
+        "# formal release spec\n",
+        encoding="utf-8",
+    )
     (root / "data").mkdir()
 
 

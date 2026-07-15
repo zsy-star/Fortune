@@ -22,6 +22,7 @@ REQUIRED_DOCS = (
 
 PACKAGING_FILES = (
     "packaging/fortune_test.spec",
+    "packaging/fortune_release.spec",
 )
 
 REQUIRED_ROOT_FILES = (

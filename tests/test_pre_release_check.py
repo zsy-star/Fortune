@@ -26,6 +26,7 @@ def _write_minimal_project(root: Path) -> None:
     packaging = root / "packaging"
     packaging.mkdir()
     (packaging / "fortune_test.spec").write_text("# spec\n", encoding="utf-8")
+    (packaging / "fortune_release.spec").write_text("# formal spec\n", encoding="utf-8")
     data = root / "data"
     data.mkdir()
     (data / "backups").mkdir()

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.config import APP_NAME
+from app_version import DATABASE_REVISION, DISPLAY_VERSION, RULESET_VERSION
 from ui.app_events import app_events
 from ui.dialogs.settings_dialog import SettingsDialog
 from ui.pages import (
@@ -75,7 +75,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(APP_NAME)
+        self.setWindowTitle(DISPLAY_VERSION)
         self.resize(1280, 760)
 
         central = QWidget()
@@ -137,6 +137,9 @@ class MainWindow(QMainWindow):
 
         self._set_active_nav_button(0)
         self._stack.setCurrentIndex(0)
+        self.statusBar().showMessage(
+            f"Ruleset：{RULESET_VERSION}  |  数据库版本：{DATABASE_REVISION}"
+        )
 
         app_events.app_data_reloaded.connect(self._on_app_data_reloaded)
         self._apply_stylesheet()

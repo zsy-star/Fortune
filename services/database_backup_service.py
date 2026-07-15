@@ -19,7 +19,7 @@ from sqlalchemy import JSON
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import close_all_sessions
 
-from core.config import BASE_DIR, DATA_DIR, DATABASE_PATH
+from core.config import DATA_DIR, DATABASE_PATH, RESOURCE_DIR
 from core.database import engine as application_engine
 from models import Base
 from schemas.database_backup_schema import (
@@ -49,8 +49,8 @@ _JSON_COLUMNS = tuple(
 
 
 def _code_alembic_head() -> str:
-    config = Config(str(BASE_DIR / "alembic.ini"))
-    config.set_main_option("script_location", str(BASE_DIR / "alembic"))
+    config = Config(str(RESOURCE_DIR / "alembic.ini"))
+    config.set_main_option("script_location", str(RESOURCE_DIR / "alembic"))
     config.set_main_option("path_separator", "os")
     head = ScriptDirectory.from_config(config).get_current_head()
     if not head:
