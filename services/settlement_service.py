@@ -65,7 +65,7 @@ ORDER_STATUS_SETTLED = "settled"
 CENT = Decimal("0.01")
 PINGTE_ZODIAC_TYPES = frozenset({PINGTE_ZODIAC, PINGTE_MAIN_ZODIAC})
 REQUIRED_ODDS_TYPES = PINGTE_ZODIAC_TYPES | frozenset(
-    {SPECIAL_NUMBER, PING_TAIL, LIANXIAO_ZODIAC}
+    {SPECIAL_NUMBER, REGULAR_NUMBER, PING_TAIL, LIANXIAO_ZODIAC}
 )
 
 ODDS_CANDIDATES: dict[str, tuple[str, ...]] = {
@@ -558,6 +558,8 @@ class SettlementService:
     def _required_item_kind(item: ItemSettlementResult) -> str:
         if item.normalized_bet_type == SPECIAL_NUMBER:
             return "特码号码"
+        if item.normalized_bet_type == REGULAR_NUMBER:
+            return "平码号码"
         if item.normalized_bet_type == PINGTE_MAIN_ZODIAC:
             return "主肖"
         if item.normalized_bet_type == PINGTE_ZODIAC:
@@ -572,6 +574,8 @@ class SettlementService:
     def _required_odds_label(item: ItemSettlementResult) -> str:
         if item.normalized_bet_type == SPECIAL_NUMBER:
             return "特码号码赔率"
+        if item.normalized_bet_type == REGULAR_NUMBER:
+            return "平码号码赔率"
         if item.normalized_bet_type == PINGTE_MAIN_ZODIAC:
             return "主肖专用赔率"
         if item.normalized_bet_type == PINGTE_ZODIAC:

@@ -39,7 +39,7 @@ _SINGLE_ITEM_CATEGORIES: dict[str, tuple[str, str]] = {
     "双": ("特码两面", "双"),
 }
 
-_EXPAND_NUMBER_CATEGORIES = frozenset({"单号投注", "纯数字", "特码"})
+_EXPAND_NUMBER_CATEGORIES = frozenset({"单号投注", "纯数字", "特码", "平码"})
 _ZODIAC_NAMES = frozenset(get_zodiac_number_map(get_default_zodiac_year()))
 _ELEMENTS = frozenset({"金", "木", "水", "火", "土"})
 _SUM_LABELS = frozenset({"合单", "合双", "合大", "合小"})
@@ -836,6 +836,7 @@ def convert_parse_result(
             else None
         )
 
+        order_bet_type = "平码" if category == "平码" else "特码"
         for number in numbers:
             try:
                 selection = normalize_number(number)
@@ -857,7 +858,7 @@ def convert_parse_result(
                 return previews, order_items, warnings, errors
 
             if category in _EXPAND_NUMBER_CATEGORIES:
-                preview_type = "特码"
+                preview_type = order_bet_type
                 preview_selection = selection
                 original_selection = str(number)
             elif is_single_zodiac_line and zodiac_preview_selection:
@@ -883,7 +884,7 @@ def convert_parse_result(
                 original_bet_type=category,
                 original_selection=original_selection,
                 amount=per_amount,
-                order_bet_type="特码",
+                order_bet_type=order_bet_type,
                 order_selection=selection,
                 preview_bet_type=preview_type,
                 preview_selection=preview_selection,
@@ -894,7 +895,7 @@ def convert_parse_result(
             if preview.is_valid:
                 order_items.append(
                     OrderItemCreate(
-                        bet_type="特码",
+                        bet_type=order_bet_type,
                         selection=selection,
                         amount=per_amount,
                         note=(result.note or None),

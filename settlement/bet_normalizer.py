@@ -282,7 +282,7 @@ class BetTypeNormalizer:
         if normalized_type == SIX_SPECIAL_ZODIAC:
             return self._normalize_six_special_zodiac_selection(selection)
         if normalized_type == REGULAR_NUMBER:
-            return self._normalize_number_group_selection(selection)
+            return self._normalize_number_group_selection(selection, preserve_duplicates=True)
         if normalized_type == PACKAGE_HALF_WAVE:
             return self._normalize_package_half_wave_selection(selection)
         if normalized_type == PING_TAIL:
@@ -326,12 +326,20 @@ class BetTypeNormalizer:
         except InvalidNumberError as exc:
             raise InvalidSelectionError(f"无效号码：{selection}") from exc
 
-    def _normalize_number_group_selection(self, selection: str) -> str:
+    def _normalize_number_group_selection(
+        self,
+        selection: str,
+        *,
+        preserve_duplicates: bool = False,
+    ) -> str:
         numbers = self._split_numbers(selection)
         try:
-            return ",".join(dict.fromkeys(normalize_number(number) for number in numbers))
+            normalized_numbers = [normalize_number(number) for number in numbers]
         except InvalidNumberError as exc:
             raise InvalidSelectionError(f"无效号码：{selection}") from exc
+        if preserve_duplicates:
+            return ",".join(normalized_numbers)
+        return ",".join(dict.fromkeys(normalized_numbers))
 
     def _normalize_non_hit_selection(self, selection: str, bet_type: str) -> str:
         tokens = [

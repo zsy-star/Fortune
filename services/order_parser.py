@@ -1926,21 +1926,21 @@ def parse_order(
         # 3b. 纯数字号码列表
         strict_numbers = _parse_strict_number_list(cat)
         if isinstance(strict_numbers, str):
-            # 特码号码明确允许同号按出现次数拆成独立注；其它玩法仍走
+            # 明确的特码、平码号码语境允许同号按出现次数拆成独立注；其它玩法仍走
             # 严格号码列表校验，不能借此放宽组内重复规则。
-            if bet_type_override == "特码" and "重复" in strict_numbers:
-                special_numbers = _parse_strict_number_list(
+            if bet_type_override in {"特码", "平码"} and "重复" in strict_numbers:
+                repeated_numbers = _parse_strict_number_list(
                     cat,
                     preserve_duplicates=True,
                 )
-                if not isinstance(special_numbers, str) and special_numbers is not None:
+                if not isinstance(repeated_numbers, str) and repeated_numbers is not None:
                     return ParseResult(
                         region=region,
                         success=True,
-                        category="特码",
-                        numbers=special_numbers,
+                        category=bet_type_override,
+                        numbers=repeated_numbers,
                         amount=amt,
-                        total=amt * len(special_numbers),
+                        total=amt * len(repeated_numbers),
                     )
             return ParseResult(region=region, success=False, error=strict_numbers)
         num_list = strict_numbers if strict_numbers is not None else _parse_number_list(cat)
